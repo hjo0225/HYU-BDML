@@ -76,10 +76,22 @@ export async function fetchAgents(data: AgentRequest): Promise<AgentSchema[]> {
   return res.json();
 }
 
-/** Phase 4: 회의 시뮬레이션 (SSE) */
+/** SSE 이벤트 타입 */
+export interface SSEStartEvent {
+  type: 'start';
+  role: 'moderator' | 'agent';
+  agent_id: string | null;
+  agent_name: string;
+  agent_emoji: string;
+  color: string | null;
+}
+
+/** Phase 4: 회의 시뮬레이션 (SSE 토큰 스트리밍) */
 export async function fetchMeeting(
   data: MeetingRequest,
-  onMessage: (msg: MeetingMessage) => void,
+  onStart: (meta: SSEStartEvent) => void,
+  onDelta: (delta: string) => void,
+  onEnd: (msg: MeetingMessage) => void,
   onDone: () => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/meeting`, {
@@ -105,14 +117,30 @@ export async function fetchMeeting(
 
     for (const line of lines) {
       if (line.startsWith('data: ')) {
-        const data = line.slice(6);
+        const raw = line.slice(6);
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.type === 'done') {
-            onDone();
-            return;
+          const parsed = JSON.parse(raw);
+          switch (parsed.type) {
+            case 'start':
+              onStart(parsed as SSEStartEvent);
+              break;
+            case 'delta':
+              onDelta(parsed.delta);
+              break;
+            case 'end':
+              onEnd({
+                role: parsed.role,
+                agent_id: parsed.agent_id ?? null,
+                agent_name: parsed.agent_name,
+                agent_emoji: parsed.agent_emoji,
+                content: parsed.content,
+                color: parsed.color ?? null,
+              } as MeetingMessage);
+              break;
+            case 'done':
+              onDone();
+              return;
           }
-          onMessage(parsed as MeetingMessage);
         } catch {
           // 파싱 실패 무시
         }

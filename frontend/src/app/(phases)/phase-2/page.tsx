@@ -34,7 +34,7 @@ const REFINED_FIELDS = [
 
 export default function Phase2Page() {
   const router = useRouter();
-  const { project, setRefined, setMarketReport, setCurrentPhase } = useProject();
+  const { project, setRefined, setMarketReport, setAgents, setMessages, setMinutes, setCurrentPhase } = useProject();
 
   // 상태
   const [loading, setLoading] = useState(false);
@@ -67,10 +67,13 @@ export default function Phase2Page() {
         (step: number) => {
           setStepIndex(step);
         },
-        // onDone — 결과 수신
+        // onDone — 결과 수신 (하위 단계 데이터 초기화)
         (result: ResearchResponse) => {
           setRefined(result.refined);
           setMarketReport(result.report);
+          setAgents([]);
+          setMessages([]);
+          setMinutes(null);
           setDone(true);
           setLoading(false);
         },
@@ -79,7 +82,7 @@ export default function Phase2Page() {
       setError(err instanceof Error ? err.message : '시장조사 중 오류 발생');
       setLoading(false);
     }
-  }, [project.brief, setRefined, setMarketReport]);
+  }, [project.brief, setRefined, setMarketReport, setAgents, setMessages, setMinutes]);
 
   /* 편집 모드 토글 */
   const toggleEdit = () => {
@@ -137,14 +140,11 @@ export default function Phase2Page() {
               <span className="badge badge-ai">AI 진행 중</span>
             </div>
           </div>
-          <div className="text-xs font-medium mb-1" style={{ color: 'var(--blue)' }}>
-            ⏳ {STEP_LABELS[Math.min(stepIndex, STEP_LABELS.length - 1)]} ({stepIndex}/{STEP_LABELS.length} 단계)
-          </div>
-          <div className="progress-bar-wrap">
-            <div
-              className="progress-bar-fill"
-              style={{ width: `${(stepIndex / STEP_LABELS.length) * 100}%` }}
-            />
+          <div className="spinner-wrap">
+            <div className="spinner" />
+            <div className="spinner-text">
+              ⏳ {STEP_LABELS[Math.min(stepIndex, STEP_LABELS.length - 1)]} ({stepIndex}/{STEP_LABELS.length} 단계)
+            </div>
           </div>
         </div>
       )}
@@ -220,7 +220,7 @@ export default function Phase2Page() {
                           borderRadius: 6,
                         }}
                       >
-                        {project.refined[key]}
+                        {project.refined![key]}
                       </div>
                     )}
                   </div>

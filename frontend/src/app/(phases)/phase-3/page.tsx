@@ -29,7 +29,7 @@ const MAX_AGENTS = 8;
 
 export default function Phase3Page() {
   const router = useRouter();
-  const { project, setAgents, setCurrentPhase } = useProject();
+  const { project, setAgents, setMessages, setMinutes, setCurrentPhase } = useProject();
 
   // 상태
   const [loading, setLoading] = useState(false);
@@ -44,8 +44,8 @@ export default function Phase3Page() {
 
   /* AI 에이전트 추천 요청 */
   const requestRecommend = useCallback(async () => {
-    if (!project.brief || !project.refined || !project.marketReport) {
-      setError('연구 정보와 시장조사가 필요합니다. 이전 단계를 먼저 완료해주세요.');
+    if (!project.refined || !project.marketReport) {
+      setError('시장조사가 필요합니다. 이전 단계를 먼저 완료해주세요.');
       return;
     }
 
@@ -54,17 +54,19 @@ export default function Phase3Page() {
 
     try {
       const result = await fetchAgents({
-        brief: project.brief,
         refined: project.refined,
         report: project.marketReport,
       });
       setAgents(result);
+      // 하위 단계 데이터 초기화
+      setMessages([]);
+      setMinutes(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '에이전트 추천 중 오류 발생');
     } finally {
       setLoading(false);
     }
-  }, [project.brief, project.refined, project.marketReport, setAgents]);
+  }, [project.refined, project.marketReport, setAgents, setMessages, setMinutes]);
 
   /* 에이전트 삭제 */
   const removeAgent = (id: string) => {
@@ -111,7 +113,7 @@ export default function Phase3Page() {
   };
 
   /* 데이터 없으면 Phase 2로 안내 */
-  if (!project.brief || !project.refined || !project.marketReport) {
+  if (!project.refined || !project.marketReport) {
     return (
       <div className="card">
         <div className="card-header">
@@ -153,17 +155,10 @@ export default function Phase3Page() {
 
         {/* 로딩 */}
         {loading && (
-          <>
-            <div className="text-xs font-medium mb-2" style={{ color: 'var(--blue)' }}>
-              ⏳ AI가 에이전트를 구성하고 있습니다...
-            </div>
-            <div className="progress-bar-wrap">
-              <div
-                className="progress-bar-fill"
-                style={{ width: '70%', animation: 'skeleton-pulse 1.5s infinite' }}
-              />
-            </div>
-          </>
+          <div className="spinner-wrap">
+            <div className="spinner" />
+            <div className="spinner-text">AI가 에이전트를 구성하고 있습니다...</div>
+          </div>
         )}
 
         {/* 시작 전 (에이전트 없음) */}
@@ -297,7 +292,7 @@ export default function Phase3Page() {
                   <div className={`agent-type type-${agent.type}`}>
                     {TYPE_LABELS[agent.type] || agent.type}
                   </div>
-                  <div className="agent-desc">{agent.description}</div>
+                  <div className="agent-desc">{agent.system_prompt}</div>
                   <div className="agent-tags">
                     {agent.tags.map((tag) => (
                       <span key={tag} className="agent-tag">

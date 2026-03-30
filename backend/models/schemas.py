@@ -45,7 +45,6 @@ class AgentSchema(BaseModel):
 
 class AgentRequest(BaseModel):
     """Phase 3: 에이전트 추천 요청"""
-    brief: ResearchBrief
     refined: RefinedResearch
     report: MarketReport
 

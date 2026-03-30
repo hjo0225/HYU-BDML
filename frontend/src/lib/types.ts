@@ -42,7 +42,6 @@ export interface AgentSchema {
 }
 
 export interface AgentRequest {
-  brief: ResearchBrief;
   refined: RefinedResearch;
   report: MarketReport;
 }

@@ -1,21 +1,19 @@
 """회의 시뮬레이션 라우터"""
-import json
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from models.schemas import MeetingRequest
-from services.meeting_service import run_meeting
+from services.meeting_service import run_meeting_stream
 
 router = APIRouter(prefix="/api")
 
 
 @router.post("/meeting")
 async def meeting_endpoint(req: MeetingRequest):
-    """Phase 4: 회의 시뮬레이션 (SSE)"""
+    """Phase 4: 회의 시뮬레이션 (SSE 토큰 스트리밍)"""
 
     async def event_stream():
-        async for msg in run_meeting(req.agents, req.topic, req.research_context):
-            yield f"data: {msg.model_dump_json()}\n\n"
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+        async for chunk in run_meeting_stream(req.agents, req.topic, req.research_context):
+            yield chunk
 
     return StreamingResponse(
         event_stream(),

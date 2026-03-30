@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import '@/styles/globals.css';
 import { ProjectProvider } from '@/contexts/ProjectContext';
-import Sidebar from '@/components/layout/Sidebar';
+import TopNav from '@/components/layout/TopNav';
+import Stepper from '@/components/layout/Stepper';
 
 export const metadata: Metadata = {
   title: '빅마랩 — AI 정성조사 시뮬레이션',
@@ -17,11 +18,10 @@ export default function RootLayout({
     <html lang="ko">
       <body>
         <ProjectProvider>
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <main className="flex-1 p-6 max-w-[1200px]">
-              {children}
-            </main>
+          <TopNav />
+          <Stepper />
+          <div className="main">
+            {children}
           </div>
         </ProjectProvider>
       </body>
