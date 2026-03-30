@@ -32,6 +32,17 @@ class ResearchResponse(BaseModel):
     report: MarketReport
 
 # ── 에이전트 ──
+class PersonaProfile(BaseModel):
+    """에이전트 페르소나 프로필"""
+    age: int
+    gender: Literal["male", "female", "other"]
+    occupation: str
+    personality: str
+    consumption_style: str
+    experience: str
+    pain_points: str
+    communication_style: str
+
 class AgentSchema(BaseModel):
     """Phase 3: 에이전트 정보"""
     id: str
@@ -42,10 +53,23 @@ class AgentSchema(BaseModel):
     tags: list[str]
     system_prompt: str
     color: str
+    persona_profile: PersonaProfile | None = None
 
 class AgentRequest(BaseModel):
     """Phase 3: 에이전트 추천 요청"""
     refined: RefinedResearch
+    report: MarketReport
+
+class SynthesizePromptRequest(BaseModel):
+    """페르소나 기반 프롬프트 합성 요청"""
+    name: str
+    type: Literal["customer", "expert", "custom"]
+    persona_profile: PersonaProfile
+
+class FitnessCheckRequest(BaseModel):
+    """에이전트 구성 적합성 점검 요청"""
+    agents: list[AgentSchema]
+    brief: ResearchBrief
     report: MarketReport
 
 # ── 회의 ──

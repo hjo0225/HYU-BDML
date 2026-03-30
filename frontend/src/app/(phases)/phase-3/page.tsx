@@ -3,14 +3,22 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProject } from '@/contexts/ProjectContext';
-import { fetchAgents } from '@/lib/api';
-import type { AgentSchema } from '@/lib/types';
+import { fetchAgents, checkAgentFitness } from '@/lib/api';
+import type { AgentSchema, FitnessAIResult } from '@/lib/types';
+import { buildSystemPromptFromPersona } from '@/lib/persona';
+import { checkFitness } from '@/lib/fitness';
 
 /* 타입 라벨 매핑 */
 const TYPE_LABELS: Record<string, string> = {
   customer: '가상 고객',
   expert: '도메인 전문가',
   custom: '커스텀',
+};
+
+const GENDER_LABELS: Record<'male' | 'female' | 'other', string> = {
+  male: '남성',
+  female: '여성',
+  other: '',
 };
 
 /* 빈 에이전트 템플릿 */
@@ -36,11 +44,23 @@ export default function Phase3Page() {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<AgentSchema | null>(null);
+  const [isPromptPreviewOpen, setIsPromptPreviewOpen] = useState(false);
+  const [aiResult, setAiResult] = useState<FitnessAIResult | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [needsReanalysis, setNeedsReanalysis] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [newAgent, setNewAgent] = useState<AgentSchema>({ ...EMPTY_AGENT });
 
   const agents = project.agents;
   const hasAgents = agents.length > 0;
+  const fitness = project.brief ? checkFitness(agents, project.brief) : null;
+
+  const invalidateAiResult = () => {
+    setAiResult(null);
+    setAiError(null);
+    setNeedsReanalysis(true);
+  };
 
   /* AI 에이전트 추천 요청 */
   const requestRecommend = useCallback(async () => {
@@ -58,6 +78,7 @@ export default function Phase3Page() {
         report: project.marketReport,
       });
       setAgents(result);
+      invalidateAiResult();
       // 하위 단계 데이터 초기화
       setMessages([]);
       setMinutes(null);
@@ -71,18 +92,21 @@ export default function Phase3Page() {
   /* 에이전트 삭제 */
   const removeAgent = (id: string) => {
     setAgents(agents.filter((a) => a.id !== id));
+    invalidateAiResult();
   };
 
   /* 편집 시작 */
   const startEdit = (agent: AgentSchema) => {
     setEditingId(agent.id);
     setEditData({ ...agent });
+    setIsPromptPreviewOpen(true);
   };
 
   /* 편집 저장 */
   const saveEdit = () => {
     if (!editData) return;
     setAgents(agents.map((a) => (a.id === editData.id ? editData : a)));
+    invalidateAiResult();
     setEditingId(null);
     setEditData(null);
   };
@@ -91,6 +115,22 @@ export default function Phase3Page() {
   const cancelEdit = () => {
     setEditingId(null);
     setEditData(null);
+    setIsPromptPreviewOpen(false);
+  };
+
+  const updateEditData = (updater: (prev: AgentSchema) => AgentSchema) => {
+    setEditData((prev) => {
+      if (!prev) return prev;
+      const next = updater(prev);
+      if (next.persona_profile) {
+        next.system_prompt = buildSystemPromptFromPersona(
+          next.name,
+          next.type,
+          next.persona_profile,
+        );
+      }
+      return next;
+    });
   };
 
   /* 에이전트 추가 */
@@ -98,8 +138,36 @@ export default function Phase3Page() {
     const id = `agent-${Date.now()}`;
     const created: AgentSchema = { ...newAgent, id };
     setAgents([...agents, created]);
+    invalidateAiResult();
     setAddMode(false);
     setNewAgent({ ...EMPTY_AGENT });
+  };
+
+  const runAiFitnessCheck = async () => {
+    if (!project.brief || !project.marketReport) return;
+
+    setIsAiLoading(true);
+    setAiError(null);
+    try {
+      const result = await checkAgentFitness({
+        agents,
+        brief: project.brief,
+        report: project.marketReport,
+      });
+      setAiResult(result);
+      setNeedsReanalysis(false);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI 적합성 분석 중 오류 발생');
+      setAiResult(null);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'var(--green)';
+    if (score >= 60) return 'var(--yellow)';
+    return 'var(--red)';
   };
 
   /* 네비게이션 */
@@ -193,6 +261,157 @@ export default function Phase3Page() {
             </div>
           )}
 
+          {fitness && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-header" style={{ marginBottom: 10 }}>
+                <div className="card-title">적합성 대시보드</div>
+                <button
+                  className="btn btn-ghost text-[11px]"
+                  onClick={runAiFitnessCheck}
+                  disabled={!project.brief || !project.marketReport || isAiLoading}
+                >
+                  AI 상세 분석
+                </button>
+              </div>
+
+              <div className="agent-tags" style={{ marginBottom: 12 }}>
+                <span
+                  className="agent-tag"
+                  style={{
+                    background:
+                      fitness.overall === 'good'
+                        ? '#f0f7ee'
+                        : fitness.overall === 'warning'
+                          ? '#fff5e6'
+                          : '#fdecea',
+                    color:
+                      fitness.overall === 'good'
+                        ? 'var(--green)'
+                        : fitness.overall === 'warning'
+                          ? 'var(--yellow)'
+                          : 'var(--red)',
+                  }}
+                >
+                  전체 판정: {fitness.overall}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gap: 8 }}>
+                {fitness.checks.map((check) => (
+                  <div
+                    key={check.label}
+                    style={{
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      padding: '10px 12px',
+                      background: 'var(--bg)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>{check.label}</div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color:
+                            check.status === 'good'
+                              ? 'var(--green)'
+                              : check.status === 'warning'
+                                ? 'var(--yellow)'
+                                : 'var(--red)',
+                        }}
+                      >
+                        {check.status}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      {check.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {isAiLoading && (
+                <div className="spinner-wrap" style={{ padding: '18px 0 6px' }}>
+                  <div className="spinner" />
+                  <div className="spinner-text">AI 분석 중...</div>
+                </div>
+              )}
+
+              {aiError && (
+                <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)', marginTop: 12 }}>
+                  {aiError}
+                </div>
+              )}
+
+              {needsReanalysis && !isAiLoading && !aiResult && (
+                <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+                  에이전트 구성이 변경되었습니다. AI 상세 분석을 다시 실행해주세요.
+                </div>
+              )}
+
+              {aiResult && !isAiLoading && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    padding: 14,
+                    background: 'var(--surface)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                    <div className="card-title" style={{ fontSize: 14, marginBottom: 0 }}>
+                      AI 적합성 분석
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: getScoreColor(aiResult.score) }}>
+                      점수: {aiResult.score}/100
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
+                    {aiResult.summary}
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>강점</div>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {aiResult.strengths.map((item, index) => (
+                          <div key={`strength-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>주의</div>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {aiResult.warnings.map((item, index) => (
+                          <div key={`warning-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>💡 제안</div>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {aiResult.suggestions.map((item, index) => (
+                          <div key={`suggestion-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="agent-grid">
             {agents.map((agent) =>
               editingId === agent.id && editData ? (
@@ -203,7 +422,7 @@ export default function Phase3Page() {
                     <input
                       className="field-input"
                       value={editData.emoji}
-                      onChange={(e) => setEditData({ ...editData, emoji: e.target.value })}
+                      onChange={(e) => updateEditData((prev) => ({ ...prev, emoji: e.target.value }))}
                     />
                   </div>
                   <div className="field-group">
@@ -211,7 +430,7 @@ export default function Phase3Page() {
                     <input
                       className="field-input"
                       value={editData.name}
-                      onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                      onChange={(e) => updateEditData((prev) => ({ ...prev, name: e.target.value }))}
                     />
                   </div>
                   <div className="field-group">
@@ -220,7 +439,10 @@ export default function Phase3Page() {
                       className="field-input"
                       value={editData.type}
                       onChange={(e) =>
-                        setEditData({ ...editData, type: e.target.value as AgentSchema['type'] })
+                        updateEditData((prev) => ({
+                          ...prev,
+                          type: e.target.value as AgentSchema['type'],
+                        }))
                       }
                     >
                       <option value="customer">가상 고객</option>
@@ -234,7 +456,9 @@ export default function Phase3Page() {
                       className="field-textarea"
                       rows={3}
                       value={editData.description}
-                      onChange={(e) => setEditData({ ...editData, description: e.target.value })}
+                      onChange={(e) =>
+                        updateEditData((prev) => ({ ...prev, description: e.target.value }))
+                      }
                     />
                   </div>
                   <div className="field-group">
@@ -243,22 +467,179 @@ export default function Phase3Page() {
                       className="field-input"
                       value={editData.tags.join(', ')}
                       onChange={(e) =>
-                        setEditData({
-                          ...editData,
+                        updateEditData((prev) => ({
+                          ...prev,
                           tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
-                        })
+                        }))
                       }
                     />
                   </div>
-                  <div className="field-group">
-                    <div className="field-label">시스템 프롬프트</div>
-                    <textarea
-                      className="field-textarea"
-                      rows={4}
-                      value={editData.system_prompt}
-                      onChange={(e) => setEditData({ ...editData, system_prompt: e.target.value })}
-                    />
-                  </div>
+                  {editData.persona_profile ? (
+                    <>
+                      <div className="field-group">
+                        <div className="field-label">나이</div>
+                        <input
+                          className="field-input"
+                          type="number"
+                          value={editData.persona_profile.age}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                age: Number(e.target.value) || 0,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">성별</div>
+                        <select
+                          className="field-input"
+                          value={editData.persona_profile.gender}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'],
+                              },
+                            }))
+                          }
+                        >
+                          <option value="male">남성</option>
+                          <option value="female">여성</option>
+                          <option value="other">기타</option>
+                        </select>
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">직업</div>
+                        <input
+                          className="field-input"
+                          value={editData.persona_profile.occupation}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                occupation: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">성격</div>
+                        <input
+                          className="field-input"
+                          value={editData.persona_profile.personality}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                personality: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">소비 스타일</div>
+                        <textarea
+                          className="field-textarea"
+                          rows={2}
+                          value={editData.persona_profile.consumption_style}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                consumption_style: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">관련 경험</div>
+                        <textarea
+                          className="field-textarea"
+                          rows={3}
+                          value={editData.persona_profile.experience}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                experience: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">불만/니즈</div>
+                        <textarea
+                          className="field-textarea"
+                          rows={2}
+                          value={editData.persona_profile.pain_points}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                pain_points: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <div className="field-label">말투</div>
+                        <input
+                          className="field-input"
+                          value={editData.persona_profile.communication_style}
+                          onChange={(e) =>
+                            updateEditData((prev) => ({
+                              ...prev,
+                              persona_profile: {
+                                ...prev.persona_profile!,
+                                communication_style: e.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <button
+                          className="btn btn-ghost w-full justify-between"
+                          onClick={() => setIsPromptPreviewOpen((prev) => !prev)}
+                        >
+                          생성된 system_prompt
+                          <span>{isPromptPreviewOpen ? '접기' : '펼치기'}</span>
+                        </button>
+                        {isPromptPreviewOpen && (
+                          <div className="agent-desc" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>
+                            {editData.system_prompt}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="field-group">
+                      <div className="field-label">시스템 프롬프트</div>
+                      <textarea
+                        className="field-textarea"
+                        rows={4}
+                        value={editData.system_prompt}
+                        onChange={(e) =>
+                          updateEditData((prev) => ({ ...prev, system_prompt: e.target.value }))
+                        }
+                      />
+                    </div>
+                  )}
                   <div className="flex gap-2 mt-2">
                     <button className="btn btn-primary flex-1 justify-center" onClick={saveEdit}>
                       저장
@@ -292,7 +673,43 @@ export default function Phase3Page() {
                   <div className={`agent-type type-${agent.type}`}>
                     {TYPE_LABELS[agent.type] || agent.type}
                   </div>
-                  <div className="agent-desc">{agent.system_prompt}</div>
+                  {agent.persona_profile ? (
+                    <div className="agent-persona">
+                      <div className="agent-persona-meta">
+                        <span>{agent.persona_profile.age}세</span>
+                        {GENDER_LABELS[agent.persona_profile.gender] && (
+                          <>
+                            <span className="agent-persona-separator">·</span>
+                            <span>{GENDER_LABELS[agent.persona_profile.gender]}</span>
+                          </>
+                        )}
+                        <span className="agent-persona-separator">·</span>
+                        <span>{agent.persona_profile.occupation}</span>
+                      </div>
+                      <div className="agent-persona-row">
+                        <span className="agent-persona-label">성격:</span>
+                        <span>{agent.persona_profile.personality}</span>
+                      </div>
+                      <div className="agent-persona-row">
+                        <span className="agent-persona-label">소비:</span>
+                        <span>{agent.persona_profile.consumption_style}</span>
+                      </div>
+                      <div className="agent-persona-row agent-persona-row-clamp">
+                        <span className="agent-persona-label">경험:</span>
+                        <span>{agent.persona_profile.experience}</span>
+                      </div>
+                      <div className="agent-persona-row">
+                        <span className="agent-persona-label">니즈:</span>
+                        <span>{agent.persona_profile.pain_points}</span>
+                      </div>
+                      <div className="agent-persona-row">
+                        <span className="agent-persona-label">말투:</span>
+                        <span>{agent.persona_profile.communication_style}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="agent-desc">{agent.system_prompt}</div>
+                  )}
                   <div className="agent-tags">
                     {agent.tags.map((tag) => (
                       <span key={tag} className="agent-tag">

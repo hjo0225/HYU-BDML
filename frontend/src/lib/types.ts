@@ -30,6 +30,17 @@ export interface ResearchResponse {
 }
 
 // ── 에이전트 ──
+export interface PersonaProfile {
+  age: number;
+  gender: 'male' | 'female' | 'other';
+  occupation: string;
+  personality: string;
+  consumption_style: string;
+  experience: string;
+  pain_points: string;
+  communication_style: string;
+}
+
 export interface AgentSchema {
   id: string;
   type: 'customer' | 'expert' | 'custom';
@@ -39,10 +50,36 @@ export interface AgentSchema {
   tags: string[];
   system_prompt: string;
   color: string;
+  persona_profile?: PersonaProfile | null;
 }
 
 export interface AgentRequest {
   refined: RefinedResearch;
+  report: MarketReport;
+}
+
+export interface FitnessCheck {
+  label: string;
+  status: 'good' | 'warning' | 'poor';
+  detail: string;
+}
+
+export interface FitnessResult {
+  overall: 'good' | 'warning' | 'poor';
+  checks: FitnessCheck[];
+}
+
+export interface FitnessAIResult {
+  score: number;
+  summary: string;
+  strengths: string[];
+  warnings: string[];
+  suggestions: string[];
+}
+
+export interface FitnessCheckRequest {
+  agents: AgentSchema[];
+  brief: ResearchBrief;
   report: MarketReport;
 }
 
