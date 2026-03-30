@@ -133,17 +133,10 @@ export default function Phase5Page() {
           </div>
 
           {loading ? (
-            <>
-              <div className="text-xs font-medium mb-2" style={{ color: 'var(--blue)' }}>
-                ⏳ AI가 회의 내용을 분석하여 회의록을 작성하고 있습니다...
-              </div>
-              <div className="progress-bar-wrap">
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: '60%', animation: 'skeleton-pulse 1.5s infinite' }}
-                />
-              </div>
-            </>
+            <div className="spinner-wrap">
+              <div className="spinner" />
+              <div className="spinner-text">AI가 회의 내용을 분석하여 회의록을 작성하고 있습니다...</div>
+            </div>
           ) : (
             <>
               <p className="text-xs text-text-secondary mb-4">

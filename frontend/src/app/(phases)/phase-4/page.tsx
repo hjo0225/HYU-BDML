@@ -19,6 +19,7 @@ export default function Phase4Page() {
     project,
     setMessages,
     addMessage,
+    setMinutes,
     setCurrentPhase,
   } = useProject();
 
@@ -31,11 +32,20 @@ export default function Phase4Page() {
   const [speakingAgent, setSpeakingAgent] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [typing, setTyping] = useState(false);
+  // 현재 스트리밍 중인 발언의 메타 + 누적 텍스트
+  const [streamingMeta, setStreamingMeta] = useState<{
+    role: 'moderator' | 'agent';
+    agent_id: string | null;
+    agent_name: string;
+    agent_emoji: string;
+    color: string | null;
+  } | null>(null);
+  const [streamingText, setStreamingText] = useState('');
 
   // refs
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
+  const streamingTextRef = useRef('');
 
   // 경과 시간 타이머
   useEffect(() => {
@@ -84,8 +94,12 @@ export default function Phase4Page() {
 
     setPhase('running');
     setMessages([]);
+    setMinutes(null);
     setError(null);
     setSpeakingAgent(null);
+    setStreamingMeta(null);
+    setStreamingText('');
+    streamingTextRef.current = '';
     setStartTime(Date.now());
     abortRef.current = false;
 
@@ -100,26 +114,44 @@ export default function Phase4Page() {
       .join('\n');
 
     try {
-      setTyping(true);
       await fetchMeeting(
         { agents: project.agents, topic, research_context: context },
-        (msg: MeetingMessage) => {
+        // onStart: 새 발언 시작
+        (meta) => {
           if (abortRef.current) return;
-          setTyping(false);
-          addMessage(msg);
-          setSpeakingAgent(msg.role === 'agent' ? msg.agent_id : 'moderator');
-          // 다음 메시지 대기 표시
-          setTimeout(() => setTyping(true), 300);
+          streamingTextRef.current = '';
+          setStreamingText('');
+          setStreamingMeta(meta);
+          setSpeakingAgent(meta.role === 'agent' ? meta.agent_id : 'moderator');
         },
+        // onDelta: 토큰 도착
+        (delta) => {
+          if (abortRef.current) return;
+          streamingTextRef.current += delta;
+          setStreamingText(streamingTextRef.current);
+        },
+        // onEnd: 발언 완료 → 확정 메시지로 추가
+        (msg) => {
+          if (abortRef.current) return;
+          addMessage(msg);
+          setStreamingMeta(null);
+          setStreamingText('');
+          streamingTextRef.current = '';
+        },
+        // onDone: 회의 종료
         () => {
-          setTyping(false);
+          setStreamingMeta(null);
+          setStreamingText('');
+          streamingTextRef.current = '';
           setSpeakingAgent(null);
           setPhase('done');
         },
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : '회의 중 오류 발생');
-      setTyping(false);
+      setStreamingMeta(null);
+      setStreamingText('');
+      setSpeakingAgent(null);
       setPhase('done');
     }
   }, [topic, project.agents, project.refined, project.marketReport, setMessages, addMessage]);
@@ -127,7 +159,6 @@ export default function Phase4Page() {
   /* 회의 종료 */
   const stopMeeting = () => {
     abortRef.current = true;
-    setTyping(false);
     setSpeakingAgent(null);
     setPhase('done');
   };
@@ -317,18 +348,34 @@ export default function Phase4Page() {
               </div>
             ))}
 
-            {/* 타이핑 인디케이터 */}
-            {typing && phase === 'running' && (
-              <div className="chat-msg">
-                <div
-                  className="chat-msg-avatar"
-                  style={{ background: 'var(--placeholder)', animation: 'pulse 1.5s infinite' }}
-                >
-                  ...
-                </div>
+            {/* 스트리밍 중인 발언 (토큰 단위 실시간 표시) */}
+            {streamingMeta && phase === 'running' && (
+              <div
+                className={`chat-msg ${streamingMeta.role === 'moderator' ? 'chat-msg-moderator' : ''}`}
+              >
+                {streamingMeta.role === 'moderator' ? (
+                  <div className="chat-msg-avatar">M</div>
+                ) : (
+                  <div className="chat-msg-avatar" style={{ background: '#e8f4fd' }}>
+                    {streamingMeta.agent_emoji}
+                  </div>
+                )}
                 <div className="chat-msg-body">
-                  <div className="chat-msg-text" style={{ animation: 'pulse 1.5s infinite' }}>
-                    응답을 생성하고 있습니다...
+                  <div
+                    className="chat-msg-name"
+                    style={streamingMeta.color ? { color: streamingMeta.color } : undefined}
+                  >
+                    {streamingMeta.agent_name}
+                  </div>
+                  <div className="chat-msg-text">
+                    {streamingText || (
+                      <span style={{ color: 'var(--text-muted)', animation: 'pulse 1.5s infinite' }}>
+                        응답을 생성하고 있습니다...
+                      </span>
+                    )}
+                    {streamingText && (
+                      <span className="streaming-cursor" />
+                    )}
                   </div>
                 </div>
               </div>
@@ -371,7 +418,7 @@ export default function Phase4Page() {
           <div className="insight-item">
             <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>라운드</div>
             <div style={{ fontSize: 12, fontWeight: 500 }}>
-              {phase === 'input' ? `총 ${totalRounds}` : `${currentRound} / ${totalRounds}`}
+              {`${currentRound} / ${totalRounds}`}
             </div>
           </div>
           <div className="insight-item">

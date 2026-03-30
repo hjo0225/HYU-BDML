@@ -24,13 +24,13 @@ const defaultProject: ProjectData = {
 
 interface ProjectContextValue {
   project: ProjectData;
-  setBrief: (brief: ResearchBrief) => void;
-  setRefined: (refined: RefinedResearch) => void;
-  setMarketReport: (report: MarketReport) => void;
+  setBrief: (brief: ResearchBrief | null) => void;
+  setRefined: (refined: RefinedResearch | null) => void;
+  setMarketReport: (report: MarketReport | null) => void;
   setAgents: (agents: AgentSchema[]) => void;
   addMessage: (msg: MeetingMessage) => void;
   setMessages: (msgs: MeetingMessage[]) => void;
-  setMinutes: (minutes: string) => void;
+  setMinutes: (minutes: string | null) => void;
   setCurrentPhase: (phase: number) => void;
   resetProject: () => void;
 }

@@ -17,7 +17,7 @@ const CATEGORIES = [
 
 export default function Phase1Page() {
   const router = useRouter();
-  const { project, setBrief, setCurrentPhase } = useProject();
+  const { project, setBrief, setRefined, setMarketReport, setAgents, setMessages, setMinutes, setCurrentPhase } = useProject();
 
   const [form, setForm] = useState<ResearchBrief>(
     project.brief ?? {
@@ -38,6 +38,12 @@ export default function Phase1Page() {
   const submit = () => {
     if (!isValid) return;
     setBrief(form);
+    // 하위 단계 데이터 초기화
+    setRefined(null);
+    setMarketReport(null);
+    setAgents([]);
+    setMessages([]);
+    setMinutes(null);
     setCurrentPhase(2);
     router.push('/phase-2');
   };
