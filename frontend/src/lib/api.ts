@@ -106,13 +106,13 @@ export async function fetchMeeting(
     for (const line of lines) {
       if (line.startsWith('data: ')) {
         const data = line.slice(6);
-        if (data === '[DONE]') {
-          onDone();
-          return;
-        }
         try {
-          const msg: MeetingMessage = JSON.parse(data);
-          onMessage(msg);
+          const parsed = JSON.parse(data);
+          if (parsed.type === 'done') {
+            onDone();
+            return;
+          }
+          onMessage(parsed as MeetingMessage);
         } catch {
           // 파싱 실패 무시
         }
