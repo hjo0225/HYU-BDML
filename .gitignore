@@ -8,6 +8,8 @@ node_modules/
 # 빌드 산출물
 dist/
 build/
+frontend/.next/
+*.tsbuildinfo
 
 # OS 시스템 파일
 .DS_Store
@@ -16,3 +18,13 @@ Thumbs.db
 # IDE 설정
 .vscode/
 .idea/
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+
+# 로컬 도구 설정
+.claude/settings.local.json
+
+# 임시 백업 파일
+*_backup.py
