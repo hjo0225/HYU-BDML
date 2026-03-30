@@ -1,8 +1,12 @@
 """에이전트 추천 라우터"""
 import traceback
 from fastapi import APIRouter, HTTPException
-from models.schemas import AgentRequest
-from services.agent_service import recommend_agents
+from models.schemas import AgentRequest, FitnessCheckRequest, SynthesizePromptRequest
+from services.agent_service import (
+    recommend_agents,
+    check_agent_fitness,
+    build_system_prompt_from_persona,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -13,6 +17,28 @@ async def recommend_agents_endpoint(req: AgentRequest):
     try:
         agents = await recommend_agents(req)
         return [agent.model_dump() for agent in agents]
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/agents/check-fitness")
+async def check_fitness(req: FitnessCheckRequest):
+    try:
+        result = check_agent_fitness(req.agents, req.brief, req.report)
+        return result
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/agents/synthesize-prompt")
+async def synthesize_prompt(req: SynthesizePromptRequest):
+    try:
+        system_prompt = build_system_prompt_from_persona(
+            req.name, req.type, req.persona_profile
+        )
+        return {"system_prompt": system_prompt}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

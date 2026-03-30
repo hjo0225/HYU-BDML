@@ -375,6 +375,46 @@ body {
   margin-bottom: 8px;
 }
 
+.agent-persona {
+  margin-bottom: 8px;
+}
+
+.agent-persona-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.agent-persona-separator {
+  color: var(--text-muted);
+}
+
+.agent-persona-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.agent-persona-label {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.agent-persona-row-clamp span:last-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .agent-tags {
   display: flex;
   flex-wrap: wrap;

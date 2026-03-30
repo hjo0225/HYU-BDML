@@ -103,7 +103,8 @@ bigmarlab/
 
 ```bash
 # Backend
-cd backend && pip install -r requirements.txt && uvicorn main:app --reload --port 8000
+cd backend && pip install -r requirements.txt
+&& uvicorn main:app --reload --port 8000
 
 # Frontend (별도 터미널)
 cd frontend && npm install && npm run dev

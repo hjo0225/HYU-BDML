@@ -4,6 +4,9 @@ import type {
   ResearchResponse,
   AgentRequest,
   AgentSchema,
+  PersonaProfile,
+  FitnessCheckRequest,
+  FitnessAIResult,
   MeetingRequest,
   MeetingMessage,
   MinutesRequest,
@@ -162,4 +165,30 @@ export async function fetchMinutes(data: MinutesRequest): Promise<string> {
   if (!res.ok) throw new Error(`회의록 생성 실패: ${res.status}`);
   const json = await res.json();
   return json.minutes;
+}
+
+export async function synthesizePrompt(
+  name: string,
+  type: 'customer' | 'expert' | 'custom',
+  persona_profile: PersonaProfile
+): Promise<{ system_prompt: string }> {
+  const response = await fetch('/api/agents/synthesize-prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type, persona_profile }),
+  });
+  if (!response.ok) throw new Error('system_prompt 합성 실패');
+  return response.json();
+}
+
+export async function checkAgentFitness(
+  data: FitnessCheckRequest
+): Promise<FitnessAIResult> {
+  const response = await fetch('/api/agents/check-fitness', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('적합성 분석 실패');
+  return response.json();
 }
