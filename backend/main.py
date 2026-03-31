@@ -1,7 +1,7 @@
 """빅마랩 FastAPI 백엔드 메인 앱"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import research, agents, meeting, minutes
+from routers import research, agents, meeting, minutes, usage
 
 app = FastAPI(title="빅마랩 API", version="1.0.0")
 
@@ -19,6 +19,7 @@ app.include_router(research.router)
 app.include_router(agents.router)
 app.include_router(meeting.router)
 app.include_router(minutes.router)
+app.include_router(usage.router)
 
 @app.get("/api/health")
 async def health_check():

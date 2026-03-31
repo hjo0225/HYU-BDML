@@ -6,6 +6,20 @@ from prompts.minutes import MINUTES_PROMPT
 
 # Agents SDK 환경 로드
 import services.openai_client  # noqa: F401
+from services.usage_tracker import tracker
+
+
+def _log_runner_usage(result, service_label: str):
+    """Runner.run() 결과에서 토큰 사용량 추출·기록"""
+    for resp in getattr(result, "raw_responses", []):
+        usage = getattr(resp, "usage", None)
+        if usage:
+            tracker.log(
+                service=service_label,
+                model="gpt-4o-mini",
+                input_tokens=getattr(usage, "input_tokens", 0),
+                output_tokens=getattr(usage, "output_tokens", 0),
+            )
 
 # 한국 내 검색 + 높은 검색 깊이
 _web_search = WebSearchTool(
@@ -17,7 +31,7 @@ _web_search = WebSearchTool(
 minutes_agent = Agent(
     name="회의록 작성자",
     instructions=MINUTES_PROMPT,
-    model="gpt-4o",
+    model="gpt-4o-mini",
     tools=[_web_search],
 )
 
@@ -65,4 +79,14 @@ async def generate_minutes(req: MinutesRequest) -> str:
     )
 
     result = await Runner.run(minutes_agent, user_message)
-    return _clean_citations(result.final_output)
+    _log_runner_usage(result, "minutes/generate")
+    minutes_body = _clean_citations(result.final_output)
+
+    # 부록: 실제 회의 발화록 추가
+    transcript_lines = ["\n\n---\n\n## 부록: 실제 회의 발화록\n"]
+    for msg in req.messages:
+        prefix = f"**{msg.agent_emoji} {msg.agent_name}**"
+        transcript_lines.append(f"{prefix}\n\n{msg.content}\n")
+    transcript = "\n".join(transcript_lines)
+
+    return minutes_body + transcript

@@ -17,10 +17,58 @@ const defaultProject: ProjectData = {
   refined: null,
   marketReport: null,
   agents: [],
+  meetingTopic: null,
   messages: [],
   minutes: null,
   currentPhase: 1,
 };
+
+const defaultBrief: ResearchBrief = {
+  background: '',
+  objective: '',
+  usage_plan: '',
+  category: '',
+  target_customer: '',
+};
+
+const defaultRefined: RefinedResearch = {
+  refined_background: '',
+  refined_objective: '',
+  refined_usage_plan: '',
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function migrateProjectData(value: unknown): ProjectData {
+  if (!isRecord(value)) return defaultProject;
+
+  const brief = isRecord(value.brief)
+    ? {
+        ...defaultBrief,
+        ...value.brief,
+      }
+    : null;
+
+  const refined = isRecord(value.refined)
+    ? {
+        ...defaultRefined,
+        ...value.refined,
+      }
+    : null;
+
+  return {
+    brief,
+    refined,
+    marketReport: isRecord(value.marketReport) ? (value.marketReport as unknown as MarketReport) : null,
+    agents: Array.isArray(value.agents) ? (value.agents as AgentSchema[]) : [],
+    meetingTopic: typeof value.meetingTopic === 'string' ? value.meetingTopic : null,
+    messages: Array.isArray(value.messages) ? (value.messages as MeetingMessage[]) : [],
+    minutes: typeof value.minutes === 'string' ? value.minutes : null,
+    currentPhase: typeof value.currentPhase === 'number' ? value.currentPhase : 1,
+  };
+}
 
 interface ProjectContextValue {
   project: ProjectData;
@@ -28,6 +76,7 @@ interface ProjectContextValue {
   setRefined: (refined: RefinedResearch | null) => void;
   setMarketReport: (report: MarketReport | null) => void;
   setAgents: (agents: AgentSchema[]) => void;
+  setMeetingTopic: (topic: string | null) => void;
   addMessage: (msg: MeetingMessage) => void;
   setMessages: (msgs: MeetingMessage[]) => void;
   setMinutes: (minutes: string | null) => void;
@@ -44,7 +93,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
-      if (saved) setProject(JSON.parse(saved));
+      if (saved) setProject(migrateProjectData(JSON.parse(saved)));
     } catch {
       // 복원 실패 시 기본값 유지
     }
@@ -69,6 +118,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setRefined: (refined) => update({ refined }),
     setMarketReport: (report) => update({ marketReport: report }),
     setAgents: (agents) => update({ agents }),
+    setMeetingTopic: (meetingTopic) => update({ meetingTopic }),
     addMessage: (msg) =>
       setProject((prev) => ({ ...prev, messages: [...prev.messages, msg] })),
     setMessages: (messages) => update({ messages }),

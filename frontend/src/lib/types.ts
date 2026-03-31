@@ -15,13 +15,25 @@ export interface RefinedResearch {
   refined_usage_plan: string;
 }
 
+export interface ReportSource {
+  label: string;
+  url?: string;
+  publisher?: string;
+  published_at?: string;
+  note?: string;
+}
+
+export interface ReportSection {
+  content: string;
+  sources: ReportSource[];
+}
+
 export interface MarketReport {
-  market_overview: string;
-  competitive_landscape: string;
-  target_analysis: string;
-  trends: string;
-  implications: string;
-  sources: string;
+  market_overview: ReportSection;
+  competitive_landscape: ReportSection;
+  target_analysis: ReportSection;
+  trends: ReportSection;
+  implications: ReportSection;
 }
 
 export interface ResearchResponse {
@@ -54,32 +66,8 @@ export interface AgentSchema {
 }
 
 export interface AgentRequest {
-  refined: RefinedResearch;
-  report: MarketReport;
-}
-
-export interface FitnessCheck {
-  label: string;
-  status: 'good' | 'warning' | 'poor';
-  detail: string;
-}
-
-export interface FitnessResult {
-  overall: 'good' | 'warning' | 'poor';
-  checks: FitnessCheck[];
-}
-
-export interface FitnessAIResult {
-  score: number;
-  summary: string;
-  strengths: string[];
-  warnings: string[];
-  suggestions: string[];
-}
-
-export interface FitnessCheckRequest {
-  agents: AgentSchema[];
   brief: ResearchBrief;
+  refined: RefinedResearch;
   report: MarketReport;
 }
 
@@ -88,6 +76,7 @@ export interface MeetingRequest {
   agents: AgentSchema[];
   topic: string;
   research_context: string;
+  max_rounds?: number;
 }
 
 export interface MeetingMessage {
@@ -104,6 +93,7 @@ export interface MinutesRequest {
   messages: MeetingMessage[];
   brief: ResearchBrief;
   agents: AgentSchema[];
+  topic?: string;
 }
 
 // ── 프로젝트 전체 상태 ──
@@ -112,6 +102,7 @@ export interface ProjectData {
   refined: RefinedResearch | null;
   marketReport: MarketReport | null;
   agents: AgentSchema[];
+  meetingTopic: string | null;
   messages: MeetingMessage[];
   minutes: string | null;
   currentPhase: number;

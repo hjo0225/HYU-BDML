@@ -18,6 +18,8 @@ export default function Stepper() {
   const pathname = usePathname();
 
   const handleClick = (phase: number, path: string) => {
+    // 미완료 단계 진입 차단
+    if (phase > project.currentPhase) return;
     setCurrentPhase(phase);
     router.push(path);
   };
@@ -36,6 +38,7 @@ export default function Stepper() {
             <div
               className={`step ${getState(step.phase)}`}
               onClick={() => handleClick(step.phase, step.path)}
+              style={step.phase > project.currentPhase ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
             >
               <div className="step-num">
                 {getState(step.phase) === 'done' ? '✓' : step.phase}

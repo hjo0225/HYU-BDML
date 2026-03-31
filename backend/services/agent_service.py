@@ -6,12 +6,25 @@ from models.schemas import (
     AgentSchema,
     PersonaProfile,
     ResearchBrief,
-    MarketReport,
 )
 from prompts.agent_recommend import AGENT_RECOMMEND_PROMPT
 
 # Agents SDK 환경 로드
 import services.openai_client  # noqa: F401
+from services.usage_tracker import tracker
+
+
+def _log_runner_usage(result, service_label: str):
+    """Runner.run() 결과에서 토큰 사용량 추출·기록"""
+    for resp in getattr(result, "raw_responses", []):
+        usage = getattr(resp, "usage", None)
+        if usage:
+            tracker.log(
+                service=service_label,
+                model="gpt-4o-mini",
+                input_tokens=getattr(usage, "input_tokens", 0),
+                output_tokens=getattr(usage, "output_tokens", 0),
+            )
 
 
 # 구조화 출력 타입
@@ -46,8 +59,25 @@ class AgentListOutput(BaseModel):
 recommender_agent = Agent(
     name="에이전트 설계자",
     instructions=AGENT_RECOMMEND_PROMPT,
-    model="gpt-4o",
+    model="gpt-4o-mini",
     output_type=AgentListOutput,
+)
+
+# 단일 소비자 에이전트 재생성용 에이전트
+_single_regen_agent = Agent(
+    name="소비자 에이전트 재생성",
+    instructions="""
+주어진 조건으로 소비자 페르소나 에이전트 1명을 생성하세요.
+
+■ 필수 제약:
+- type은 반드시 "customer"
+- persona_profile.age는 반드시 요청된 연령 범위 내 정수
+- occupation, experience 등 모든 필드는 age와 일관성 있게 작성
+- experience: 제품/서비스 관련 구체적 에피소드 최소 80자
+- system_prompt는 빈 문자열로 응답 (서버에서 자동 생성)
+""".strip(),
+    model="gpt-4o-mini",
+    output_type=AgentOutput,
 )
 
 
@@ -88,83 +118,49 @@ def build_system_prompt_from_persona(name: str, type: str, profile: PersonaProfi
     return "\n".join(lines)
 
 
-def check_agent_fitness(
-    agents: list[AgentSchema],
-    brief: ResearchBrief,
-    report: MarketReport,
-) -> dict:
-    """에이전트 구성 적합성 검증 결과를 반환한다."""
-    persona_agents = [agent for agent in agents if agent.persona_profile]
-    expert_count = sum(1 for agent in agents if agent.type == "expert")
 
-    strengths: list[str] = []
-    warnings: list[str] = []
-    suggestions: list[str] = []
-    score = 100
 
-    if persona_agents:
-        age_groups = {
-            (agent.persona_profile.age // 10) * 10
-            for agent in persona_agents
-        }
-        if len(age_groups) >= 3:
-            strengths.append("연령대가 3개 이상으로 분산되어 타깃 세그먼트를 폭넓게 커버합니다.")
-        elif len(age_groups) == 2:
-            warnings.append("연령대 분산은 일부 확보됐지만 추가 세그먼트가 있으면 더 좋습니다.")
-            suggestions.append("타깃과 인접한 다른 연령대 페르소나를 1명 더 추가해 비교 관점을 넓혀보세요.")
-            score -= 10
-        else:
-            warnings.append("연령대가 한 그룹에 몰려 있어 시뮬레이션 관점이 단조롭습니다.")
-            suggestions.append("다른 연령대의 고객 페르소나를 추가해 반응 차이를 확인하세요.")
-            score -= 20
-
-        genders = {agent.persona_profile.gender for agent in persona_agents}
-        if len(genders) >= 2:
-            strengths.append("성별 구성이 최소 두 종류 이상 포함되어 편향을 줄였습니다.")
-        else:
-            warnings.append("성별 구성이 제한적이라 일부 사용자 관점이 빠질 수 있습니다.")
-            suggestions.append("다른 성별의 페르소나를 추가해 반응 다양성을 확보하세요.")
-            score -= 10
-    else:
-        warnings.append("페르소나 정보가 없는 에이전트가 많아 타깃 적합성 판단 근거가 약합니다.")
-        suggestions.append("각 에이전트에 구체적인 persona_profile을 채워 분석 품질을 높이세요.")
-        score -= 25
-
-    if expert_count >= 1:
-        strengths.append(f"{brief.category} 카테고리를 해석할 expert 에이전트가 포함되어 있습니다.")
-    else:
-        warnings.append("전문가 에이전트가 없어 시장/카테고리 해석이 약할 수 있습니다.")
-        suggestions.append(f"{brief.category} 분야 전문가 또는 실무자를 1명 이상 포함하세요.")
-        score -= 15
-
-    if report.target_analysis.strip():
-        strengths.append("시장조사 보고서의 타깃 분석을 바탕으로 에이전트 구성을 해석할 수 있습니다.")
-    else:
-        warnings.append("시장조사 보고서의 타깃 분석 정보가 약해 세부 적합성 판단이 어렵습니다.")
-        score -= 10
-
-    if not strengths:
-        strengths.append("기본적인 에이전트 구성은 완료되어 추가 개선의 출발점으로 사용할 수 있습니다.")
-
-    score = max(0, min(100, score))
-    summary = (
-        f"{len(agents)}명의 에이전트 구성을 기준으로 타깃 고객 적합성, 전문가 포함 여부, "
-        f"페르소나 다양성을 종합 평가했습니다."
+async def _regenerate_customer_agent(
+    original: AgentOutput,
+    age_range: tuple[int, int],
+    req: AgentRequest,
+) -> AgentOutput:
+    """연령 범위를 벗어난 소비자 에이전트를 올바른 연령으로 재생성"""
+    min_age, max_age = age_range
+    regen_message = (
+        f"[원본 연구 입력]\n"
+        f"- 타깃 고객: {req.brief.target_customer}\n"
+        f"- 연구 카테고리: {req.brief.category}\n"
+        f"- 연구 목적: {req.brief.objective}\n\n"
+        f"[연령 제약 — 필수 준수]\n"
+        f"persona_profile.age는 반드시 {min_age}~{max_age} 사이 정수여야 합니다.\n\n"
+        f"[유지할 필드]\n"
+        f"id: {original.id}, color: {original.color}, type: customer\n\n"
+        f"위 id·color·type을 그대로 사용하고 나머지 필드를 새로 생성하세요."
     )
-
-    return {
-        "score": score,
-        "summary": summary,
-        "strengths": strengths,
-        "warnings": warnings,
-        "suggestions": suggestions,
-    }
+    result = await Runner.run(_single_regen_agent, regen_message)
+    _log_runner_usage(result, "agents/regen_single")
+    return result.final_output
 
 
 async def recommend_agents(req: AgentRequest) -> list[AgentSchema]:
     """연구 정보 + 시장조사를 기반으로 에이전트 5명 추천"""
 
+    # 타깃 연령 범위를 명시적 제약으로 전달
+    age_range = _parse_age_range(req.brief.target_customer)
+    age_constraint = ""
+    if age_range:
+        min_age, max_age = age_range
+        age_constraint = (
+            f"\n\n⚠️ 연령 제약 (반드시 준수): 소비자(customer) 페르소나의 age는 "
+            f"반드시 {min_age}~{max_age} 사이 정수여야 합니다. 이 범위를 벗어난 나이는 절대 허용되지 않습니다."
+        )
+
     user_message = (
+        f"[원본 연구 입력]\n"
+        f"- 타깃 고객: {req.brief.target_customer}\n"
+        f"- 연구 카테고리: {req.brief.category}\n"
+        f"- 연구 목적: {req.brief.objective}\n\n"
         f"[고도화된 연구 정보]\n"
         f"- 배경: {req.refined.refined_background}\n"
         f"- 목적: {req.refined.refined_objective}\n"
@@ -175,13 +171,21 @@ async def recommend_agents(req: AgentRequest) -> list[AgentSchema]:
         f"- 타깃 고객 분석: {req.report.target_analysis}\n"
         f"- 트렌드: {req.report.trends}\n"
         f"- 시사점: {req.report.implications}\n"
+        f"{age_constraint}"
     )
 
     result = await Runner.run(recommender_agent, user_message)
+    _log_runner_usage(result, "agents/recommend")
     output: AgentListOutput = result.final_output
 
     agents: list[AgentSchema] = []
     for agent in output.agents:
+        # 소비자 에이전트 연령 범위 이탈 시 페르소나 전체 재생성
+        if agent.type == "customer" and age_range and agent.persona_profile:
+            min_age, max_age = age_range
+            if not (min_age <= agent.persona_profile.age <= max_age):
+                agent = await _regenerate_customer_agent(agent, age_range, req)
+
         if agent.persona_profile:
             profile = PersonaProfile(**agent.persona_profile.model_dump())
             agent.system_prompt = build_system_prompt_from_persona(

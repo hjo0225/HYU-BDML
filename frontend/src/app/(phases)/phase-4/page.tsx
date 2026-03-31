@@ -13,18 +13,30 @@ const TYPE_LABELS: Record<string, string> = {
   custom: '커스텀',
 };
 
+function buildResearchContext(project: ReturnType<typeof useProject>['project']): string {
+  return [
+    project.refined?.refined_background,
+    project.refined?.refined_objective,
+    project.marketReport?.market_overview.content,
+    project.marketReport?.implications.content,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export default function Phase4Page() {
   const router = useRouter();
   const {
     project,
     setMessages,
     addMessage,
+    setMeetingTopic,
     setMinutes,
     setCurrentPhase,
   } = useProject();
 
   // 상태
-  const [topic, setTopic] = useState('');
+  const [topic, setTopic] = useState(project.meetingTopic ?? '');
   const [phase, setPhase] = useState<'input' | 'running' | 'done'>(() =>
     project.messages.length > 0 ? 'done' : 'input',
   );
@@ -69,12 +81,12 @@ export default function Phase4Page() {
     }
   }
 
-  // 라운드 계산
+  // 라운드 계산 (백엔드 max_rounds 계산식과 동일)
   const agentCount = project.agents.length;
-  const totalRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
+  const maxRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
   const agentMessages = project.messages.filter((m) => m.role === 'agent').length;
   const currentRound = agentCount > 0
-    ? Math.min(Math.ceil(agentMessages / agentCount), totalRounds)
+    ? Math.min(Math.ceil(agentMessages / agentCount), maxRounds)
     : 0;
 
   /* 경과 시간 포맷 */
@@ -93,6 +105,7 @@ export default function Phase4Page() {
     }
 
     setPhase('running');
+    setMeetingTopic(topic.trim());
     setMessages([]);
     setMinutes(null);
     setError(null);
@@ -104,18 +117,11 @@ export default function Phase4Page() {
     abortRef.current = false;
 
     // 연구 맥락 구성
-    const context = [
-      project.refined?.refined_background,
-      project.refined?.refined_objective,
-      project.marketReport?.market_overview,
-      project.marketReport?.implications,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    const context = buildResearchContext(project);
 
     try {
       await fetchMeeting(
-        { agents: project.agents, topic, research_context: context },
+        { agents: project.agents, topic, research_context: context, max_rounds: maxRounds },
         // onStart: 새 발언 시작
         (meta) => {
           if (abortRef.current) return;
@@ -146,6 +152,13 @@ export default function Phase4Page() {
           setSpeakingAgent(null);
           setPhase('done');
         },
+        // onTopicRefined: 백엔드가 정제한 주제로 업데이트
+        (refined) => {
+          if (!abortRef.current) {
+            setTopic(refined);
+            setMeetingTopic(refined);
+          }
+        },
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : '회의 중 오류 발생');
@@ -154,7 +167,7 @@ export default function Phase4Page() {
       setSpeakingAgent(null);
       setPhase('done');
     }
-  }, [topic, project.agents, project.refined, project.marketReport, setMessages, addMessage]);
+  }, [topic, project.agents, project.refined, project.marketReport, setMeetingTopic, setMessages, addMessage]);
 
   /* 회의 종료 */
   const stopMeeting = () => {
@@ -306,7 +319,7 @@ export default function Phase4Page() {
         </div>
 
         {/* ── 중앙: 채팅 ── */}
-        <div className="meeting-chat" style={{ maxHeight: 600 }}>
+        <div className="meeting-chat" style={{ maxHeight: 'calc(100vh - 220px)' }}>
           {/* 헤더 */}
           <div className="chat-header">
             <div className="chat-header-title">{topic || 'FGI 시뮬레이션'}</div>
@@ -324,11 +337,24 @@ export default function Phase4Page() {
 
           {/* 메시지 목록 */}
           <div className="chat-messages">
-            {project.messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`chat-msg ${msg.role === 'moderator' ? 'chat-msg-moderator' : ''}`}
-              >
+            {(() => {
+              let modCount = 0;
+              return project.messages.map((msg, i) => {
+                const showRoundDivider = msg.role === 'moderator';
+                const roundNum = modCount + 1;
+                if (msg.role === 'moderator') modCount++;
+                return (
+                  <div key={i}>
+                    {showRoundDivider && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '6px 0 14px' }}>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
+                        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
+                          Round {roundNum}
+                        </span>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
+                      </div>
+                    )}
+                    <div className={`chat-msg ${msg.role === 'moderator' ? 'chat-msg-moderator' : ''}`}>
                 {msg.role === 'moderator' ? (
                   <div className="chat-msg-avatar">M</div>
                 ) : (
@@ -346,7 +372,10 @@ export default function Phase4Page() {
                   <div className="chat-msg-text">{msg.content}</div>
                 </div>
               </div>
-            ))}
+                  </div>
+                );
+              });
+            })()}
 
             {/* 스트리밍 중인 발언 (토큰 단위 실시간 표시) */}
             {streamingMeta && phase === 'running' && (
@@ -386,19 +415,14 @@ export default function Phase4Page() {
 
           {/* 하단 컨트롤 */}
           <div className="chat-controls">
-            {phase === 'running' ? (
+            {phase === 'running' && (
               <button
-                className="btn btn-secondary"
-                style={{ color: 'var(--red)' }}
+                className="btn btn-danger"
                 onClick={stopMeeting}
               >
                 ⏹ 회의 종료
               </button>
-            ) : phase === 'done' && project.messages.length > 0 ? (
-              <button className="btn btn-primary" onClick={goNext}>
-                회의록 생성 →
-              </button>
-            ) : null}
+            )}
           </div>
         </div>
 
@@ -418,7 +442,7 @@ export default function Phase4Page() {
           <div className="insight-item">
             <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>라운드</div>
             <div style={{ fontSize: 12, fontWeight: 500 }}>
-              {`${currentRound} / ${totalRounds}`}
+              {`${currentRound} / ${maxRounds}`}
             </div>
           </div>
           <div className="insight-item">

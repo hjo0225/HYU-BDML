@@ -5,9 +5,17 @@ import { useRouter } from 'next/navigation';
 import { useProject } from '@/contexts/ProjectContext';
 import { fetchMinutes } from '@/lib/api';
 
+const escapeHtml = (text: string) =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 export default function Phase5Page() {
   const router = useRouter();
-  const { project, setMinutes, setCurrentPhase } = useProject();
+  const { project, setMinutes, setCurrentPhase, resetProject } = useProject();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +38,7 @@ export default function Phase5Page() {
         messages: project.messages,
         brief: project.brief,
         agents: project.agents,
+        topic: project.meetingTopic ?? undefined,
       });
       setMinutes(result);
     } catch (err) {
@@ -63,37 +72,146 @@ export default function Phase5Page() {
     URL.revokeObjectURL(url);
   };
 
-  /* Markdown → HTML 간이 변환 */
-  const renderMarkdown = (md: string) => {
-    let html = md
-      // 테이블
-      .replace(/^\|(.+)\|$/gm, (match) => {
-        const cells = match.split('|').filter(Boolean).map((c) => c.trim());
-        // 구분선 (---) 행 무시
-        if (cells.every((c) => /^[-:]+$/.test(c))) return '';
-        const tag = 'td';
-        return `<tr>${cells.map((c) => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
-      })
-      // 테이블 래핑
-      .replace(/((?:<tr>.*<\/tr>\n?)+)/g, '<table class="minutes-table">$1</table>')
-      // 헤더
-      .replace(/^### (.+)$/gm, '<h3 class="minutes-h3">$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2 class="minutes-h2">$1</h2>')
-      .replace(/^# (.+)$/gm, '<h1 class="minutes-h1">$1</h1>')
-      // 인용구
-      .replace(/^> (.+)$/gm, '<blockquote class="finding-quote">$1</blockquote>')
-      // 볼드
+  /* 인라인 마크다운 처리 (볼드·이탤릭) */
+  const processInline = (text: string) =>
+    escapeHtml(text)
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      // 이탤릭
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      // 리스트
-      .replace(/^- (.+)$/gm, '<li>$1</li>')
-      .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
-      // 수평선
-      .replace(/^---$/gm, '<hr/>')
-      // 줄바꿈
-      .replace(/\n\n/g, '<br/><br/>')
-      .replace(/\n/g, '<br/>');
+      .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  const renderBlock = (block: string): string => {
+    const t = block.trim();
+    if (!t) return '';
+    if (/^-{3,}$/.test(t)) return '<hr class="minutes-hr"/>';
+
+    const lines = t.split('\n');
+
+    if (t.startsWith('### ')) {
+      const title = processInline(lines[0].slice(4));
+      const body = lines.slice(1).join('\n').trim();
+      return (
+        `<div class="minutes-subsection">` +
+          `<div class="minutes-subsection-title">${title}</div>` +
+          (body ? `<div class="minutes-subsection-body">${renderBlocks(body)}</div>` : '') +
+        `</div>`
+      );
+    }
+    if (t.startsWith('# ')) {
+      return `<h1 class="minutes-h1">${processInline(t.slice(2))}</h1>`;
+    }
+    if (t.startsWith('> ')) {
+      return `<blockquote class="finding-quote">${processInline(t.slice(2))}</blockquote>`;
+    }
+
+    if (lines.some((l) => l.trim().startsWith('|'))) {
+      const rows = lines
+        .filter((l) => l.trim().startsWith('|'))
+        .filter((l) => !/^\|[\s:|-]+\|$/.test(l.trim()));
+      if (rows.length > 0) {
+        const trs = rows
+          .map((row, idx) => {
+            const cells = row.split('|').filter(Boolean).map((c) => c.trim());
+            const tag = idx === 0 ? 'th' : 'td';
+            return `<tr>${cells.map((c) => `<${tag}>${processInline(c)}</${tag}>`).join('')}</tr>`;
+          })
+          .join('');
+        return `<div class="minutes-block"><table class="minutes-table">${trs}</table></div>`;
+      }
+    }
+
+    const olLines = lines.filter((l) => l.trim());
+    if (olLines.length > 0 && olLines.every((l) => /^\d+\.\s/.test(l.trim()))) {
+      const items = olLines.map((l) => `<li>${processInline(l.trim().replace(/^\d+\.\s/, ''))}</li>`).join('');
+      return `<div class="minutes-block"><ol>${items}</ol></div>`;
+    }
+
+    const listLines = lines.filter((l) => l.trim());
+    if (listLines.length > 0 && listLines.every((l) => l.trim().startsWith('- '))) {
+      const items = listLines.map((l) => `<li>${processInline(l.trim().slice(2))}</li>`).join('');
+      return `<div class="minutes-block"><ul>${items}</ul></div>`;
+    }
+
+    return `<div class="minutes-block"><p class="minutes-p">${lines.map((l) => processInline(l)).join('<br/>')}</p></div>`;
+  };
+
+  /* 블록 단위 마크다운 → HTML 변환 */
+  const renderBlocks = (md: string): string => {
+    const normalizedMd = md.replace(/\n\s*---\s*\n/g, '\n\n---\n\n');
+    const blocks = normalizedMd.split(/\n{2,}/);
+    return blocks
+      .map(renderBlock)
+      .filter(Boolean)
+      .join('');
+  };
+
+  const renderMainContent = (md: string): string => {
+    const normalized = md.trim();
+    if (!normalized) return '';
+
+    const sectionMatches: Array<{ index: number; title: string; raw: string }> = [];
+    const sectionRegex = /^##\s+(.+)$/gm;
+    let match: RegExpExecArray | null;
+    while ((match = sectionRegex.exec(normalized)) !== null) {
+      sectionMatches.push({
+        index: match.index,
+        title: match[1],
+        raw: match[0],
+      });
+    }
+    if (sectionMatches.length === 0) {
+      return `<div class="minutes-section"><div class="minutes-section-body">${renderBlocks(normalized)}</div></div>`;
+    }
+
+    const htmlParts: string[] = [];
+    const firstSectionIndex = sectionMatches[0].index;
+    const lead = normalized.slice(0, firstSectionIndex).trim();
+
+    if (lead) {
+      htmlParts.push(
+        `<div class="minutes-section minutes-section-lead">` +
+          `<div class="minutes-section-body">${renderBlocks(lead)}</div>` +
+        `</div>`,
+      );
+    }
+
+    sectionMatches.forEach((match, index) => {
+      const title = processInline(match.title);
+      const start = match.index + match.raw.length;
+      const end = index + 1 < sectionMatches.length ? sectionMatches[index + 1].index : normalized.length;
+      const body = normalized.slice(start, end).trim();
+
+      htmlParts.push(
+        `<section class="minutes-section">` +
+          `<div class="minutes-section-header">` +
+            `<h2 class="minutes-h2">${title}</h2>` +
+          `</div>` +
+          `<div class="minutes-section-body">${renderBlocks(body)}</div>` +
+        `</section>`,
+      );
+    });
+
+    return htmlParts.join('');
+  };
+
+  /* Markdown → HTML 변환 (부록 분리 처리) */
+  const renderMarkdown = (md: string): string => {
+    // 부록 구분선 위치 탐색
+    const sepIdx = md.search(/\n{1,2}---\n{1,2}(?=## 부록)/);
+    const mainMd = sepIdx >= 0 ? md.slice(0, sepIdx) : md;
+    const appendixMd = sepIdx >= 0 ? md.slice(sepIdx).replace(/^-+\n+/, '') : null;
+
+    let html = renderMainContent(mainMd);
+
+    if (appendixMd) {
+      // 첫 ## 부록 줄을 summary 텍스트로 사용
+      const firstLine = appendixMd.split('\n')[0].replace(/^##\s*/, '');
+      const bodyMd = appendixMd.replace(/^##[^\n]*\n/, '');
+      html +=
+        `<details class="minutes-appendix">` +
+        `<summary class="minutes-appendix-summary">📎 회의록 원본</summary>` +
+        `<div class="minutes-appendix-body">${renderBlocks(bodyMd)}</div>` +
+        `</details>`;
+    }
+
     return html;
   };
 
@@ -101,6 +219,11 @@ export default function Phase5Page() {
   const goPrev = () => {
     setCurrentPhase(4);
     router.push('/phase-4');
+  };
+
+  const startNewProject = () => {
+    resetProject();
+    router.push('/phase-1');
   };
 
   /* 데이터 없으면 Phase 4로 안내 */
@@ -144,7 +267,10 @@ export default function Phase5Page() {
               </p>
               {error && (
                 <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
-                  {error}
+                  <div>{error}</div>
+                  <button className="btn btn-ghost text-[11px] mt-1" style={{ color: 'var(--red)' }} onClick={generateMinutes}>
+                    다시 시도
+                  </button>
                 </div>
               )}
               <button className="btn btn-primary" onClick={generateMinutes}>
@@ -163,13 +289,19 @@ export default function Phase5Page() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
               <div>
                 <div className="card-title" style={{ fontSize: 16, marginBottom: 4 }}>
-                  📝 회의록
+                  📝 {project.meetingTopic || '회의록'}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   AI 생성 · 발언 {project.messages.length}개 분석
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button className="btn btn-ghost text-[11px]" onClick={downloadMarkdown}>
+                  📋 다운로드
+                </button>
+                <button className="btn btn-ghost text-[11px]" onClick={copyToClipboard}>
+                  {copied ? '✅ 복사됨!' : '📎 복사'}
+                </button>
                 <button className="btn btn-ghost text-[11px]" onClick={generateMinutes} disabled={loading}>
                   🔄 재생성
                 </button>
@@ -190,23 +322,15 @@ export default function Phase5Page() {
                 가설 수립 및 방향성 검증 용도로 활용하시기 바랍니다.
               </span>
             </div>
-
-            {/* 내보내기 바 */}
-            <div className="export-bar">
-              <button className="export-btn" onClick={downloadMarkdown}>
-                📋 Markdown 다운로드
-              </button>
-              <button className="export-btn" onClick={copyToClipboard}>
-                {copied ? '✅ 복사됨!' : '📎 클립보드 복사'}
-              </button>
-              <div style={{ flex: 1 }} />
-            </div>
           </div>
 
           {/* 액션 바 */}
           <div className="action-bar">
             <button className="btn btn-secondary" onClick={goPrev}>
               ← 회의 다시보기
+            </button>
+            <button className="btn btn-ghost" onClick={startNewProject}>
+              🔄 새 프로젝트 시작
             </button>
           </div>
         </>
