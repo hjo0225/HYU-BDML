@@ -57,6 +57,7 @@ class AgentSchema(BaseModel):
 
 class AgentRequest(BaseModel):
     """Phase 3: 에이전트 추천 요청"""
+    brief: ResearchBrief
     refined: RefinedResearch
     report: MarketReport
 
@@ -78,6 +79,7 @@ class MeetingRequest(BaseModel):
     agents: list[AgentSchema]
     topic: str
     research_context: str
+    max_rounds: int = 5
 
 class MeetingMessage(BaseModel):
     """Phase 4: 회의 메시지"""

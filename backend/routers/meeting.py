@@ -12,7 +12,7 @@ async def meeting_endpoint(req: MeetingRequest):
     """Phase 4: 회의 시뮬레이션 (SSE 토큰 스트리밍)"""
 
     async def event_stream():
-        async for chunk in run_meeting_stream(req.agents, req.topic, req.research_context):
+        async for chunk in run_meeting_stream(req.agents, req.topic, req.research_context, req.max_rounds):
             yield chunk
 
     return StreamingResponse(

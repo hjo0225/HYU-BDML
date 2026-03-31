@@ -13,6 +13,11 @@ import type {
 } from './types';
 
 const API_BASE = '/api';
+// SSE 스트리밍은 Next.js 개발 서버 프록시 버퍼링을 우회하여 백엔드에 직접 연결
+const STREAM_API_BASE =
+  process.env.NODE_ENV === 'development'
+    ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api`
+    : API_BASE;
 
 /** Phase 2: 시장조사 (SSE) */
 export async function fetchResearch(
@@ -96,8 +101,9 @@ export async function fetchMeeting(
   onDelta: (delta: string) => void,
   onEnd: (msg: MeetingMessage) => void,
   onDone: () => void,
+  onTopicRefined?: (topic: string) => void,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/meeting`, {
+  const res = await fetch(`${STREAM_API_BASE}/meeting`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -124,6 +130,9 @@ export async function fetchMeeting(
         try {
           const parsed = JSON.parse(raw);
           switch (parsed.type) {
+            case 'topic_refined':
+              onTopicRefined?.(parsed.topic);
+              break;
             case 'start':
               onStart(parsed as SSEStartEvent);
               break;

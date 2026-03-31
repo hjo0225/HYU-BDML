@@ -21,6 +21,18 @@ const GENDER_LABELS: Record<'male' | 'female' | 'other', string> = {
   other: '',
 };
 
+/* 빈 페르소나 프로필 */
+const EMPTY_PERSONA = {
+  age: 25,
+  gender: 'female' as const,
+  occupation: '',
+  personality: '',
+  consumption_style: '',
+  experience: '',
+  pain_points: '',
+  communication_style: '',
+};
+
 /* 빈 에이전트 템플릿 */
 const EMPTY_AGENT: AgentSchema = {
   id: '',
@@ -31,6 +43,7 @@ const EMPTY_AGENT: AgentSchema = {
   tags: [],
   system_prompt: '',
   color: '#2E6DB4',
+  persona_profile: { ...EMPTY_PERSONA },
 };
 
 const MAX_AGENTS = 8;
@@ -74,6 +87,7 @@ export default function Phase3Page() {
 
     try {
       const result = await fetchAgents({
+        brief: project.brief,
         refined: project.refined,
         report: project.marketReport,
       });
@@ -137,10 +151,17 @@ export default function Phase3Page() {
   const addAgent = () => {
     const id = `agent-${Date.now()}`;
     const created: AgentSchema = { ...newAgent, id };
+    if (created.persona_profile) {
+      created.system_prompt = buildSystemPromptFromPersona(
+        created.name,
+        created.type,
+        created.persona_profile,
+      );
+    }
     setAgents([...agents, created]);
     invalidateAiResult();
     setAddMode(false);
-    setNewAgent({ ...EMPTY_AGENT });
+    setNewAgent({ ...EMPTY_AGENT, persona_profile: { ...EMPTY_PERSONA } });
   };
 
   const runAiFitnessCheck = async () => {
@@ -261,155 +282,133 @@ export default function Phase3Page() {
             </div>
           )}
 
-          {fitness && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-header" style={{ marginBottom: 10 }}>
-                <div className="card-title">적합성 대시보드</div>
-                <button
-                  className="btn btn-ghost text-[11px]"
-                  onClick={runAiFitnessCheck}
-                  disabled={!project.brief || !project.marketReport || isAiLoading}
-                >
-                  AI 상세 분석
-                </button>
-              </div>
+          {fitness && (() => {
+            const STATUS = {
+              good:    { icon: '✅', label: '양호', color: 'var(--green)',  bg: '#f0f7ee', bar: '#2e8b57', border: '#b8dfc8' },
+              warning: { icon: '⚠️', label: '주의', color: 'var(--yellow)', bg: '#fffbeb', bar: '#d4a017', border: '#f5e088' },
+              poor:    { icon: '❌', label: '미흡', color: 'var(--red)',    bg: '#fdecea', bar: '#c0392b', border: '#f5b8b4' },
+            } as const;
+            const overall = STATUS[fitness.overall];
+            const overallDesc = fitness.overall === 'good'
+              ? '에이전트 구성이 연구 목적에 적합합니다'
+              : fitness.overall === 'warning'
+              ? '일부 항목을 개선하면 더 좋은 결과를 얻을 수 있습니다'
+              : '에이전트 구성을 재검토할 것을 권장합니다';
 
-              <div className="agent-tags" style={{ marginBottom: 12 }}>
-                <span
-                  className="agent-tag"
-                  style={{
-                    background:
-                      fitness.overall === 'good'
-                        ? '#f0f7ee'
-                        : fitness.overall === 'warning'
-                          ? '#fff5e6'
-                          : '#fdecea',
-                    color:
-                      fitness.overall === 'good'
-                        ? 'var(--green)'
-                        : fitness.overall === 'warning'
-                          ? 'var(--yellow)'
-                          : 'var(--red)',
-                  }}
-                >
-                  전체 판정: {fitness.overall}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gap: 8 }}>
-                {fitness.checks.map((check) => (
-                  <div
-                    key={check.label}
-                    style={{
-                      border: '1px solid var(--border)',
-                      borderRadius: 6,
-                      padding: '10px 12px',
-                      background: 'var(--bg)',
-                    }}
+            return (
+              <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+                {/* ── 전체 판정 배너 ── */}
+                <div style={{ background: overall.bg, borderBottom: `1px solid ${overall.border}`, padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 20, lineHeight: 1 }}>{overall.icon}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: overall.color }}>전체 {overall.label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>{overallDesc}</div>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost text-[11px]"
+                    style={{ flexShrink: 0 }}
+                    onClick={runAiFitnessCheck}
+                    disabled={!project.brief || !project.marketReport || isAiLoading}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600 }}>{check.label}</div>
-                      <div
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 600,
-                          color:
-                            check.status === 'good'
-                              ? 'var(--green)'
-                              : check.status === 'warning'
-                                ? 'var(--yellow)'
-                                : 'var(--red)',
-                        }}
-                      >
-                        {check.status}
+                    AI 상세 분석
+                  </button>
+                </div>
+
+                <div style={{ padding: '14px 18px' }}>
+                  {/* ── 체크 항목 (신호등 바) ── */}
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {fitness.checks.map((check) => {
+                      const s = STATUS[check.status];
+                      return (
+                        <div key={check.label} style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: `1px solid ${s.border}` }}>
+                          <div style={{ width: 4, background: s.bar, flexShrink: 0 }} />
+                          <div style={{ flex: 1, padding: '8px 12px', background: s.bg }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{check.label}</div>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: s.color, whiteSpace: 'nowrap' }}>
+                                {s.icon} {s.label}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{check.detail}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── AI 분석 로딩 ── */}
+                  {isAiLoading && (
+                    <div className="spinner-wrap" style={{ padding: '16px 0 4px' }}>
+                      <div className="spinner" />
+                      <div className="spinner-text">AI 분석 중...</div>
+                    </div>
+                  )}
+
+                  {aiError && (
+                    <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, background: '#fdecea', color: 'var(--red)', fontSize: 11 }}>
+                      {aiError}
+                    </div>
+                  )}
+
+                  {needsReanalysis && !isAiLoading && !aiResult && (
+                    <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+                      에이전트 구성이 변경되었습니다. AI 상세 분석을 다시 실행해주세요.
+                    </div>
+                  )}
+
+                  {/* ── AI 분석 결과 ── */}
+                  {aiResult && !isAiLoading && (
+                    <div style={{ marginTop: 14, borderTop: '1px solid var(--border-light)', paddingTop: 14 }}>
+                      {/* 점수 + 요약 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                        <div style={{ textAlign: 'center', minWidth: 52, padding: '6px 10px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: getScoreColor(aiResult.score), lineHeight: 1 }}>{aiResult.score}</div>
+                          <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>/ 100</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, flex: 1 }}>{aiResult.summary}</div>
+                      </div>
+
+                      {/* 강점 / 주의 / 제안 */}
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {aiResult.strengths.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>✅ 강점</div>
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              {aiResult.strengths.map((item, i) => (
+                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid #b8dfc8' }}>{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {aiResult.warnings.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--yellow)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>⚠️ 주의</div>
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              {aiResult.warnings.map((item, i) => (
+                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid #f5e088' }}>{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {aiResult.suggestions.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>💡 제안</div>
+                            <div style={{ display: 'grid', gap: 3 }}>
+                              {aiResult.suggestions.map((item, i) => (
+                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid var(--accent-border)' }}>{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                      {check.detail}
-                    </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
-
-              {isAiLoading && (
-                <div className="spinner-wrap" style={{ padding: '18px 0 6px' }}>
-                  <div className="spinner" />
-                  <div className="spinner-text">AI 분석 중...</div>
-                </div>
-              )}
-
-              {aiError && (
-                <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)', marginTop: 12 }}>
-                  {aiError}
-                </div>
-              )}
-
-              {needsReanalysis && !isAiLoading && !aiResult && (
-                <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
-                  에이전트 구성이 변경되었습니다. AI 상세 분석을 다시 실행해주세요.
-                </div>
-              )}
-
-              {aiResult && !isAiLoading && (
-                <div
-                  style={{
-                    marginTop: 14,
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    padding: 14,
-                    background: 'var(--surface)',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                    <div className="card-title" style={{ fontSize: 14, marginBottom: 0 }}>
-                      AI 적합성 분석
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: getScoreColor(aiResult.score) }}>
-                      점수: {aiResult.score}/100
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
-                    {aiResult.summary}
-                  </div>
-
-                  <div style={{ display: 'grid', gap: 12 }}>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>강점</div>
-                      <div style={{ display: 'grid', gap: 4 }}>
-                        {aiResult.strengths.map((item, index) => (
-                          <div key={`strength-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>주의</div>
-                      <div style={{ display: 'grid', gap: 4 }}>
-                        {aiResult.warnings.map((item, index) => (
-                          <div key={`warning-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>💡 제안</div>
-                      <div style={{ display: 'grid', gap: 4 }}>
-                        {aiResult.suggestions.map((item, index) => (
-                          <div key={`suggestion-${index}`} style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            );
+          })()}
           )}
 
           <div className="agent-grid">
@@ -747,7 +746,7 @@ export default function Phase3Page() {
                     className="field-input"
                     value={newAgent.name}
                     onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
-                    placeholder="예: 김서연 (28세)"
+                    placeholder="예: 김서연"
                   />
                 </div>
                 <div className="field-group">
@@ -755,9 +754,14 @@ export default function Phase3Page() {
                   <select
                     className="field-input"
                     value={newAgent.type}
-                    onChange={(e) =>
-                      setNewAgent({ ...newAgent, type: e.target.value as AgentSchema['type'] })
-                    }
+                    onChange={(e) => {
+                      const type = e.target.value as AgentSchema['type'];
+                      setNewAgent({
+                        ...newAgent,
+                        type,
+                        persona_profile: type !== 'custom' ? (newAgent.persona_profile ?? { ...EMPTY_PERSONA }) : null,
+                      });
+                    }}
                   >
                     <option value="customer">가상 고객</option>
                     <option value="expert">도메인 전문가</option>
@@ -788,16 +792,163 @@ export default function Phase3Page() {
                     placeholder="태그1, 태그2, 태그3"
                   />
                 </div>
-                <div className="field-group">
-                  <div className="field-label">시스템 프롬프트</div>
-                  <textarea
-                    className="field-textarea"
-                    rows={4}
-                    value={newAgent.system_prompt}
-                    onChange={(e) => setNewAgent({ ...newAgent, system_prompt: e.target.value })}
-                    placeholder="에이전트의 페르소나를 상세히 작성하세요"
-                  />
-                </div>
+                {newAgent.persona_profile ? (
+                  <>
+                    <div className="field-group">
+                      <div className="field-label">나이</div>
+                      <input
+                        className="field-input"
+                        type="number"
+                        value={newAgent.persona_profile.age}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              age: Number(e.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">성별</div>
+                      <select
+                        className="field-input"
+                        value={newAgent.persona_profile.gender}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'],
+                            },
+                          })
+                        }
+                      >
+                        <option value="male">남성</option>
+                        <option value="female">여성</option>
+                        <option value="other">기타</option>
+                      </select>
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">직업</div>
+                      <input
+                        className="field-input"
+                        value={newAgent.persona_profile.occupation}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              occupation: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="예: IT기업 UX디자이너"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">성격</div>
+                      <input
+                        className="field-input"
+                        value={newAgent.persona_profile.personality}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              personality: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="예: 외향적, 트렌드에 민감, 충동적"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">소비 스타일</div>
+                      <textarea
+                        className="field-textarea"
+                        rows={2}
+                        value={newAgent.persona_profile.consumption_style}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              consumption_style: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="예: SNS에서 본 제품을 바로 구매하는 편"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">관련 경험</div>
+                      <textarea
+                        className="field-textarea"
+                        rows={3}
+                        value={newAgent.persona_profile.experience}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              experience: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="구체적인 이용 에피소드를 작성하세요"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">불만/니즈</div>
+                      <textarea
+                        className="field-textarea"
+                        rows={2}
+                        value={newAgent.persona_profile.pain_points}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              pain_points: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="구체적인 불만이나 니즈를 작성하세요"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <div className="field-label">말투</div>
+                      <input
+                        className="field-input"
+                        value={newAgent.persona_profile.communication_style}
+                        onChange={(e) =>
+                          setNewAgent({
+                            ...newAgent,
+                            persona_profile: {
+                              ...newAgent.persona_profile!,
+                              communication_style: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="예: 수다스럽고 감탄사가 많음"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="field-group">
+                    <div className="field-label">시스템 프롬프트</div>
+                    <textarea
+                      className="field-textarea"
+                      rows={4}
+                      value={newAgent.system_prompt}
+                      onChange={(e) => setNewAgent({ ...newAgent, system_prompt: e.target.value })}
+                      placeholder="에이전트의 페르소나를 상세히 작성하세요"
+                    />
+                  </div>
+                )}
                 <div className="flex gap-2 mt-2">
                   <button
                     className="btn btn-primary flex-1 justify-center"
@@ -810,7 +961,7 @@ export default function Phase3Page() {
                     className="btn btn-secondary flex-1 justify-center"
                     onClick={() => {
                       setAddMode(false);
-                      setNewAgent({ ...EMPTY_AGENT });
+                      setNewAgent({ ...EMPTY_AGENT, persona_profile: { ...EMPTY_PERSONA } });
                     }}
                   >
                     취소

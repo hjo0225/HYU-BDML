@@ -54,6 +54,7 @@ export interface AgentSchema {
 }
 
 export interface AgentRequest {
+  brief: ResearchBrief;
   refined: RefinedResearch;
   report: MarketReport;
 }
@@ -88,6 +89,7 @@ export interface MeetingRequest {
   agents: AgentSchema[];
   topic: string;
   research_context: string;
+  max_rounds?: number;
 }
 
 export interface MeetingMessage {

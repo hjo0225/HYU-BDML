@@ -28,5 +28,5 @@ __pycache__/
 
 # 임시 백업 파일
 *_backup.py
-
+.claude/*
 claude.md
