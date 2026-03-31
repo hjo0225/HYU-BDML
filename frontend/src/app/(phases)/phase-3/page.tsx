@@ -3,10 +3,9 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProject } from '@/contexts/ProjectContext';
-import { fetchAgents, checkAgentFitness } from '@/lib/api';
-import type { AgentSchema, FitnessAIResult } from '@/lib/types';
+import { fetchAgents } from '@/lib/api';
+import type { AgentSchema } from '@/lib/types';
 import { buildSystemPromptFromPersona } from '@/lib/persona';
-import { checkFitness } from '@/lib/fitness';
 
 /* 타입 라벨 매핑 */
 const TYPE_LABELS: Record<string, string> = {
@@ -50,34 +49,24 @@ const MAX_AGENTS = 8;
 
 export default function Phase3Page() {
   const router = useRouter();
-  const { project, setAgents, setMessages, setMinutes, setCurrentPhase } = useProject();
+  const { project, setAgents, setMeetingTopic, setMessages, setMinutes, setCurrentPhase } = useProject();
 
   // 상태
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<AgentSchema | null>(null);
   const [isPromptPreviewOpen, setIsPromptPreviewOpen] = useState(false);
-  const [aiResult, setAiResult] = useState<FitnessAIResult | null>(null);
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [needsReanalysis, setNeedsReanalysis] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [newAgent, setNewAgent] = useState<AgentSchema>({ ...EMPTY_AGENT });
 
   const agents = project.agents;
   const hasAgents = agents.length > 0;
-  const fitness = project.brief ? checkFitness(agents, project.brief) : null;
-
-  const invalidateAiResult = () => {
-    setAiResult(null);
-    setAiError(null);
-    setNeedsReanalysis(true);
-  };
 
   /* AI 에이전트 추천 요청 */
   const requestRecommend = useCallback(async () => {
-    if (!project.refined || !project.marketReport) {
+    if (!project.brief || !project.refined || !project.marketReport) {
       setError('시장조사가 필요합니다. 이전 단계를 먼저 완료해주세요.');
       return;
     }
@@ -92,8 +81,8 @@ export default function Phase3Page() {
         report: project.marketReport,
       });
       setAgents(result);
-      invalidateAiResult();
       // 하위 단계 데이터 초기화
+      setMeetingTopic(null);
       setMessages([]);
       setMinutes(null);
     } catch (err) {
@@ -101,12 +90,11 @@ export default function Phase3Page() {
     } finally {
       setLoading(false);
     }
-  }, [project.refined, project.marketReport, setAgents, setMessages, setMinutes]);
+  }, [project.refined, project.marketReport, setAgents, setMeetingTopic, setMessages, setMinutes]);
 
   /* 에이전트 삭제 */
   const removeAgent = (id: string) => {
     setAgents(agents.filter((a) => a.id !== id));
-    invalidateAiResult();
   };
 
   /* 편집 시작 */
@@ -120,7 +108,6 @@ export default function Phase3Page() {
   const saveEdit = () => {
     if (!editData) return;
     setAgents(agents.map((a) => (a.id === editData.id ? editData : a)));
-    invalidateAiResult();
     setEditingId(null);
     setEditData(null);
   };
@@ -159,36 +146,8 @@ export default function Phase3Page() {
       );
     }
     setAgents([...agents, created]);
-    invalidateAiResult();
     setAddMode(false);
     setNewAgent({ ...EMPTY_AGENT, persona_profile: { ...EMPTY_PERSONA } });
-  };
-
-  const runAiFitnessCheck = async () => {
-    if (!project.brief || !project.marketReport) return;
-
-    setIsAiLoading(true);
-    setAiError(null);
-    try {
-      const result = await checkAgentFitness({
-        agents,
-        brief: project.brief,
-        report: project.marketReport,
-      });
-      setAiResult(result);
-      setNeedsReanalysis(false);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'AI 적합성 분석 중 오류 발생');
-      setAiResult(null);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'var(--green)';
-    if (score >= 60) return 'var(--yellow)';
-    return 'var(--red)';
   };
 
   /* 네비게이션 */
@@ -258,7 +217,10 @@ export default function Phase3Page() {
             </p>
             {error && (
               <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
-                {error}
+                <div>{error}</div>
+                <button className="btn btn-ghost text-[11px] mt-1" style={{ color: 'var(--red)' }} onClick={requestRecommend}>
+                  다시 시도
+                </button>
               </div>
             )}
             <button className="btn btn-primary" onClick={requestRecommend}>
@@ -278,172 +240,36 @@ export default function Phase3Page() {
 
           {error && (
             <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
-              {error}
+              <div>{error}</div>
+              <button className="btn btn-ghost text-[11px] mt-1" style={{ color: 'var(--red)' }} onClick={requestRecommend}>
+                다시 시도
+              </button>
             </div>
           )}
 
-          {fitness && (() => {
-            const STATUS = {
-              good:    { icon: '✅', label: '양호', color: 'var(--green)',  bg: '#f0f7ee', bar: '#2e8b57', border: '#b8dfc8' },
-              warning: { icon: '⚠️', label: '주의', color: 'var(--yellow)', bg: '#fffbeb', bar: '#d4a017', border: '#f5e088' },
-              poor:    { icon: '❌', label: '미흡', color: 'var(--red)',    bg: '#fdecea', bar: '#c0392b', border: '#f5b8b4' },
-            } as const;
-            const overall = STATUS[fitness.overall];
-            const overallDesc = fitness.overall === 'good'
-              ? '에이전트 구성이 연구 목적에 적합합니다'
-              : fitness.overall === 'warning'
-              ? '일부 항목을 개선하면 더 좋은 결과를 얻을 수 있습니다'
-              : '에이전트 구성을 재검토할 것을 권장합니다';
-
-            return (
-              <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
-                {/* ── 전체 판정 배너 ── */}
-                <div style={{ background: overall.bg, borderBottom: `1px solid ${overall.border}`, padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 20, lineHeight: 1 }}>{overall.icon}</span>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: overall.color }}>전체 {overall.label}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>{overallDesc}</div>
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-ghost text-[11px]"
-                    style={{ flexShrink: 0 }}
-                    onClick={runAiFitnessCheck}
-                    disabled={!project.brief || !project.marketReport || isAiLoading}
-                  >
-                    AI 상세 분석
-                  </button>
+          {/* ── 편집 드로어 ── */}
+          {editingId && editData && (
+            <>
+              <div className="drawer-overlay" onClick={cancelEdit} />
+              <div className="drawer-panel">
+                <div className="drawer-header">
+                  <span>✏️ 에이전트 수정 — {editData.name || '이름 없음'}</span>
+                  <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={cancelEdit}>✕</button>
                 </div>
-
-                <div style={{ padding: '14px 18px' }}>
-                  {/* ── 체크 항목 (신호등 바) ── */}
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    {fitness.checks.map((check) => {
-                      const s = STATUS[check.status];
-                      return (
-                        <div key={check.label} style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: `1px solid ${s.border}` }}>
-                          <div style={{ width: 4, background: s.bar, flexShrink: 0 }} />
-                          <div style={{ flex: 1, padding: '8px 12px', background: s.bg }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{check.label}</div>
-                              <span style={{ fontSize: 10, fontWeight: 600, color: s.color, whiteSpace: 'nowrap' }}>
-                                {s.icon} {s.label}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{check.detail}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* ── AI 분석 로딩 ── */}
-                  {isAiLoading && (
-                    <div className="spinner-wrap" style={{ padding: '16px 0 4px' }}>
-                      <div className="spinner" />
-                      <div className="spinner-text">AI 분석 중...</div>
-                    </div>
-                  )}
-
-                  {aiError && (
-                    <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, background: '#fdecea', color: 'var(--red)', fontSize: 11 }}>
-                      {aiError}
-                    </div>
-                  )}
-
-                  {needsReanalysis && !isAiLoading && !aiResult && (
-                    <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
-                      에이전트 구성이 변경되었습니다. AI 상세 분석을 다시 실행해주세요.
-                    </div>
-                  )}
-
-                  {/* ── AI 분석 결과 ── */}
-                  {aiResult && !isAiLoading && (
-                    <div style={{ marginTop: 14, borderTop: '1px solid var(--border-light)', paddingTop: 14 }}>
-                      {/* 점수 + 요약 */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                        <div style={{ textAlign: 'center', minWidth: 52, padding: '6px 10px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
-                          <div style={{ fontSize: 20, fontWeight: 700, color: getScoreColor(aiResult.score), lineHeight: 1 }}>{aiResult.score}</div>
-                          <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>/ 100</div>
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, flex: 1 }}>{aiResult.summary}</div>
-                      </div>
-
-                      {/* 강점 / 주의 / 제안 */}
-                      <div style={{ display: 'grid', gap: 10 }}>
-                        {aiResult.strengths.length > 0 && (
-                          <div>
-                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>✅ 강점</div>
-                            <div style={{ display: 'grid', gap: 3 }}>
-                              {aiResult.strengths.map((item, i) => (
-                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid #b8dfc8' }}>{item}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {aiResult.warnings.length > 0 && (
-                          <div>
-                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--yellow)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>⚠️ 주의</div>
-                            <div style={{ display: 'grid', gap: 3 }}>
-                              {aiResult.warnings.map((item, i) => (
-                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid #f5e088' }}>{item}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {aiResult.suggestions.length > 0 && (
-                          <div>
-                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 5 }}>💡 제안</div>
-                            <div style={{ display: 'grid', gap: 3 }}>
-                              {aiResult.suggestions.map((item, i) => (
-                                <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 8, borderLeft: '2px solid var(--accent-border)' }}>{item}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-          )}
-
-          <div className="agent-grid">
-            {agents.map((agent) =>
-              editingId === agent.id && editData ? (
-                /* ── 편집 모드 카드 ── */
-                <div key={agent.id} className="agent-card" style={{ borderColor: 'var(--accent)' }}>
+                <div className="drawer-body">
+                  {/* 기본 정보 */}
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>기본 정보</div>
                   <div className="field-group">
                     <div className="field-label">이모지</div>
-                    <input
-                      className="field-input"
-                      value={editData.emoji}
-                      onChange={(e) => updateEditData((prev) => ({ ...prev, emoji: e.target.value }))}
-                    />
+                    <input className="field-input" value={editData.emoji} onChange={(e) => updateEditData((prev) => ({ ...prev, emoji: e.target.value }))} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">이름</div>
-                    <input
-                      className="field-input"
-                      value={editData.name}
-                      onChange={(e) => updateEditData((prev) => ({ ...prev, name: e.target.value }))}
-                    />
+                    <input className="field-input" value={editData.name} onChange={(e) => updateEditData((prev) => ({ ...prev, name: e.target.value }))} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">유형</div>
-                    <select
-                      className="field-input"
-                      value={editData.type}
-                      onChange={(e) =>
-                        updateEditData((prev) => ({
-                          ...prev,
-                          type: e.target.value as AgentSchema['type'],
-                        }))
-                      }
-                    >
+                    <select className="field-input" value={editData.type} onChange={(e) => updateEditData((prev) => ({ ...prev, type: e.target.value as AgentSchema['type'] }))}>
                       <option value="customer">가상 고객</option>
                       <option value="expert">도메인 전문가</option>
                       <option value="custom">커스텀</option>
@@ -451,62 +277,24 @@ export default function Phase3Page() {
                   </div>
                   <div className="field-group">
                     <div className="field-label">설명</div>
-                    <textarea
-                      className="field-textarea"
-                      rows={3}
-                      value={editData.description}
-                      onChange={(e) =>
-                        updateEditData((prev) => ({ ...prev, description: e.target.value }))
-                      }
-                    />
+                    <textarea className="field-textarea" rows={2} value={editData.description} onChange={(e) => updateEditData((prev) => ({ ...prev, description: e.target.value }))} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">태그 (쉼표 구분)</div>
-                    <input
-                      className="field-input"
-                      value={editData.tags.join(', ')}
-                      onChange={(e) =>
-                        updateEditData((prev) => ({
-                          ...prev,
-                          tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
-                        }))
-                      }
-                    />
+                    <input className="field-input" value={editData.tags.join(', ')} onChange={(e) => updateEditData((prev) => ({ ...prev, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) }))} />
                   </div>
+
                   {editData.persona_profile ? (
                     <>
+                      {/* 기본 정보 (페르소나) */}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>기본 정보 (페르소나)</div>
                       <div className="field-group">
                         <div className="field-label">나이</div>
-                        <input
-                          className="field-input"
-                          type="number"
-                          value={editData.persona_profile.age}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                age: Number(e.target.value) || 0,
-                              },
-                            }))
-                          }
-                        />
+                        <input className="field-input" type="number" value={editData.persona_profile.age} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, age: Number(e.target.value) || 0 } }))} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">성별</div>
-                        <select
-                          className="field-input"
-                          value={editData.persona_profile.gender}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'],
-                              },
-                            }))
-                          }
-                        >
+                        <select className="field-input" value={editData.persona_profile.gender} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'] } }))}>
                           <option value="male">남성</option>
                           <option value="female">여성</option>
                           <option value="other">기타</option>
@@ -514,109 +302,39 @@ export default function Phase3Page() {
                       </div>
                       <div className="field-group">
                         <div className="field-label">직업</div>
-                        <input
-                          className="field-input"
-                          value={editData.persona_profile.occupation}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                occupation: e.target.value,
-                              },
-                            }))
-                          }
-                        />
+                        <input className="field-input" value={editData.persona_profile.occupation} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, occupation: e.target.value } }))} />
                       </div>
+
+                      {/* 성격 & 행동 */}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>성격 & 행동</div>
                       <div className="field-group">
                         <div className="field-label">성격</div>
-                        <input
-                          className="field-input"
-                          value={editData.persona_profile.personality}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                personality: e.target.value,
-                              },
-                            }))
-                          }
-                        />
+                        <input className="field-input" value={editData.persona_profile.personality} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, personality: e.target.value } }))} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">소비 스타일</div>
-                        <textarea
-                          className="field-textarea"
-                          rows={2}
-                          value={editData.persona_profile.consumption_style}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                consumption_style: e.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="field-group">
-                        <div className="field-label">관련 경험</div>
-                        <textarea
-                          className="field-textarea"
-                          rows={3}
-                          value={editData.persona_profile.experience}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                experience: e.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="field-group">
-                        <div className="field-label">불만/니즈</div>
-                        <textarea
-                          className="field-textarea"
-                          rows={2}
-                          value={editData.persona_profile.pain_points}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                pain_points: e.target.value,
-                              },
-                            }))
-                          }
-                        />
+                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.consumption_style} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, consumption_style: e.target.value } }))} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">말투</div>
-                        <input
-                          className="field-input"
-                          value={editData.persona_profile.communication_style}
-                          onChange={(e) =>
-                            updateEditData((prev) => ({
-                              ...prev,
-                              persona_profile: {
-                                ...prev.persona_profile!,
-                                communication_style: e.target.value,
-                              },
-                            }))
-                          }
-                        />
+                        <input className="field-input" value={editData.persona_profile.communication_style} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, communication_style: e.target.value } }))} />
+                      </div>
+
+                      {/* 경험 & 니즈 */}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>경험 & 니즈</div>
+                      <div className="field-group">
+                        <div className="field-label">관련 경험</div>
+                        <textarea className="field-textarea" rows={3} value={editData.persona_profile.experience} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, experience: e.target.value } }))} />
                       </div>
                       <div className="field-group">
-                        <button
-                          className="btn btn-ghost w-full justify-between"
-                          onClick={() => setIsPromptPreviewOpen((prev) => !prev)}
-                        >
-                          생성된 system_prompt
+                        <div className="field-label">불만/니즈</div>
+                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.pain_points} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, pain_points: e.target.value } }))} />
+                      </div>
+
+                      {/* AI 생성 프롬프트 미리보기 */}
+                      <div className="field-group" style={{ marginTop: 8 }}>
+                        <button className="btn btn-ghost w-full justify-between" onClick={() => setIsPromptPreviewOpen((prev) => !prev)}>
+                          AI 생성 프롬프트 미리보기
                           <span>{isPromptPreviewOpen ? '접기' : '펼치기'}</span>
                         </button>
                         {isPromptPreviewOpen && (
@@ -629,43 +347,61 @@ export default function Phase3Page() {
                   ) : (
                     <div className="field-group">
                       <div className="field-label">시스템 프롬프트</div>
-                      <textarea
-                        className="field-textarea"
-                        rows={4}
-                        value={editData.system_prompt}
-                        onChange={(e) =>
-                          updateEditData((prev) => ({ ...prev, system_prompt: e.target.value }))
-                        }
-                      />
+                      <textarea className="field-textarea" rows={4} value={editData.system_prompt} onChange={(e) => updateEditData((prev) => ({ ...prev, system_prompt: e.target.value }))} />
                     </div>
                   )}
-                  <div className="flex gap-2 mt-2">
-                    <button className="btn btn-primary flex-1 justify-center" onClick={saveEdit}>
-                      저장
-                    </button>
-                    <button className="btn btn-secondary flex-1 justify-center" onClick={cancelEdit}>
-                      취소
-                    </button>
-                  </div>
                 </div>
-              ) : (
-                /* ── 일반 카드 ── */
-                <div key={agent.id} className="agent-card">
+                <div className="drawer-footer">
+                  <button className="btn btn-primary flex-1 justify-center" onClick={saveEdit}>저장</button>
+                  <button className="btn btn-secondary flex-1 justify-center" onClick={cancelEdit}>취소</button>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="agent-grid">
+            {agents.map((agent) =>
+              (
+                /* ── 일반 카드 (항상 표시) ── */
+                <div key={agent.id} className="agent-card" style={{ borderTop: `3px solid ${agent.color}`, paddingTop: 14 }}>
                   <div className="agent-actions">
-                    <button
-                      className="agent-action-btn"
-                      title="수정"
-                      onClick={() => startEdit(agent)}
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      className="agent-action-btn"
-                      title="삭제"
-                      onClick={() => removeAgent(agent.id)}
-                    >
-                      ✕
-                    </button>
+                    {deletingId === agent.id ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <button
+                          className="agent-action-btn"
+                          title="삭제 확인"
+                          style={{ color: 'var(--red)', fontSize: 10, padding: '2px 6px' }}
+                          onClick={() => { removeAgent(agent.id); setDeletingId(null); }}
+                        >
+                          삭제
+                        </button>
+                        <button
+                          className="agent-action-btn"
+                          title="취소"
+                          style={{ fontSize: 10, padding: '2px 6px' }}
+                          onClick={() => setDeletingId(null)}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          className="agent-action-btn"
+                          title="수정"
+                          onClick={() => startEdit(agent)}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="agent-action-btn"
+                          title="삭제"
+                          onClick={() => setDeletingId(agent.id)}
+                        >
+                          ✕
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className={`agent-avatar avatar-${agent.type}`}>{agent.emoji}</div>
                   <div className="agent-name">{agent.name}</div>
@@ -687,23 +423,23 @@ export default function Phase3Page() {
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">성격:</span>
-                        <span>{agent.persona_profile.personality}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.personality}</span>
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">소비:</span>
-                        <span>{agent.persona_profile.consumption_style}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.consumption_style}</span>
                       </div>
-                      <div className="agent-persona-row agent-persona-row-clamp">
+                      <div className="agent-persona-row">
                         <span className="agent-persona-label">경험:</span>
-                        <span>{agent.persona_profile.experience}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.experience}</span>
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">니즈:</span>
-                        <span>{agent.persona_profile.pain_points}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.pain_points}</span>
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">말투:</span>
-                        <span>{agent.persona_profile.communication_style}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 1 }}>{agent.persona_profile.communication_style}</span>
                       </div>
                     </div>
                   ) : (
