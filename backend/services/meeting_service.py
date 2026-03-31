@@ -13,11 +13,24 @@ from prompts.moderator import MODERATOR_PROMPT
 
 # Agents SDK 환경 로드 (.env에서 OPENAI_API_KEY)
 import services.openai_client  # noqa: F401
+from services.usage_tracker import tracker
+
+
+def _log_langchain_usage(response, label: str):
+    """LangChain AIMessage에서 토큰 사용량 추출·기록"""
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        tracker.log(
+            service=label,
+            model="gpt-4o-mini",
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
 
 
 # ── LLM 인스턴스 ──
-llm = ChatOpenAI(model="gpt-4o", temperature=0.7)            # 발언용
-llm_structured = ChatOpenAI(model="gpt-4o", temperature=0.3)  # 판정용
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)            # 발언용
+llm_structured = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)  # 판정용
 
 
 # ── 그래프 상태 정의 ──
@@ -61,6 +74,7 @@ async def moderator_opening(state: MeetingState) -> dict:
             f"회의를 시작하세요."
         )),
     ])
+    _log_langchain_usage(response, "meeting/moderator_opening")
     opening = response.content
 
     msg = MeetingMessage(
@@ -115,6 +129,7 @@ async def select_next_speaker(state: MeetingState) -> dict:
             f"남은 참여자:\n{candidates}"
         )),
     ])
+    _log_langchain_usage(response, "meeting/select_speaker")
 
     try:
         parsed = json.loads(response.content)
@@ -155,6 +170,7 @@ async def agent_speak(state: MeetingState) -> dict:
         SystemMessage(content=agent_data["system_prompt"] + "\n\n" + _PARTICIPANT_RULES),
         HumanMessage(content=f"현재까지 대화:\n{history_text}\n\n{turn_instruction}"),
     ])
+    _log_langchain_usage(response, f"meeting/agent/{agent_data['name']}")
     content = response.content
 
     msg = MeetingMessage(
@@ -197,6 +213,7 @@ async def moderator_followup(state: MeetingState) -> dict:
             f"팔로업과 포화 판정을 수행하세요."
         )),
     ])
+    _log_langchain_usage(response, "meeting/moderator_followup")
 
     # JSON 파싱
     try:
@@ -222,6 +239,7 @@ async def moderator_followup(state: MeetingState) -> dict:
             )),
             HumanMessage(content=f"전체 대화:\n{history_text}\n\n마무리하세요."),
         ])
+        _log_langchain_usage(closing_response, "meeting/moderator_closing")
         followup_text = closing_response.content
 
     msg = MeetingMessage(
@@ -297,12 +315,15 @@ async def _stream_llm_turn(
     system_prompt: str,
     human_prompt: str,
     meta: dict,
+    usage_label: str = "meeting/stream",
 ) -> AsyncGenerator[str, None]:
     """LLM 호출을 토큰 스트리밍하며 start→delta*→end SSE 이벤트를 yield.
     완성된 전체 텍스트를 meta["_full_text"]에 저장."""
     yield _sse({"type": "start", **meta})
 
     full_text = ""
+    input_tokens = 0
+    output_tokens = 0
     async for chunk in llm.astream([
         SystemMessage(content=system_prompt),
         HumanMessage(content=human_prompt),
@@ -311,6 +332,17 @@ async def _stream_llm_turn(
         if delta:
             full_text += delta
             yield _sse({"type": "delta", "delta": delta})
+        # 마지막 청크에 usage_metadata가 포함될 수 있음
+        usage = getattr(chunk, "usage_metadata", None)
+        if usage:
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+
+    # usage_metadata가 없으면 글자 수 기반 대략 추정
+    if not input_tokens and not output_tokens:
+        input_tokens = len(system_prompt + human_prompt) // 3  # 대략 추정
+        output_tokens = len(full_text) // 3
+    tracker.log(service=usage_label, model="gpt-4o-mini", input_tokens=input_tokens, output_tokens=output_tokens)
 
     yield _sse({"type": "end", "content": full_text, **meta})
     meta["_full_text"] = full_text
@@ -370,9 +402,33 @@ async def run_meeting_stream(
     agents: list[AgentSchema],
     topic: str,
     context: str,
+    max_rounds: int = 5,
 ) -> AsyncGenerator[str, None]:
     """FGI 회의 시뮬레이션 — SSE 문자열을 토큰 단위로 yield.
     LangGraph 그래프를 수동 step으로 실행하며 발언 노드만 토큰 스트리밍."""
+
+    # ── 0. 회의 주제 정제 ──
+    topic_refine_resp = await llm_structured.ainvoke([
+        SystemMessage(content=(
+            "당신은 FGI 전문 리서처입니다. 사용자가 입력한 회의 주제를 명확한 FGI 탐색 주제로 정제하세요.\n"
+            "규칙:\n"
+            "- 모호한 표현을 구체적으로 명확화\n"
+            "- FGI 목적에 맞는 탐색 주제 형태로 다듬기\n"
+            "- 1-2문장, 한국어\n"
+            "- 원본 의도를 유지할 것\n"
+            '반드시 JSON으로만 응답: {"refined_topic": "정제된 주제"}'
+        )),
+        HumanMessage(content=f"원본 주제: {topic}\n연구 맥락: {context[:300]}"),
+    ])
+    _log_langchain_usage(topic_refine_resp, "meeting/topic_refine")
+    try:
+        refined_topic = json.loads(topic_refine_resp.content)["refined_topic"]
+    except (json.JSONDecodeError, KeyError):
+        refined_topic = topic
+
+    yield _sse({"type": "topic_refined", "topic": refined_topic})
+    await asyncio.sleep(0)
+    topic = refined_topic  # 이후 모든 LLM 호출에 정제된 주제 사용
 
     state: MeetingState = {
         "topic": topic,
@@ -380,7 +436,7 @@ async def run_meeting_stream(
         "agents": [a.model_dump() for a in agents],
         "history": [],
         "current_round": 0,
-        "max_rounds": 5,
+        "max_rounds": max_rounds,
         "spoke_this_round": [],
         "next_speaker_id": "",
         "saturation_count": 0,
@@ -397,8 +453,10 @@ async def run_meeting_stream(
         MODERATOR_PROMPT,
         f"회의 주제: {topic}\n연구 맥락: {context}\n참여자: {participant_names}\n\n회의를 시작하세요.",
         meta,
+        usage_label="meeting/stream/moderator_opening",
     ):
         yield chunk
+        await asyncio.sleep(0)
     opening = meta["_full_text"]
     state["history"] = [{"speaker": "모더레이터", "content": opening}]
     state["current_round"] = 1
@@ -440,16 +498,19 @@ async def run_meeting_stream(
                 agent_data["system_prompt"] + "\n\n" + _PARTICIPANT_RULES,
                 f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
                 meta,
+                usage_label=f"meeting/stream/agent/{agent_data['name']}",
             ):
                 yield chunk
+                await asyncio.sleep(0)
 
             content = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": agent_data["name"], "content": content}]
             state["spoke_this_round"] = state["spoke_this_round"] + [speaker_id]
 
-        # moderator_followup (판정은 ainvoke, 마무리/팔로업은 스트리밍)
+        # moderator 포화 판정 (블로킹) — 진행 중 keepalive 전송
+        yield ": keepalive\n\n"
+        await asyncio.sleep(0)
         followup_result = await moderator_followup(state)
-        # 판정 결과 반영
         has_ended = followup_result["should_end"]
 
         if has_ended:
@@ -462,8 +523,10 @@ async def run_meeting_stream(
                 MODERATOR_PROMPT + "\n\n마지막 라운드입니다. 핵심 논점을 정리하고 마무리하세요.",
                 f"전체 대화:\n{history_text}\n\n마무리하세요.",
                 meta,
+                usage_label="meeting/stream/moderator_closing",
             ):
                 yield chunk
+                await asyncio.sleep(0)
             closing = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": closing}]
         else:
@@ -477,8 +540,10 @@ async def run_meeting_stream(
                 f"현재 라운드: {state['current_round']}\n전체 대화:\n{history_text}\n\n"
                 f"이번 라운드의 핵심 논점을 정리하고 팔로업 질문을 던지세요.",
                 meta,
+                usage_label="meeting/stream/moderator_followup",
             ):
                 yield chunk
+                await asyncio.sleep(0)
             followup_text = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": followup_text}]
 

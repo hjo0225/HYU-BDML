@@ -69,12 +69,12 @@ export default function Phase4Page() {
     }
   }
 
-  // 라운드 계산
+  // 라운드 계산 (백엔드 max_rounds 계산식과 동일)
   const agentCount = project.agents.length;
-  const totalRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
+  const maxRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
   const agentMessages = project.messages.filter((m) => m.role === 'agent').length;
   const currentRound = agentCount > 0
-    ? Math.min(Math.ceil(agentMessages / agentCount), totalRounds)
+    ? Math.min(Math.ceil(agentMessages / agentCount), maxRounds)
     : 0;
 
   /* 경과 시간 포맷 */
@@ -115,7 +115,7 @@ export default function Phase4Page() {
 
     try {
       await fetchMeeting(
-        { agents: project.agents, topic, research_context: context },
+        { agents: project.agents, topic, research_context: context, max_rounds: maxRounds },
         // onStart: 새 발언 시작
         (meta) => {
           if (abortRef.current) return;
@@ -145,6 +145,10 @@ export default function Phase4Page() {
           streamingTextRef.current = '';
           setSpeakingAgent(null);
           setPhase('done');
+        },
+        // onTopicRefined: 백엔드가 정제한 주제로 업데이트
+        (refined) => {
+          if (!abortRef.current) setTopic(refined);
         },
       );
     } catch (err) {
@@ -418,7 +422,7 @@ export default function Phase4Page() {
           <div className="insight-item">
             <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>라운드</div>
             <div style={{ fontSize: 12, fontWeight: 500 }}>
-              {`${currentRound} / ${totalRounds}`}
+              {`${currentRound} / ${maxRounds}`}
             </div>
           </div>
           <div className="insight-item">

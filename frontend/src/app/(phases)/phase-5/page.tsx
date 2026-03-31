@@ -65,17 +65,21 @@ export default function Phase5Page() {
 
   /* Markdown → HTML 간이 변환 */
   const renderMarkdown = (md: string) => {
-    let html = md
+    // 테이블 구분선(|---|---|)을 미리 제거 — 빈 줄이 생겨 <table> 래핑이 끊기는 문제 방지
+    const cleaned = md
+      .split('\n')
+      .filter((line) => !/^\|[\s:|-]+\|$/.test(line.trim()))
+      .join('\n');
+
+    let html = cleaned
       // 테이블
       .replace(/^\|(.+)\|$/gm, (match) => {
         const cells = match.split('|').filter(Boolean).map((c) => c.trim());
-        // 구분선 (---) 행 무시
-        if (cells.every((c) => /^[-:]+$/.test(c))) return '';
         const tag = 'td';
         return `<tr>${cells.map((c) => `<${tag}>${c}</${tag}>`).join('')}</tr>`;
       })
-      // 테이블 래핑
-      .replace(/((?:<tr>.*<\/tr>\n?)+)/g, '<table class="minutes-table">$1</table>')
+      // 테이블 래핑 (행 사이 빈 줄 허용)
+      .replace(/((?:<tr>.*<\/tr>\s*)+)/g, '<table class="minutes-table">$1</table>')
       // 헤더
       .replace(/^### (.+)$/gm, '<h3 class="minutes-h3">$1</h3>')
       .replace(/^## (.+)$/gm, '<h2 class="minutes-h2">$1</h2>')

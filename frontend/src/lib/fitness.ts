@@ -37,7 +37,8 @@ export function checkFitness(
     checkAgeCoverage(agents, brief),
     checkGenderMatch(agents, brief),
     checkExpertPresence(agents, brief),
-    checkDiversity(agents),
+    checkComposition(agents),
+    checkPersonaDiversity(agents),
   ];
 
   let overall: FitnessResult['overall'] = 'warning';
@@ -129,32 +130,54 @@ function checkExpertPresence(
   };
 }
 
-function checkDiversity(agents: AgentSchema[]): FitnessCheck {
-  const personaAgents = agents.filter((agent) => agent.persona_profile?.age != null);
-  if (personaAgents.length === 0) {
+function checkComposition(agents: AgentSchema[]): FitnessCheck {
+  const customerCount = agents.filter((a) => a.type === 'customer').length;
+  const expertCount = agents.filter((a) => a.type === 'expert').length;
+
+  const isIdeal = customerCount >= 3 && expertCount >= 2;
+  const hasMinimum = customerCount >= 2 && expertCount >= 1;
+
+  return {
+    label: '소비자/전문가 구성 비율',
+    status: isIdeal ? 'good' : hasMinimum ? 'warning' : 'poor',
+    detail: `소비자 ${customerCount}명, 전문가 ${expertCount}명 (권장: 소비자 3 + 전문가 2)`,
+  };
+}
+
+function checkPersonaDiversity(agents: AgentSchema[]): FitnessCheck {
+  const customers = agents.filter(
+    (a) => a.type === 'customer' && a.persona_profile
+  );
+  if (customers.length < 2) {
     return {
-      label: '에이전트 간 다양성',
+      label: '소비자 페르소나 다양성',
       status: 'warning',
-      detail: '페르소나 정보 없음',
+      detail: '소비자 페르소나가 2명 미만이라 다양성 판단이 어렵습니다.',
     };
   }
 
-  const ageGroups = new Set(
-    personaAgents.map((agent) =>
-      Math.floor((agent.persona_profile!.age ?? 0) / 10) * 10
-    )
+  // 성격/소비성향 키워드 중복도 체크
+  const personalityWords = customers.map((a) =>
+    new Set(a.persona_profile!.personality.split(/[,،\s]+/).filter(Boolean))
   );
-
-  const status: FitnessStatus =
-    ageGroups.size >= 3 ? 'good' : ageGroups.size === 2 ? 'warning' : 'poor';
+  let overlapCount = 0;
+  let pairCount = 0;
+  for (let i = 0; i < personalityWords.length; i++) {
+    for (let j = i + 1; j < personalityWords.length; j++) {
+      const shared = [...personalityWords[i]].filter((w) => personalityWords[j].has(w));
+      if (shared.length > 0) overlapCount++;
+      pairCount++;
+    }
+  }
+  const overlapRatio = pairCount > 0 ? overlapCount / pairCount : 0;
 
   return {
-    label: '에이전트 간 다양성',
-    status,
-    detail: `연령 그룹 ${ageGroups.size}개(${Array.from(ageGroups)
-      .sort((a, b) => a - b)
-      .map((age) => `${age}대`)
-      .join(', ')})로 구성되어 있습니다.`,
+    label: '소비자 페르소나 다양성',
+    status: overlapRatio <= 0.3 ? 'good' : overlapRatio <= 0.6 ? 'warning' : 'poor',
+    detail:
+      overlapRatio <= 0.3
+        ? '소비자 페르소나 간 성격·성향이 충분히 차별화되어 있습니다.'
+        : '소비자 페르소나 간 성격·성향이 유사합니다. 다양한 관점을 위해 차별화를 권장합니다.',
   };
 }
 
