@@ -67,12 +67,6 @@ class SynthesizePromptRequest(BaseModel):
     type: Literal["customer", "expert", "custom"]
     persona_profile: PersonaProfile
 
-class FitnessCheckRequest(BaseModel):
-    """에이전트 구성 적합성 점검 요청"""
-    agents: list[AgentSchema]
-    brief: ResearchBrief
-    report: MarketReport
-
 # ── 회의 ──
 class MeetingRequest(BaseModel):
     """Phase 4: 회의 시뮬레이션 요청"""

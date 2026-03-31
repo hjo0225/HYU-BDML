@@ -6,7 +6,6 @@ from models.schemas import (
     AgentSchema,
     PersonaProfile,
     ResearchBrief,
-    MarketReport,
 )
 from prompts.agent_recommend import AGENT_RECOMMEND_PROMPT
 
@@ -119,117 +118,6 @@ def build_system_prompt_from_persona(name: str, type: str, profile: PersonaProfi
     return "\n".join(lines)
 
 
-def _parse_age_range(text: str) -> tuple[int, int] | None:
-    """타깃 고객 텍스트에서 연령 범위 추출"""
-    import re
-    m = re.search(r'(\d+)-(\d+)대', text)
-    if m:
-        return int(m.group(1)), int(m.group(2)) + 9
-    m = re.search(r'(\d+)대', text)
-    if m:
-        start = int(m.group(1))
-        return start, start + 9
-    m = re.search(r'(\d+)-(\d+)세', text)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    return None
-
-
-def check_agent_fitness(
-    agents: list[AgentSchema],
-    brief: ResearchBrief,
-    report: MarketReport,
-) -> dict:
-    """에이전트 구성 적합성 검증 결과를 반환한다."""
-    customer_agents = [a for a in agents if a.type == "customer"]
-    expert_agents = [a for a in agents if a.type == "expert"]
-    persona_agents = [a for a in agents if a.persona_profile]
-
-    strengths: list[str] = []
-    warnings: list[str] = []
-    suggestions: list[str] = []
-    score = 100
-
-    # 소비자/전문가 구성 비율
-    if len(customer_agents) >= 3 and len(expert_agents) >= 2:
-        strengths.append(f"소비자 {len(customer_agents)}명 + 전문가 {len(expert_agents)}명으로 균형 잡힌 구성입니다.")
-    else:
-        if len(customer_agents) < 3:
-            warnings.append(f"소비자 페르소나가 {len(customer_agents)}명으로 부족합니다.")
-            suggestions.append("소비자 페르소나를 3명 이상으로 구성하면 다양한 고객 관점을 확보할 수 있습니다.")
-            score -= 15
-        if len(expert_agents) < 2:
-            warnings.append(f"전문가 페르소나가 {len(expert_agents)}명으로 부족합니다.")
-            suggestions.append(f"{brief.category} 분야의 서로 다른 전문가를 2명 이상 포함하세요.")
-            score -= 10
-
-    # 타깃 고객 연령 일치도
-    age_range = _parse_age_range(brief.target_customer)
-    if age_range and persona_agents:
-        min_age, max_age = age_range
-        matched = sum(
-            1 for a in customer_agents
-            if a.persona_profile and min_age <= a.persona_profile.age <= max_age
-        )
-        if matched == len(customer_agents):
-            strengths.append(f"소비자 전원이 타깃 연령대({min_age}-{max_age}세)에 부합합니다.")
-        elif matched >= 1:
-            warnings.append(f"소비자 {len(customer_agents)}명 중 {matched}명만 타깃 연령대에 부합합니다.")
-            suggestions.append("타깃 고객층의 실제 연령대에 맞는 페르소나로 조정하세요.")
-            score -= 10
-        else:
-            warnings.append("소비자 페르소나 중 타깃 연령대에 해당하는 에이전트가 없습니다.")
-            suggestions.append(f"타깃 고객({brief.target_customer})에 맞는 연령대로 수정하세요.")
-            score -= 20
-
-    # 전문가 분야 다양성
-    if len(expert_agents) >= 2:
-        occupations = [a.persona_profile.occupation for a in expert_agents if a.persona_profile]
-        if len(set(occupations)) == len(occupations):
-            strengths.append("전문가들이 서로 다른 분야를 커버하고 있습니다.")
-        else:
-            warnings.append("전문가들의 전문 분야가 유사합니다.")
-            suggestions.append("서로 다른 관점을 제공할 수 있는 전문 분야로 분산하세요.")
-            score -= 10
-
-    # 소비자 페르소나 성격 차별화
-    if len(customer_agents) >= 2:
-        personalities = [
-            a.persona_profile.personality for a in customer_agents if a.persona_profile
-        ]
-        if personalities:
-            has_critical = any(
-                kw in p for p in personalities
-                for kw in ["회의적", "보수적", "신중", "비판적", "까다로운"]
-            )
-            if has_critical:
-                strengths.append("회의적/비판적 성향의 소비자가 포함되어 균형 잡힌 논의가 가능합니다.")
-            else:
-                suggestions.append("회의적이거나 보수적인 성향의 소비자를 포함하면 비판적 관점을 확보할 수 있습니다.")
-                score -= 5
-
-    if report.target_analysis.strip():
-        strengths.append("시장조사 보고서의 타깃 분석을 바탕으로 에이전트 구성을 해석할 수 있습니다.")
-    else:
-        warnings.append("시장조사 보고서의 타깃 분석 정보가 약해 세부 적합성 판단이 어렵습니다.")
-        score -= 10
-
-    if not strengths:
-        strengths.append("기본적인 에이전트 구성은 완료되어 추가 개선의 출발점으로 사용할 수 있습니다.")
-
-    score = max(0, min(100, score))
-    summary = (
-        f"{len(agents)}명의 에이전트 구성을 기준으로 타깃 고객 일치도, "
-        f"소비자/전문가 비율, 페르소나 차별화를 종합 평가했습니다."
-    )
-
-    return {
-        "score": score,
-        "summary": summary,
-        "strengths": strengths,
-        "warnings": warnings,
-        "suggestions": suggestions,
-    }
 
 
 async def _regenerate_customer_agent(
