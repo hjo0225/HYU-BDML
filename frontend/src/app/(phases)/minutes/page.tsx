@@ -218,12 +218,12 @@ export default function Phase5Page() {
   /* 네비게이션 */
   const goPrev = () => {
     setCurrentPhase(4);
-    router.push('/phase-4');
+    router.push('/meeting');
   };
 
   const startNewProject = () => {
     resetProject();
-    router.push('/phase-1');
+    router.push('/research-input');
   };
 
   /* 데이터 없으면 Phase 4로 안내 */

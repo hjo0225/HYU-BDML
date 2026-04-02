@@ -1,5 +1,10 @@
 /* 빅마랩 타입 정의 — backend schemas.py와 동기화 */
 
+export interface ThinkingEvent {
+  agent: 'researcher' | 'fact_checker';
+  query: string;
+}
+
 // ── 연구 정보 ──
 export interface ResearchBrief {
   background: string;
@@ -15,17 +20,22 @@ export interface RefinedResearch {
   refined_usage_plan: string;
 }
 
-export interface ReportSource {
-  label: string;
-  url?: string;
+export interface EvidenceItem {
+  source_type: 'news' | 'webkr' | 'blog' | 'cafearticle' | 'doc';
+  source_engine?: 'naver' | 'openai_web';
+  title: string;
+  url: string;
   publisher?: string;
   published_at?: string;
-  note?: string;
+  snippet: string;
+  relevance_score: number;
 }
 
 export interface ReportSection {
-  content: string;
-  sources: ReportSource[];
+  summary: string;
+  key_claims: string[];
+  evidence: EvidenceItem[];
+  confidence: 'high' | 'medium' | 'low';
 }
 
 export interface MarketReport {

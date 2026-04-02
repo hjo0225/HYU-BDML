@@ -1,18 +1,32 @@
-"""회의 시뮬레이션 서비스 — LangGraph 기반 멀티 에이전트 FGI 엔진"""
+"""회의 시뮬레이션 서비스.
+
+회의 주제를 정제하고, 발언자 선택과 발언 생성을 반복하면서 SSE로 실시간 스트리밍한다.
+"""
 import asyncio
 import json
 import operator
 from typing import TypedDict, Annotated, AsyncGenerator
 
+from openai import AsyncOpenAI
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from models.schemas import AgentSchema, MeetingMessage
-from prompts.moderator import MODERATOR_PROMPT
+from prompts.moderator import (
+    CLOSING_PROMPT,
+    FOLLOWUP_AND_SATURATION_PROMPT,
+    INSIGHT_CHECK_PROMPT,
+    MODERATOR_PROMPT,
+    PARTICIPANT_RULES_PROMPT,
+    SPEAKER_SELECTION_PROMPT,
+    TOPIC_REFINE_PROMPT,
+)
 
-# Agents SDK 환경 로드 (.env에서 OPENAI_API_KEY)
+# import 시점에 `.env`를 로드해 LangChain/OpenAI 호출이 같은 환경 변수를 사용하게 한다.
 import services.openai_client  # noqa: F401
+from services.naver_search_service import SearchResultItem
+from services.openai_web_search_service import OpenAIWebSearchService
 from services.usage_tracker import tracker
 
 
@@ -28,36 +42,42 @@ def _log_langchain_usage(response, label: str):
         )
 
 
-# ── LLM 인스턴스 ──
+# 발언 생성용 모델과 판정용 모델을 분리해 비용과 응답 품질을 조절한다.
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)            # 발언용
 llm_structured = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)  # 판정용
+_meeting_search = OpenAIWebSearchService(AsyncOpenAI())
+
+MAX_MEETING_SEARCHES = 2
+MEETING_SEARCH_SECTION = "meeting_topic"
+MEETING_SEARCH_PLANNER_PROMPT = """당신은 FGI 모더레이터 보조 리서처입니다.
+현재 회의 주제와 직전 논의 흐름을 보고, 회의 진행에 꼭 필요한 경우에만 아주 좁은 범위의 추가 검색을 제안하세요.
+
+규칙:
+1. 회의 주제와 직접 연결된 사실 확인이나 빈칸 보완일 때만 should_search=true
+2. 새 주제를 열거나 경쟁사 전수조사처럼 범위를 넓히지 말 것
+3. 검색어는 한국 웹검색용 짧은 문구 1개만 제안할 것
+4. search_count가 max_searches 이상이면 반드시 should_search=false
+5. 반드시 JSON으로만 응답할 것
+
+응답 형식:
+{"should_search": true, "query": "검색어", "reason": "한 줄 이유"}
+""".strip()
 
 
-# ── 그래프 상태 정의 ──
+# LangGraph에서 노드 간에 공유하는 상태
 class MeetingState(TypedDict):
     topic: str
     context: str
     agents: list[dict]                          # AgentSchema.model_dump() 리스트
-    history: Annotated[list[dict], operator.add] # [{"speaker": str, "content": str}]
+    history: Annotated[list[dict], operator.add] # 누적 발언 로그
     current_round: int
-    max_rounds: int                             # 기본 5
-    spoke_this_round: list[str]                 # 현재 라운드에서 발언한 agent_id 목록
+    max_rounds: int                             # 한 회의에서 허용하는 최대 라운드 수
+    spoke_this_round: list[str]                 # 현재 라운드에서 이미 발언한 agent_id 목록
     next_speaker_id: str
-    saturation_count: int                       # 연속 "새 인사이트 없음" 횟수
+    saturation_count: int                       # 연속으로 새 인사이트가 없다고 판단된 횟수
     should_end: bool
-    pending_messages: Annotated[list[dict], operator.add]  # SSE 출력 버퍼
-
-
-# ── 참여자 발언 규칙 ──
-_PARTICIPANT_RULES = """
-회의 발언 규칙:
-- 반드시 2-4문장으로 답변할 것
-- 인사나 자기소개는 첫 발언에서만 간단히. 이후 라운드에서는 절대 반복하지 말 것
-- 이전 자신의 발언을 기억하고 반복하지 말 것. 새로운 관점이나 심화된 의견을 제시할 것
-- 다른 참여자의 의견에 동의/반박/보충하며 자연스러운 대화를 이어갈 것
-- 자신만의 페르소나(경험, 성격, 가치관)에 기반해 일관되게 답변할 것
-- 모더레이터의 질문에 직접 답하되, 구체적 경험이나 사례를 포함할 것
-""".strip()
+    pending_messages: Annotated[list[dict], operator.add]  # 메시지 단위 API에서 꺼내 갈 버퍼
+    search_count: int
 
 
 # ── 노드 함수 ──
@@ -98,15 +118,15 @@ async def select_next_speaker(state: MeetingState) -> dict:
     all_ids = [a["id"] for a in state["agents"]]
     remaining = [aid for aid in all_ids if aid not in state["spoke_this_round"]]
 
-    # 모두 발언 완료
+    # 한 라운드 안에서 모두 발언했으면 모더레이터 팔로업으로 넘어간다.
     if not remaining:
         return {"next_speaker_id": "__round_done__"}
 
-    # 1명 남음 — 선택 불필요
+    # 한 명만 남았으면 모델 호출 없이 바로 선택한다.
     if len(remaining) == 1:
         return {"next_speaker_id": remaining[0]}
 
-    # 2명 이상 — LLM에게 선택 위임
+    # 두 명 이상 남았을 때만 현재 대화 맥락을 보고 다음 발언자를 고른다.
     history_text = "\n".join(
         f"[{h['speaker']}]: {h['content']}" for h in state["history"]
     )
@@ -118,12 +138,7 @@ async def select_next_speaker(state: MeetingState) -> dict:
     )
 
     response = await llm_structured.ainvoke([
-        SystemMessage(content=(
-            "당신은 FGI 모더레이터입니다. 대화 맥락을 분석하여 다음 발언자를 선택하세요.\n"
-            "선택 기준: 직전 발언에 반론/보충 가능한 사람, 아직 충분히 의견을 표현하지 못한 사람, "
-            "다른 관점을 가진 사람.\n"
-            '반드시 JSON으로만 응답: {"agent_id": "선택한 id"}'
-        )),
+        SystemMessage(content=SPEAKER_SELECTION_PROMPT),
         HumanMessage(content=(
             f"현재까지 대화:\n{history_text}\n\n"
             f"남은 참여자:\n{candidates}"
@@ -139,7 +154,7 @@ async def select_next_speaker(state: MeetingState) -> dict:
     except (json.JSONDecodeError, KeyError):
         pass
 
-    # 파싱 실패 또는 유효하지 않은 id → fallback
+    # 구조화 응답이 깨지면 첫 후보를 선택해 회의를 계속 진행한다.
     return {"next_speaker_id": remaining[0]}
 
 
@@ -148,14 +163,14 @@ async def agent_speak(state: MeetingState) -> dict:
     speaker_id = state["next_speaker_id"]
     agent_data = next(a for a in state["agents"] if a["id"] == speaker_id)
 
-    # 대화 이력 구성 — 자신의 발언에 ★ 표시
+    # 자신의 이전 발언을 눈에 띄게 표시해 중복 발화를 줄인다.
     history_lines = []
     for h in state["history"]:
         prefix = "★ 나의 이전 발언 ★ " if h["speaker"] == agent_data["name"] else ""
         history_lines.append(f"[{prefix}{h['speaker']}]: {h['content']}")
     history_text = "\n".join(history_lines)
 
-    # 라운드별 지시
+    # 첫 라운드는 아이스브레이킹, 이후 라운드는 심화 답변 중심으로 유도한다.
     current_round = state["current_round"]
     if current_round == 1 and speaker_id not in state["spoke_this_round"]:
         turn_instruction = "첫 번째 라운드입니다. 간단히 인사하고 주제에 대한 첫 의견을 말하세요."
@@ -165,9 +180,9 @@ async def agent_speak(state: MeetingState) -> dict:
             f"이전 자신의 발언과 다른 참여자 의견을 참고하여 심화된 의견을 제시하세요."
         )
 
-    # LLM 호출
+    # 실제 발언 본문 생성
     response = await llm.ainvoke([
-        SystemMessage(content=agent_data["system_prompt"] + "\n\n" + _PARTICIPANT_RULES),
+        SystemMessage(content=agent_data["system_prompt"] + "\n\n" + PARTICIPANT_RULES_PROMPT),
         HumanMessage(content=f"현재까지 대화:\n{history_text}\n\n{turn_instruction}"),
     ])
     _log_langchain_usage(response, f"meeting/agent/{agent_data['name']}")
@@ -196,17 +211,9 @@ async def moderator_followup(state: MeetingState) -> dict:
     )
     current_round = state["current_round"]
 
-    # 팔로업 + 포화 판정을 하나의 LLM 호출로
+    # 팔로업 생성과 포화 판정을 한 번의 구조화 호출로 처리한다.
     response = await llm_structured.ainvoke([
-        SystemMessage(content=(
-            MODERATOR_PROMPT + "\n\n"
-            "추가 지시:\n"
-            "1. 이번 라운드의 핵심 논점을 정리하고 팔로업 질문을 던지세요.\n"
-            "2. 이번 라운드에서 이전에 없던 새로운 인사이트가 나왔는지 판정하세요.\n"
-            "   새로운 관점, 구체적 사례, 기존과 다른 의견이 하나라도 있으면 '새 인사이트 있음'.\n"
-            "반드시 JSON으로만 응답:\n"
-            '{"followup": "팔로업 발언", "has_new_insight": true/false, "insight_summary": "요약"}'
-        )),
+        SystemMessage(content=FOLLOWUP_AND_SATURATION_PROMPT.format(moderator_prompt=MODERATOR_PROMPT)),
         HumanMessage(content=(
             f"현재 라운드: {current_round}\n"
             f"전체 대화:\n{history_text}\n\n"
@@ -215,28 +222,25 @@ async def moderator_followup(state: MeetingState) -> dict:
     ])
     _log_langchain_usage(response, "meeting/moderator_followup")
 
-    # JSON 파싱
+    # 구조화 응답 파싱
     try:
         parsed = json.loads(response.content)
         followup_text = parsed["followup"]
         has_new = parsed["has_new_insight"]
     except (json.JSONDecodeError, KeyError):
         followup_text = response.content
-        has_new = True  # 파싱 실패 시 안전하게 계속
+        has_new = True  # 판단이 불명확하면 회의를 더 이어가는 쪽이 안전하다.
 
-    # 포화 카운터 업데이트
+    # 새 인사이트가 없으면 카운터를 누적하고, 있으면 다시 0으로 초기화한다.
     new_saturation = 0 if has_new else state["saturation_count"] + 1
 
-    # 종료 조건 판정
+    # 인사이트 고갈 또는 최대 라운드 도달 시 종료한다.
     should_end = new_saturation >= 2 or current_round >= state["max_rounds"]
 
-    # 종료 시 마무리 멘트로 교체
+    # 종료하는 턴이면 팔로업 대신 마무리 멘트를 만든다.
     if should_end:
         closing_response = await llm.ainvoke([
-            SystemMessage(content=(
-                MODERATOR_PROMPT + "\n\n"
-                "마지막 라운드입니다. 핵심 논점을 정리하고 마무리하세요."
-            )),
+            SystemMessage(content=CLOSING_PROMPT.format(moderator_prompt=MODERATOR_PROMPT)),
             HumanMessage(content=f"전체 대화:\n{history_text}\n\n마무리하세요."),
         ])
         _log_langchain_usage(closing_response, "meeting/moderator_closing")
@@ -301,7 +305,7 @@ def build_meeting_graph():
     return graph.compile()
 
 
-# 싱글턴 그래프 인스턴스
+# import 이후 재사용할 수 있도록 그래프를 한 번만 컴파일한다.
 _meeting_graph = build_meeting_graph()
 
 
@@ -317,8 +321,7 @@ async def _stream_llm_turn(
     meta: dict,
     usage_label: str = "meeting/stream",
 ) -> AsyncGenerator[str, None]:
-    """LLM 호출을 토큰 스트리밍하며 start→delta*→end SSE 이벤트를 yield.
-    완성된 전체 텍스트를 meta["_full_text"]에 저장."""
+    """한 번의 발언 생성 과정을 start -> delta* -> end 이벤트로 변환한다."""
     yield _sse({"type": "start", **meta})
 
     full_text = ""
@@ -332,13 +335,13 @@ async def _stream_llm_turn(
         if delta:
             full_text += delta
             yield _sse({"type": "delta", "delta": delta})
-        # 마지막 청크에 usage_metadata가 포함될 수 있음
+        # 마지막 청크에 usage 정보가 붙는 경우가 있어 매번 확인한다.
         usage = getattr(chunk, "usage_metadata", None)
         if usage:
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
 
-    # usage_metadata가 없으면 글자 수 기반 대략 추정
+    # usage 메타데이터가 없을 때는 대략적인 길이 기반으로 기록한다.
     if not input_tokens and not output_tokens:
         input_tokens = len(system_prompt + human_prompt) // 3  # 대략 추정
         output_tokens = len(full_text) // 3
@@ -368,7 +371,70 @@ def _agent_meta(agent_data: dict) -> dict:
     }
 
 
-# ── 외부 인터페이스 (메시지 단위 — 라우터 호환) ──
+def _format_search_context(query: str, items: list[SearchResultItem]) -> str:
+    if not items:
+        return ""
+
+    lines = [f"[추가 검색 참고] 쿼리: {query}"]
+    for idx, item in enumerate(items[:3], start=1):
+        publisher = item.publisher or "출처 미상"
+        date = item.published_at or "날짜 미상"
+        snippet = (item.snippet or item.title or "").strip()
+        lines.append(
+            f"{idx}. {item.title} | {publisher} | {date} | {snippet}"
+        )
+    lines.append("위 검색 결과는 회의 주제와 직접 연결된 보조 근거입니다. 발언에 필요할 때만 신중히 반영하세요.")
+    return "\n".join(lines)
+
+
+async def _plan_meeting_search(state: MeetingState) -> str | None:
+    """최근 대화가 막혔을 때만 보조 검색어를 제안한다."""
+    if state["search_count"] >= MAX_MEETING_SEARCHES or state["current_round"] < 2:
+        return None
+
+    recent_history = state["history"][-8:]
+    history_text = "\n".join(
+        f"[{h['speaker']}]: {h['content']}" for h in recent_history
+    )
+
+    response = await llm_structured.ainvoke([
+        SystemMessage(content=MEETING_SEARCH_PLANNER_PROMPT),
+        HumanMessage(content=(
+            f"회의 주제: {state['topic']}\n"
+            f"연구 맥락:\n{state['context'][:800]}\n\n"
+            f"최근 대화:\n{history_text}\n\n"
+            f"현재 search_count={state['search_count']}, max_searches={MAX_MEETING_SEARCHES}"
+        )),
+    ])
+    _log_langchain_usage(response, "meeting/search_planner")
+
+    try:
+        parsed = json.loads(response.content)
+        if parsed.get("should_search") and parsed.get("query"):
+            return str(parsed["query"]).strip()
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+    return None
+
+
+async def _maybe_run_meeting_search(state: MeetingState) -> tuple[str, int]:
+    """검색이 필요하다고 판단된 경우에만 검색 컨텍스트를 추가한다."""
+    query = await _plan_meeting_search(state)
+    if not query:
+        return "", state["search_count"]
+
+    try:
+        items = await _meeting_search.search(section=MEETING_SEARCH_SECTION, query=query)
+    except Exception:
+        return "", state["search_count"]
+
+    context = _format_search_context(query, items)
+    if not context:
+        return "", state["search_count"]
+    return context, state["search_count"] + 1
+
+
+# ── 외부 인터페이스 (메시지 단위) ──
 async def run_meeting(
     agents: list[AgentSchema],
     topic: str,
@@ -388,6 +454,7 @@ async def run_meeting(
         "saturation_count": 0,
         "should_end": False,
         "pending_messages": [],
+        "search_count": 0,
     }
 
     async for event in _meeting_graph.astream(initial_state, stream_mode="updates"):
@@ -398,6 +465,42 @@ async def run_meeting(
 
 
 # ── 외부 인터페이스 (토큰 스트리밍) ──
+
+async def _check_new_insight(state: MeetingState) -> dict:
+    """새로운 인사이트 유무만 빠르게 판정해 종료 여부를 결정한다."""
+    history_text = "\n".join(
+        f"[{h['speaker']}]: {h['content']}" for h in state["history"]
+    )
+    current_round = state["current_round"]
+
+    response = await llm_structured.ainvoke([
+        SystemMessage(content=INSIGHT_CHECK_PROMPT),
+        HumanMessage(content=(
+            f"현재 라운드: {current_round}\n"
+            f"전체 대화:\n{history_text}\n\n"
+            f"새 인사이트 판정을 수행하세요."
+        )),
+    ])
+    _log_langchain_usage(response, "meeting/check_insight")
+
+    has_new = True
+    try:
+        parsed = json.loads(response.content)
+        if "has_new_insight" in parsed:
+            has_new = parsed["has_new_insight"]
+    except Exception:
+        pass
+
+    new_saturation = 0 if has_new else state["saturation_count"] + 1
+    should_end = new_saturation >= 2 or current_round >= state["max_rounds"]
+
+    return {
+        "saturation_count": new_saturation,
+        "should_end": should_end,
+        "current_round": current_round + 1,
+    }
+
+
 async def run_meeting_stream(
     agents: list[AgentSchema],
     topic: str,
@@ -407,17 +510,9 @@ async def run_meeting_stream(
     """FGI 회의 시뮬레이션 — SSE 문자열을 토큰 단위로 yield.
     LangGraph 그래프를 수동 step으로 실행하며 발언 노드만 토큰 스트리밍."""
 
-    # ── 0. 회의 주제 정제 ──
+    # 시작 전에 주제를 짧고 선명한 질문으로 정리해 이후 발언 품질을 맞춘다.
     topic_refine_resp = await llm_structured.ainvoke([
-        SystemMessage(content=(
-            "당신은 FGI 전문 리서처입니다. 사용자가 입력한 회의 주제를 명확한 FGI 탐색 주제로 정제하세요.\n"
-            "규칙:\n"
-            "- 모호한 표현을 구체적으로 명확화\n"
-            "- FGI 목적에 맞는 탐색 주제 형태로 다듬기\n"
-            "- 1-2문장, 한국어\n"
-            "- 원본 의도를 유지할 것\n"
-            '반드시 JSON으로만 응답: {"refined_topic": "정제된 주제"}'
-        )),
+        SystemMessage(content=TOPIC_REFINE_PROMPT),
         HumanMessage(content=f"원본 주제: {topic}\n연구 맥락: {context[:300]}"),
     ])
     _log_langchain_usage(topic_refine_resp, "meeting/topic_refine")
@@ -428,7 +523,7 @@ async def run_meeting_stream(
 
     yield _sse({"type": "topic_refined", "topic": refined_topic})
     await asyncio.sleep(0)
-    topic = refined_topic  # 이후 모든 LLM 호출에 정제된 주제 사용
+    topic = refined_topic  # 이후 모든 모델 호출은 정제된 주제를 기준으로 진행한다.
 
     state: MeetingState = {
         "topic": topic,
@@ -442,12 +537,13 @@ async def run_meeting_stream(
         "saturation_count": 0,
         "should_end": False,
         "pending_messages": [],
+        "search_count": 0,
     }
 
     agent_map = {a.id: a.model_dump() for a in agents}
     participant_names = ", ".join(a.name for a in agents)
 
-    # ── 1. 모더레이터 오프닝 (토큰 스트리밍) ──
+    # 1. 모더레이터 오프닝
     meta = {**_MODERATOR_META}
     async for chunk in _stream_llm_turn(
         MODERATOR_PROMPT,
@@ -463,18 +559,18 @@ async def run_meeting_stream(
     state["spoke_this_round"] = []
     state["saturation_count"] = 0
 
-    # ── 2. 라운드 루프 ──
+    # 2. 라운드 루프
     while not state["should_end"]:
-        # 발언자 선택 → 발언 반복
+        # 같은 라운드 안에서 참여자가 한 번씩 발언할 때까지 반복한다.
         while True:
-            # select_next_speaker (LLM 판정, 스트리밍 불필요)
+            # 발언자 선택은 짧은 판정이므로 스트리밍 없이 처리한다.
             selection = await select_next_speaker(state)
             state["next_speaker_id"] = selection["next_speaker_id"]
 
             if state["next_speaker_id"] == "__round_done__":
                 break
 
-            # agent_speak (토큰 스트리밍)
+            # 실제 발언 본문은 토큰 단위로 스트리밍한다.
             speaker_id = state["next_speaker_id"]
             agent_data = agent_map[speaker_id]
 
@@ -495,7 +591,7 @@ async def run_meeting_stream(
 
             meta = _agent_meta(agent_data)
             async for chunk in _stream_llm_turn(
-                agent_data["system_prompt"] + "\n\n" + _PARTICIPANT_RULES,
+                agent_data["system_prompt"] + "\n\n" + PARTICIPANT_RULES_PROMPT,
                 f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
                 meta,
                 usage_label=f"meeting/stream/agent/{agent_data['name']}",
@@ -507,21 +603,26 @@ async def run_meeting_stream(
             state["history"] = state["history"] + [{"speaker": agent_data["name"], "content": content}]
             state["spoke_this_round"] = state["spoke_this_round"] + [speaker_id]
 
-        # moderator 포화 판정 (블로킹) — 진행 중 keepalive 전송
+        # 라운드 종료 뒤 인사이트 고갈 여부를 점검하고 필요하면 보조 검색을 수행한다.
         yield ": keepalive\n\n"
         await asyncio.sleep(0)
-        followup_result = await moderator_followup(state)
+        followup_result = await _check_new_insight(state)
         has_ended = followup_result["should_end"]
+        search_context, next_search_count = await _maybe_run_meeting_search(state)
 
         if has_ended:
-            # 마무리 멘트를 토큰 스트리밍으로 재생성
+            # 종료 조건이 충족되면 바로 마무리 멘트를 생성한다.
             history_text = "\n".join(
                 f"[{h['speaker']}]: {h['content']}" for h in state["history"]
             )
             meta = {**_MODERATOR_META}
             async for chunk in _stream_llm_turn(
-                MODERATOR_PROMPT + "\n\n마지막 라운드입니다. 핵심 논점을 정리하고 마무리하세요.",
-                f"전체 대화:\n{history_text}\n\n마무리하세요.",
+                CLOSING_PROMPT.format(moderator_prompt=MODERATOR_PROMPT),
+                (
+                    f"전체 대화:\n{history_text}\n\n"
+                    f"{search_context}\n\n"
+                    "마무리하세요."
+                ),
                 meta,
                 usage_label="meeting/stream/moderator_closing",
             ):
@@ -530,15 +631,19 @@ async def run_meeting_stream(
             closing = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": closing}]
         else:
-            # 팔로업을 토큰 스트리밍으로 재생성
+            # 회의를 이어갈 경우 다음 라운드를 위한 팔로업 질문을 만든다.
             history_text = "\n".join(
                 f"[{h['speaker']}]: {h['content']}" for h in state["history"]
             )
             meta = {**_MODERATOR_META}
             async for chunk in _stream_llm_turn(
                 MODERATOR_PROMPT,
-                f"현재 라운드: {state['current_round']}\n전체 대화:\n{history_text}\n\n"
-                f"이번 라운드의 핵심 논점을 정리하고 팔로업 질문을 던지세요.",
+                (
+                    f"현재 라운드: {state['current_round']}\n"
+                    f"전체 대화:\n{history_text}\n\n"
+                    f"{search_context}\n\n"
+                    "이번 라운드의 핵심 논점을 정리하고 팔로업 질문을 던지세요."
+                ),
                 meta,
                 usage_label="meeting/stream/moderator_followup",
             ):
@@ -547,10 +652,11 @@ async def run_meeting_stream(
             followup_text = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": followup_text}]
 
-        # 상태 업데이트
+        # 다음 루프를 위해 상태를 갱신한다.
         state["saturation_count"] = followup_result["saturation_count"]
         state["should_end"] = followup_result["should_end"]
         state["current_round"] = followup_result["current_round"]
         state["spoke_this_round"] = []
+        state["search_count"] = next_search_count
 
     yield _sse({"type": "done"})

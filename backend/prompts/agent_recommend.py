@@ -41,3 +41,14 @@ system_prompt는 빈 문자열로 응답하세요 (서버에서 persona_profile 
 
 agents 배열에 customer 3명 + expert 2명 = 5명을 담아 응답하세요.
 """.strip()
+
+CUSTOMER_REGEN_PROMPT = """
+주어진 조건으로 소비자 페르소나 에이전트 1명을 생성하세요.
+
+필수 제약:
+- type은 반드시 "customer"
+- persona_profile.age는 반드시 요청된 연령 범위 내 정수
+- occupation, experience 등 모든 필드는 age와 일관성 있게 작성
+- experience: 제품/서비스 관련 구체적 에피소드 최소 80자
+- system_prompt는 빈 문자열로 응답 (서버에서 자동 생성)
+""".strip()

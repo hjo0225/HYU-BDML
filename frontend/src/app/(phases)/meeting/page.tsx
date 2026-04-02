@@ -17,8 +17,8 @@ function buildResearchContext(project: ReturnType<typeof useProject>['project'])
   return [
     project.refined?.refined_background,
     project.refined?.refined_objective,
-    project.marketReport?.market_overview.content,
-    project.marketReport?.implications.content,
+    project.marketReport?.market_overview.summary,
+    project.marketReport?.implications.summary,
   ]
     .filter(Boolean)
     .join('\n');
@@ -28,11 +28,10 @@ export default function Phase4Page() {
   const router = useRouter();
   const {
     project,
-    setMessages,
     addMessage,
     setMeetingTopic,
-    setMinutes,
     setCurrentPhase,
+    startMeetingSession,
   } = useProject();
 
   // 상태
@@ -57,6 +56,7 @@ export default function Phase4Page() {
   // refs
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
+  const controllerRef = useRef<AbortController | null>(null);
   const streamingTextRef = useRef('');
 
   // 경과 시간 타이머
@@ -72,6 +72,12 @@ export default function Phase4Page() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [project.messages]);
+
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+    };
+  }, []);
 
   // 에이전트별 발언 횟수
   const speakCounts: Record<string, number> = {};
@@ -105,9 +111,7 @@ export default function Phase4Page() {
     }
 
     setPhase('running');
-    setMeetingTopic(topic.trim());
-    setMessages([]);
-    setMinutes(null);
+    startMeetingSession(topic.trim());
     setError(null);
     setSpeakingAgent(null);
     setStreamingMeta(null);
@@ -115,6 +119,8 @@ export default function Phase4Page() {
     streamingTextRef.current = '';
     setStartTime(Date.now());
     abortRef.current = false;
+    controllerRef.current?.abort();
+    controllerRef.current = new AbortController();
 
     // 연구 맥락 구성
     const context = buildResearchContext(project);
@@ -159,31 +165,42 @@ export default function Phase4Page() {
             setMeetingTopic(refined);
           }
         },
+        controllerRef.current.signal,
       );
     } catch (err) {
+      if (abortRef.current) {
+        return;
+      }
       setError(err instanceof Error ? err.message : '회의 중 오류 발생');
       setStreamingMeta(null);
       setStreamingText('');
       setSpeakingAgent(null);
       setPhase('done');
+    } finally {
+      controllerRef.current = null;
     }
-  }, [topic, project.agents, project.refined, project.marketReport, setMeetingTopic, setMessages, addMessage]);
+  }, [topic, project, setMeetingTopic, startMeetingSession, addMessage]);
 
   /* 회의 종료 */
   const stopMeeting = () => {
     abortRef.current = true;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
     setSpeakingAgent(null);
+    setStreamingMeta(null);
+    setStreamingText('');
+    streamingTextRef.current = '';
     setPhase('done');
   };
 
   /* 네비게이션 */
   const goNext = () => {
     setCurrentPhase(5);
-    router.push('/phase-5');
+    router.push('/minutes');
   };
   const goPrev = () => {
     setCurrentPhase(3);
-    router.push('/phase-3');
+    router.push('/agent-setup');
   };
 
   /* 데이터 없으면 Phase 3으로 안내 */

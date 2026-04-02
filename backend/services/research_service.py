@@ -1,46 +1,45 @@
-"""시장조사 서비스 — LangGraph 파이프라인"""
-import asyncio
-import re
-from typing import AsyncIterator
-from typing import TypedDict
-from pydantic import BaseModel
-from agents import Agent, Runner, WebSearchTool, ModelSettings
-from langgraph.graph import StateGraph, START, END
-from models.schemas import ResearchBrief
-from prompts.research import (
-    REFINER_PROMPT,
-    KEYWORD_EXTRACTOR_PROMPT,
-    SEARCHER_PROMPT,
-    REPORT_SYNTHESIZER_PROMPT,
-    CLAIM_EXTRACTOR_PROMPT,
-    CLAIM_VERIFIER_PROMPT,
-)
+"""시장조사 스트리밍 파이프라인.
 
-import services.openai_client  # noqa: F401
+브리프 확장 -> 검색 계획 수립 -> 섹션별 근거 수집 -> 요약 생성 -> 최종 브리프 재정제 순서로 동작한다.
+"""
+import asyncio
+import json
+import re
+from typing import AsyncGenerator
+
+from openai import AsyncOpenAI
+from pydantic import BaseModel
+
+from models.schemas import MarketReport, ResearchBrief, ReportSection
+from prompts.research import (
+    KEYWORD_EXTRACTOR_PROMPT,
+    PRE_REFINER_PROMPT,
+    REFINER_PROMPT,
+    SIMPLE_REFINER_PROMPT,
+)
+from services.naver_search_service import NaverSearchService, SearchResultItem
+from services.openai_web_search_service import OpenAIWebSearchService
+from services.research_query_planner import plan_research_queries
+from services.research_source_ranker import dedupe_and_rank
+from services.research_synthesizer import build_report, synthesize_section
 from services.usage_tracker import tracker
 
+_client = AsyncOpenAI()
+_naver_search = NaverSearchService()
+_openai_web_search = OpenAIWebSearchService(_client)
 
-def _log_runner_usage(result, service_label: str):
-    """Runner.run() 결과에서 토큰 사용량 추출·기록"""
-    for resp in getattr(result, "raw_responses", []):
-        usage = getattr(resp, "usage", None)
-        if usage:
-            tracker.log(
-                service=service_label,
-                model="gpt-4o-mini",
-                input_tokens=getattr(usage, "input_tokens", 0),
-                output_tokens=getattr(usage, "output_tokens", 0),
-            )
+OPENAI_STEP_TIMEOUT_SECONDS = 35
+OPENAI_SEARCH_TIMEOUT_SECONDS = 25
+SYNTHESIZE_TIMEOUT_SECONDS = 30
 
+_FIELD_TERMS = {
+    "market_overview": ["시장", "규모", "국내", "한국"],
+    "competitive_landscape": ["경쟁", "브랜드", "대체재", "서비스"],
+    "target_analysis": ["타깃", "고객", "니즈", "행동"],
+    "trends": ["트렌드", "MZ", "2030", "국내"],
+    "implications": ["기회", "문제점", "차별화", "시사점"],
+}
 
-# 한국 내 검색
-_web_search = WebSearchTool(
-    user_location={"type": "approximate", "country": "KR"},
-    search_context_size="high",
-)
-
-
-# ── Pydantic 스키마 ──
 
 class RefinedOutput(BaseModel):
     refined_background: str
@@ -56,354 +55,344 @@ class SearchKeywords(BaseModel):
     implications: list[str]
 
 
-class SearchResult(BaseModel):
-    """검색 결과 구조화 출력"""
-    content: str
-    sources: list[str]
-
-
-class ReportOutput(BaseModel):
-    """최종 보고서 출력 스키마"""
-    market_overview: str
-    competitive_landscape: str
-    target_analysis: str
-    trends: str
-    implications: str
-
-
-# step_verify 전용 중간 모델
-class ClaimItem(BaseModel):
-    field: str
-    original_text: str
-    search_query: str
-
-
-class ClaimsExtracted(BaseModel):
-    claims: list[ClaimItem]
-
-
-class VerifiedClaim(BaseModel):
-    field: str
-    original_text: str
-    corrected_text: str
-    correction_applied: bool
-    source: str
-
-
-# ── LangGraph State ──
-
-class ResearchState(TypedDict):
-    brief: ResearchBrief
-    user_message: str
-    keywords: SearchKeywords | None
-    search_results: dict[str, str]
-    report: ReportOutput | None
-    verified_report: ReportOutput | None
-    refined: RefinedOutput | None
-
-
-# ── 에이전트 팩토리 ──
-
-def _create_refiner(market_report: str) -> Agent:
-    return Agent(
-        name="연구 정보 고도화",
-        instructions=REFINER_PROMPT.replace("{{market_report}}", market_report),
-        model="gpt-4o-mini",
-        output_type=RefinedOutput,
+def _log_response_usage(response, label: str, model: str) -> None:
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return
+    tracker.log(
+        service=label,
+        model=model,
+        input_tokens=getattr(usage, "input_tokens", 0),
+        output_tokens=getattr(usage, "output_tokens", 0),
     )
 
 
-keyword_agent = Agent(
-    name="키워드 추출",
-    instructions=KEYWORD_EXTRACTOR_PROMPT,
-    model="gpt-4o-mini",
-    output_type=SearchKeywords,
-    model_settings=ModelSettings(temperature=0.3),
-)
+def _ndjson(data: dict) -> str:
+    return json.dumps(data, ensure_ascii=False) + "\n"
 
 
-def _create_searcher(research_context: str) -> Agent:
-    # .format() 대신 replace로 치환 — brief에 중괄호가 있어도 안전
-    instructions = SEARCHER_PROMPT.replace("{research_context}", research_context)
-    return Agent(
-        name="웹 검색 리서처",
-        instructions=instructions,
-        model="gpt-4o-mini",
-        tools=[_web_search],
-    )
+def _report_to_dict(report: MarketReport) -> dict:
+    return report.model_dump()
 
 
-def _create_synthesizer(research_context: str) -> Agent:
-    instructions = REPORT_SYNTHESIZER_PROMPT.replace("{research_context}", research_context)
-    return Agent(
-        name="보고서 종합",
-        instructions=instructions,
-        model="gpt-4o-mini",
-        output_type=ReportOutput,
-    )
+def _normalize_refined_payload(payload: dict, brief: ResearchBrief) -> dict:
+    """모델이 키 이름을 조금 다르게 반환해도 표준 필드명으로 정규화한다."""
+    for wrapper_key in ("refined", "result", "data", "output"):
+        wrapped = payload.get(wrapper_key)
+        if isinstance(wrapped, dict):
+            payload = wrapped
+            break
 
+    def canonicalize(value: str) -> str:
+        return re.sub(r"[\s_\-:]+", "", str(value).strip().lower())
 
-def _create_claim_extractor() -> Agent:
-    return Agent(
-        name="수치 추출",
-        instructions=CLAIM_EXTRACTOR_PROMPT,
-        model="gpt-4o-mini",
-        output_type=ClaimsExtracted,
-        model_settings=ModelSettings(temperature=0.2),
-    )
+    normalized = {canonicalize(key): value for key, value in payload.items()}
 
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = normalized.get(canonicalize(key))
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
-def _create_claim_verifier() -> Agent:
-    return Agent(
-        name="수치 검증",
-        instructions=CLAIM_VERIFIER_PROMPT,
-        model="gpt-4o-mini",
-        tools=[_web_search],
-        output_type=VerifiedClaim,
-    )
+    refined_background = pick(
+        "refined_background",
+        "background",
+        "연구배경",
+        "연구 배경",
+        "배경",
+    ) or brief.background
+    refined_objective = pick(
+        "refined_objective",
+        "objective",
+        "연구목적",
+        "연구 목적",
+        "목적",
+    ) or brief.objective
+    refined_usage_plan = pick(
+        "refined_usage_plan",
+        "usage_plan",
+        "활용방안",
+        "활용 방안",
+        "연구결과활용방안",
+        "연구결과 활용방안",
+    ) or brief.usage_plan
 
-
-# ── 유틸리티 ──
-
-def _clean_inline_citations(text: str) -> str:
-    text = re.sub(r'\s*\(\[([^\]]*)\]\([^\)]+\)\)', '', text)
-    text = re.sub(r'\[([^\]]*)\]\(https?://[^\)]+\)', r'\1', text)
-    text = re.sub(r'\s*\(https?://[^\)]+\)', '', text)
-    text = re.sub(r'\s*\([a-zA-Z0-9.-]+\.(com|co|org|net|io|kr)[^\)]*\)', '', text)
-    text = re.sub(r'turn\d+search\d+', '', text)
-    text = re.sub(r'\(\s*\)', '', text)
-    text = re.sub(r'  +', ' ', text).strip()
-    return text
-
-
-def _clean_sources(text: str) -> str:
-    def _repl_wrapped(m):
-        url = re.sub(r'\?utm_source=[^&)\s]+', '', m.group(2))
-        return f"{m.group(1)} ({url})"
-    text = re.sub(r'\(\[([^\]]*)\]\((https?://[^\)]+)\)\)', _repl_wrapped, text)
-
-    def _repl(m):
-        url = re.sub(r'\?utm_source=[^&)\s]+', '', m.group(2))
-        return f"{m.group(1)} ({url})"
-    text = re.sub(r'\[([^\]]*)\]\((https?://[^\)]+)\)', _repl, text)
-    text = re.sub(r'\?utm_source=[^&)\s]+', '', text)
-    return text.strip()
-
-
-def _clean_report(report: ReportOutput) -> dict:
     return {
-        "market_overview": _clean_inline_citations(report.market_overview),
-        "competitive_landscape": _clean_inline_citations(report.competitive_landscape),
-        "target_analysis": _clean_inline_citations(report.target_analysis),
-        "trends": _clean_inline_citations(report.trends),
-        "implications": _clean_inline_citations(report.implications),
-        "sources": _clean_sources(report.sources),
+        "refined_background": refined_background,
+        "refined_objective": refined_objective,
+        "refined_usage_plan": refined_usage_plan,
     }
 
 
-def _report_to_text(report: ReportOutput) -> str:
-    return (
-        f"시장 개요: {report.market_overview}\n"
-        f"경쟁 환경: {report.competitive_landscape}\n"
-        f"타깃 분석: {report.target_analysis}\n"
-        f"트렌드: {report.trends}\n"
-        f"시사점: {report.implications}"
-    )
-
-
-# ── Step 함수들 (단독 호출 가능) ──
-
-async def step_extract_keywords(user_message: str) -> SearchKeywords:
-    """단계 1: 연구 정보 → 카테고리별 검색 키워드 추출"""
-    result = await Runner.run(keyword_agent, user_message)
-    _log_runner_usage(result, "research/keywords")
-    return result.final_output
-
-
-async def step_search(
-    keywords: SearchKeywords,
-    research_context: str,
-) -> AsyncIterator[tuple[str, str]]:
-    """단계 2-6: 카테고리별 병렬 웹검색, (field, text) 쌍을 완료 순으로 yield"""
-    searcher = _create_searcher(research_context)
-
-    search_fields = [
-        ("market_overview",       keywords.market_overview),
-        ("competitive_landscape", keywords.competitive_landscape),
-        ("target_analysis",       keywords.target_analysis),
-        ("trends",                keywords.trends),
-        ("implications",          keywords.implications),
-    ]
-
-    async def _search_one(field: str, queries: list[str]) -> tuple[str, str]:
-        combined = "다음 키워드들을 각각 검색하여 결과를 통합하세요:\n" + "\n".join(f"- {q}" for q in queries)
-        r = await Runner.run(searcher, combined)
-        _log_runner_usage(r, f"research/search/{field}")
-        return field, r.final_output
-
-    tasks = [_search_one(field, queries) for field, queries in search_fields]
-    for coro in asyncio.as_completed(tasks):
-        field, text = await coro
-        yield field, text
-
-
-async def step_synthesize(
-    search_results: dict[str, str],
-    research_context: str,
-) -> ReportOutput:
-    """단계 7a: 검색 결과 종합 → 보고서 초안"""
-    synthesizer = _create_synthesizer(research_context)
-    synthesis_input = "\n\n".join(
-        f"[{field}]\n{text}" for field, text in search_results.items()
-    )
-    result = await Runner.run(synthesizer, synthesis_input)
-    _log_runner_usage(result, "research/synthesizer")
-    return result.final_output
-
-
-async def step_verify(report: ReportOutput, user_message: str) -> ReportOutput:
-    """단계 7b: 주요 수치 claim 추출 → asyncio.gather 병렬 교차검증 → 보고서 반영"""
-
-    # 1. 검증 대상 claim 추출 (최대 5개)
-    extractor = _create_claim_extractor()
-    extract_result = await Runner.run(extractor, _report_to_text(report))
-    _log_runner_usage(extract_result, "research/verify/extract")
-    claims: list[ClaimItem] = extract_result.final_output.claims[:5]
-
-    if not claims:
-        return report
-
-    # 2. 각 claim 개별 Runner.run() → asyncio.gather 병렬 실행
-    verifier = _create_claim_verifier()
-
-    async def _verify_one(claim: ClaimItem) -> VerifiedClaim:
-        verify_input = (
-            f"검증 대상 필드: {claim.field}\n"
-            f"원문: {claim.original_text}\n"
-            f"검색 쿼리: {claim.search_query}"
-        )
-        r = await Runner.run(verifier, verify_input)
-        _log_runner_usage(r, "research/verify/claim")
-        return r.final_output
-
-    verified: list[VerifiedClaim] = list(
-        await asyncio.gather(*[_verify_one(c) for c in claims])
-    )
-
-    # 3. 수정 사항을 보고서 필드에 반영
-    report_dict = report.model_dump()
-    extra_sources: list[str] = []
-
-    for vc in verified:
-        if not vc.correction_applied:
-            continue
-        field = vc.field
-        if field not in report_dict or field == "sources":
-            continue
-        current = report_dict[field]
-        if vc.original_text in current:
-            report_dict[field] = current.replace(vc.original_text, vc.corrected_text, 1)
-            if vc.source:
-                extra_sources.append(vc.source)
-
-    if extra_sources:
-        report_dict["sources"] = report_dict["sources"].rstrip() + "\n" + "\n".join(extra_sources)
-
-    return ReportOutput(**report_dict)
-
-
-async def step_refine(report: ReportOutput, user_message: str) -> RefinedOutput:
-    """단계 8: 검증된 보고서 기반 연구 정보 고도화"""
-    refiner = _create_refiner(_report_to_text(report))
-    result = await Runner.run(refiner, user_message)
-    _log_runner_usage(result, "research/refiner")
-    return result.final_output
-
-
-# ── LangGraph 노드 ──
-
-async def _node_init(state: ResearchState) -> dict:
-    """ResearchBrief → user_message 변환"""
-    brief = state["brief"]
-    user_message = (
+async def step_pre_refine(brief: ResearchBrief) -> str:
+    prompt = (
         f"연구 배경: {brief.background}\n"
         f"연구 목적: {brief.objective}\n"
         f"활용방안: {brief.usage_plan}\n"
         f"카테고리: {brief.category}\n"
         f"타깃 고객: {brief.target_customer}"
     )
-    return {"user_message": user_message}
+    response = await asyncio.wait_for(
+        _client.responses.create(
+            model="gpt-4.1-mini",
+            instructions=PRE_REFINER_PROMPT,
+            input=prompt,
+            temperature=0.4,
+        ),
+        timeout=OPENAI_STEP_TIMEOUT_SECONDS,
+    )
+    _log_response_usage(response, "research/pre_refine", "gpt-4.1-mini")
+    return (getattr(response, "output_text", "") or "").strip()
 
 
-async def _node_extract_keywords(state: ResearchState) -> dict:
-    keywords = await step_extract_keywords(state["user_message"])
-    return {"keywords": keywords}
+async def step_extract_keywords(brief: ResearchBrief, expanded_context: str) -> SearchKeywords | None:
+    prompt = (
+        f"[원본 브리프]\n"
+        f"- 연구 배경: {brief.background}\n"
+        f"- 연구 목적: {brief.objective}\n"
+        f"- 활용방안: {brief.usage_plan}\n"
+        f"- 카테고리: {brief.category}\n"
+        f"- 타깃 고객: {brief.target_customer}\n\n"
+        f"[확장 맥락]\n{expanded_context}"
+    )
+    response = await asyncio.wait_for(
+        _client.responses.create(
+            model="gpt-4.1-mini",
+            instructions=KEYWORD_EXTRACTOR_PROMPT,
+            input=prompt,
+            temperature=0.3,
+        ),
+        timeout=OPENAI_STEP_TIMEOUT_SECONDS,
+    )
+    _log_response_usage(response, "research/keywords", "gpt-4.1-mini")
+    content = (getattr(response, "output_text", "") or "").strip()
+    try:
+        return SearchKeywords.model_validate(json.loads(_extract_json_object(content)))
+    except Exception:
+        return None
 
 
-async def _node_search(state: ResearchState) -> dict:
-    """5개 카테고리 병렬 검색 (asyncio.as_completed 내부 유지)"""
-    search_results: dict[str, str] = {}
-    async for field, text in step_search(state["keywords"], state["user_message"]):
-        search_results[field] = text
-    return {"search_results": search_results}
+async def refine_research_simple(brief: ResearchBrief) -> RefinedOutput:
+    prompt = (
+        f"연구 배경: {brief.background}\n"
+        f"연구 목적: {brief.objective}\n"
+        f"활용방안: {brief.usage_plan}\n"
+        f"카테고리: {brief.category}\n"
+        f"타깃 고객: {brief.target_customer}\n"
+    )
+
+    response = await asyncio.wait_for(
+        _client.responses.create(
+            model="gpt-4.1-mini",
+            instructions=(
+                SIMPLE_REFINER_PROMPT
+                + "\n\n반드시 JSON만 출력하세요."
+                + '\n키 이름은 반드시 "refined_background", "refined_objective", "refined_usage_plan" 만 사용하세요.'
+            ),
+            input=prompt,
+            temperature=0.4,
+        ),
+        timeout=OPENAI_STEP_TIMEOUT_SECONDS,
+    )
+    _log_response_usage(response, "research/refine_simple", "gpt-4.1-mini")
+    content = getattr(response, "output_text", "") or ""
+    payload = json.loads(_extract_json_object(content))
+    return RefinedOutput.model_validate(_normalize_refined_payload(payload, brief))
 
 
-async def _node_synthesize(state: ResearchState) -> dict:
-    report = await step_synthesize(state["search_results"], state["user_message"])
-    return {"report": report}
+async def run_research_stream(brief: ResearchBrief) -> AsyncGenerator[str, None]:
+    """프론트엔드가 바로 렌더링할 수 있도록 단계별 NDJSON 이벤트를 순서대로 내보낸다."""
+    yield _ndjson({"step": "pre_refine"})
+
+    try:
+        expanded_context = await step_pre_refine(brief)
+    except Exception:
+        expanded_context = brief.objective
+
+    try:
+        keyword_output = await step_extract_keywords(brief, expanded_context)
+    except Exception:
+        keyword_output = None
+    plans = plan_research_queries(brief, keyword_output.model_dump() if keyword_output else None)
+    yield _ndjson({"step": "planning"})
+
+    # 섹션별로 근거를 먼저 모아 둔 뒤, 이후 요약 생성 단계에서 사용한다.
+    section_evidence: dict[str, list] = {}
+
+    for section, search_plans in plans.items():
+        raw_items: list[SearchResultItem] = []
+        for plan in search_plans:
+            yield _ndjson(
+                {
+                    "step": "thinking",
+                    "agent": "researcher",
+                    "query": f"[{plan.source_type}] {plan.query}",
+                }
+            )
+            try:
+                raw_items.extend(
+                    _naver_search.search(
+                        source_type=plan.source_type,
+                        query=plan.query,
+                        display=plan.display,
+                        start=plan.start,
+                        sort=plan.sort,
+                    )
+                )
+            except Exception as exc:
+                yield _ndjson(
+                    {
+                        "step": "thinking",
+                        "agent": "fact_checker",
+                        "query": f"{plan.source_type} 검색 실패: {str(exc)[:120]}",
+                    }
+                )
+
+        # OpenAI 웹 검색은 섹션당 한 번만 추가해 네이버 검색의 빈 구간을 보완한다.
+        openai_query = search_plans[0].query if search_plans else f"{brief.category} {section} 한국"
+        yield _ndjson(
+            {
+                "step": "thinking",
+                "agent": "fact_checker",
+                "query": f"[openai_web] {openai_query}",
+            }
+        )
+        try:
+            raw_items.extend(
+                await asyncio.wait_for(
+                    _openai_web_search.search(section=section, query=openai_query),
+                    timeout=OPENAI_SEARCH_TIMEOUT_SECONDS,
+                )
+            )
+        except Exception as exc:
+            yield _ndjson(
+                {
+                    "step": "thinking",
+                    "agent": "fact_checker",
+                    "query": f"openai_web 검색 실패: {str(exc)[:120]}",
+                }
+            )
+
+        section_terms = [brief.category, brief.target_customer, *_FIELD_TERMS.get(section, [])]
+        section_evidence[section] = dedupe_and_rank(raw_items, section_terms, section=section)
+
+    yield _ndjson({"step": "researcher"})
+    yield _ndjson({"step": "fact_checker"})
+
+    section_order = [
+        "market_overview",
+        "competitive_landscape",
+        "target_analysis",
+        "trends",
+        "implications",
+    ]
+    synthesized: dict[str, ReportSection] = {}
+
+    for section in section_order:
+        # 앞에서 만든 섹션을 같이 넘겨 뒤 섹션이 문맥을 공유하도록 한다.
+        related_sections = dict(synthesized)
+        try:
+            section_report = await asyncio.wait_for(
+                synthesize_section(
+                    client=_client,
+                    brief=brief,
+                    section=section,
+                    evidence=section_evidence.get(section, []),
+                    related_sections=related_sections,
+                    research_context=expanded_context,
+                ),
+                timeout=SYNTHESIZE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            # 요약 생성이 실패해도 근거 목록은 전달해 사용자가 빈 화면을 보지 않게 한다.
+            fallback_evidence = section_evidence.get(section, [])
+            section_report = ReportSection(
+                summary="수집된 근거를 정리하는 중 지연이 발생해 보수적으로 요약했습니다.\n\n주요 근거는 아래 evidence 항목을 확인해 주세요.",
+                key_claims=[item.title for item in fallback_evidence[:3]],
+                evidence=fallback_evidence[:4],
+                confidence="low" if not fallback_evidence else "medium",
+            )
+        synthesized[section] = section_report
+        yield _ndjson(
+            {
+                "step": "section",
+                "field": section,
+                "content": section_report.summary,
+            }
+        )
+
+    report = build_report(
+        market_overview=synthesized["market_overview"],
+        competitive_landscape=synthesized["competitive_landscape"],
+        target_analysis=synthesized["target_analysis"],
+        trends=synthesized["trends"],
+        implications=synthesized["implications"],
+    )
+
+    try:
+        refined = await _refine_research_from_report(brief, report)
+    except Exception:
+        # 마지막 정제 단계가 실패하면 원본 브리프를 그대로 유지한다.
+        refined = RefinedOutput(
+            refined_background=brief.background,
+            refined_objective=brief.objective,
+            refined_usage_plan=brief.usage_plan,
+        )
+    yield _ndjson(
+        {
+            "step": "done",
+            "refined": refined.model_dump(),
+            "report": _report_to_dict(report),
+        }
+    )
 
 
-async def _node_verify(state: ResearchState) -> dict:
-    verified_report = await step_verify(state["report"], state["user_message"])
-    return {"verified_report": verified_report}
+async def _refine_research_from_report(brief: ResearchBrief, report: MarketReport) -> RefinedOutput:
+    report_text = (
+        f"시장 개요: {report.market_overview.summary}\n"
+        f"경쟁 환경: {report.competitive_landscape.summary}\n"
+        f"타깃 분석: {report.target_analysis.summary}\n"
+        f"트렌드: {report.trends.summary}\n"
+        f"시사점: {report.implications.summary}"
+    )
+    instructions = (
+        REFINER_PROMPT.replace("{{market_report}}", report_text)
+        + "\n\n반드시 JSON만 출력하세요."
+        + '\n키 이름은 반드시 "refined_background", "refined_objective", "refined_usage_plan" 만 사용하세요.'
+    )
+    prompt = (
+        f"[원본 브리프]\n"
+        f"- 연구 배경: {brief.background}\n"
+        f"- 연구 목적: {brief.objective}\n"
+        f"- 활용방안: {brief.usage_plan}\n"
+        f"- 카테고리: {brief.category}\n"
+        f"- 타깃 고객: {brief.target_customer}\n\n"
+        f"[시장 개요]\n{report.market_overview.summary}\n\n"
+        f"[경쟁 환경]\n{report.competitive_landscape.summary}\n\n"
+        f"[타깃 분석]\n{report.target_analysis.summary}\n\n"
+        f"[트렌드]\n{report.trends.summary}\n\n"
+        f"[시사점]\n{report.implications.summary}\n"
+    )
+    response = await asyncio.wait_for(
+        _client.responses.create(
+            model="gpt-4.1-mini",
+            instructions=instructions,
+            input=prompt,
+            temperature=0.3,
+        ),
+        timeout=OPENAI_STEP_TIMEOUT_SECONDS,
+    )
+    _log_response_usage(response, "research/refine_with_report", "gpt-4.1-mini")
+    content = getattr(response, "output_text", "") or ""
+    payload = json.loads(_extract_json_object(content))
+    return RefinedOutput.model_validate(_normalize_refined_payload(payload, brief))
 
 
-async def _node_refine(state: ResearchState) -> dict:
-    refined = await step_refine(state["verified_report"], state["user_message"])
-    return {"refined": refined}
-
-
-# ── 그래프 조립 (모듈 로드 시 1회 컴파일) ──
-
-def _build_graph():
-    g = StateGraph(ResearchState)
-
-    g.add_node("init",             _node_init)
-    g.add_node("extract_keywords", _node_extract_keywords)
-    g.add_node("search",           _node_search)
-    g.add_node("synthesize",       _node_synthesize)
-    g.add_node("verify",           _node_verify)
-    g.add_node("refine",           _node_refine)
-
-    g.add_edge(START,             "init")
-    g.add_edge("init",            "extract_keywords")
-    g.add_edge("extract_keywords","search")
-    g.add_edge("search",          "synthesize")
-    g.add_edge("synthesize",      "verify")
-    g.add_edge("verify",          "refine")
-    g.add_edge("refine",          END)
-
-    return g.compile()
-
-
-_research_graph = _build_graph()
-
-
-# ── 공개 인터페이스 ──
-
-async def run_research(brief: ResearchBrief) -> dict:
-    """시장조사 수행 — LangGraph 그래프 실행, 최종 결과 dict 반환"""
-    initial_state: ResearchState = {
-        "brief":          brief,
-        "user_message":   "",
-        "keywords":       None,
-        "search_results": {},
-        "report":         None,
-        "verified_report": None,
-        "refined":        None,
-    }
-    final_state = await _research_graph.ainvoke(initial_state)
-    return {
-        "refined": final_state["refined"].model_dump(),
-        "report":  _clean_report(final_state["verified_report"]),
-    }
+def _extract_json_object(text: str) -> str:
+    """모델 응답에서 앞뒤 설명을 제거하고 첫 JSON 객체만 추출한다."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("JSON object not found in model response")
+    return text[start : end + 1]

@@ -1,15 +1,15 @@
-"""에이전트 추천 서비스 — OpenAI Agents SDK"""
+"""에이전트 추천과 페르소나 후처리를 담당하는 서비스."""
+import re
 from pydantic import BaseModel
 from agents import Agent, Runner
 from models.schemas import (
     AgentRequest,
     AgentSchema,
     PersonaProfile,
-    ResearchBrief,
 )
-from prompts.agent_recommend import AGENT_RECOMMEND_PROMPT
+from prompts.agent_recommend import AGENT_RECOMMEND_PROMPT, CUSTOMER_REGEN_PROMPT
 
-# Agents SDK 환경 로드
+# import 시점에 `.env`를 로드해 OpenAI SDK와 Agents SDK가 같은 키를 사용하게 한다.
 import services.openai_client  # noqa: F401
 from services.usage_tracker import tracker
 
@@ -27,7 +27,7 @@ def _log_runner_usage(result, service_label: str):
             )
 
 
-# 구조화 출력 타입
+# 모델 응답을 안정적으로 검증하기 위한 구조화 출력 타입
 class PersonaProfileOutput(BaseModel):
     age: int
     gender: str
@@ -55,7 +55,7 @@ class AgentListOutput(BaseModel):
     agents: list[AgentOutput]
 
 
-# 에이전트 추천 에이전트
+# 전체 참여자 구성을 한 번에 제안하는 메인 에이전트
 recommender_agent = Agent(
     name="에이전트 설계자",
     instructions=AGENT_RECOMMEND_PROMPT,
@@ -63,19 +63,10 @@ recommender_agent = Agent(
     output_type=AgentListOutput,
 )
 
-# 단일 소비자 에이전트 재생성용 에이전트
+# 나이 제약을 벗어난 소비자 페르소나만 다시 뽑기 위한 보정 에이전트
 _single_regen_agent = Agent(
     name="소비자 에이전트 재생성",
-    instructions="""
-주어진 조건으로 소비자 페르소나 에이전트 1명을 생성하세요.
-
-■ 필수 제약:
-- type은 반드시 "customer"
-- persona_profile.age는 반드시 요청된 연령 범위 내 정수
-- occupation, experience 등 모든 필드는 age와 일관성 있게 작성
-- experience: 제품/서비스 관련 구체적 에피소드 최소 80자
-- system_prompt는 빈 문자열로 응답 (서버에서 자동 생성)
-""".strip(),
+    instructions=CUSTOMER_REGEN_PROMPT,
     model="gpt-4o-mini",
     output_type=AgentOutput,
 )
@@ -118,6 +109,44 @@ def build_system_prompt_from_persona(name: str, type: str, profile: PersonaProfi
     return "\n".join(lines)
 
 
+def _parse_age_range(target_customer: str) -> tuple[int, int] | None:
+    """타깃 고객 문자열에서 2030, 20대 등 연령대 범위를 추출한다."""
+    if not target_customer:
+        return None
+    
+    # "2030", "20-30대"처럼 두 개 연령대가 한 번에 언급된 경우를 먼저 처리한다.
+    multi_match = re.search(r'([1-9][0-9])(?:대)?\s*(?:~|-|부터|과|와|,|\s)\s*([1-9][0-9])(?:대)?', target_customer)
+    if multi_match:
+        try:
+            start = int(multi_match.group(1)[:2])
+            end = int(multi_match.group(2)[:2])
+            # "2030"처럼 붙어 있어도 정규식상 20, 30으로 나뉘어 들어온다.
+            if end < start and len(multi_match.group(2)) == 2:
+                pass
+            return tuple(sorted([start, end + 9]))
+        except ValueError:
+            pass
+
+    # "2030대"처럼 접미사와 함께 붙은 표기도 별도로 처리한다.
+    century_match = re.search(r'([1-9]0)([1-9]0)(?:대)?', target_customer)
+    if century_match:
+        try:
+            start = int(century_match.group(1))
+            end = int(century_match.group(2))
+            return tuple(sorted([start, end + 9]))
+        except ValueError:
+            pass
+            
+    # 단일 연령대만 있으면 해당 10년 구간 전체를 허용 범위로 본다.
+    single_match = re.search(r'([1-9][0-9])(?:대)', target_customer)
+    if single_match:
+        try:
+            age = int(single_match.group(1))
+            return (age, age + 9)
+        except ValueError:
+            pass
+            
+    return None
 
 
 async def _regenerate_customer_agent(
@@ -125,7 +154,7 @@ async def _regenerate_customer_agent(
     age_range: tuple[int, int],
     req: AgentRequest,
 ) -> AgentOutput:
-    """연령 범위를 벗어난 소비자 에이전트를 올바른 연령으로 재생성"""
+    """연령 제약을 위반한 소비자 페르소나만 다시 생성한다."""
     min_age, max_age = age_range
     regen_message = (
         f"[원본 연구 입력]\n"
@@ -146,7 +175,7 @@ async def _regenerate_customer_agent(
 async def recommend_agents(req: AgentRequest) -> list[AgentSchema]:
     """연구 정보 + 시장조사를 기반으로 에이전트 5명 추천"""
 
-    # 타깃 연령 범위를 명시적 제약으로 전달
+    # 타깃 고객 문자열에서 읽어낸 연령대를 프롬프트 제약으로 다시 전달한다.
     age_range = _parse_age_range(req.brief.target_customer)
     age_constraint = ""
     if age_range:
@@ -166,11 +195,11 @@ async def recommend_agents(req: AgentRequest) -> list[AgentSchema]:
         f"- 목적: {req.refined.refined_objective}\n"
         f"- 활용방안: {req.refined.refined_usage_plan}\n\n"
         f"[시장조사 보고서]\n"
-        f"- 시장 개요: {req.report.market_overview}\n"
-        f"- 경쟁 환경: {req.report.competitive_landscape}\n"
-        f"- 타깃 고객 분석: {req.report.target_analysis}\n"
-        f"- 트렌드: {req.report.trends}\n"
-        f"- 시사점: {req.report.implications}\n"
+        f"- 시장 개요: {req.report.market_overview.summary}\n"
+        f"- 경쟁 환경: {req.report.competitive_landscape.summary}\n"
+        f"- 타깃 고객 분석: {req.report.target_analysis.summary}\n"
+        f"- 트렌드: {req.report.trends.summary}\n"
+        f"- 시사점: {req.report.implications.summary}\n"
         f"{age_constraint}"
     )
 
@@ -180,7 +209,7 @@ async def recommend_agents(req: AgentRequest) -> list[AgentSchema]:
 
     agents: list[AgentSchema] = []
     for agent in output.agents:
-        # 소비자 에이전트 연령 범위 이탈 시 페르소나 전체 재생성
+        # 모델이 제약을 놓친 경우 해당 소비자만 재생성해 전체 결과를 보정한다.
         if agent.type == "customer" and age_range and agent.persona_profile:
             min_age, max_age = age_range
             if not (min_age <= agent.persona_profile.age <= max_age):

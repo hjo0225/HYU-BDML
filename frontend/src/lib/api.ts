@@ -1,7 +1,6 @@
-/* 빅마랩 API 호출 유틸리티 */
+/* 프론트엔드에서 백엔드 API와 스트리밍 응답을 다루는 공통 유틸리티 */
 import type {
   ResearchBrief,
-  ResearchResponse,
   AgentRequest,
   AgentSchema,
   PersonaProfile,
@@ -11,10 +10,12 @@ import type {
   MarketReport,
   RefinedResearch,
   ReportSection,
-  ReportSource,
+  EvidenceItem,
+  ThinkingEvent,
 } from './types';
 
-// 개발환경: Next.js 프록시 30초 타임아웃 우회를 위해 백엔드 직접 연결
+// 개발 환경에서는 긴 스트림이 Next.js dev 프록시 제한에 걸릴 수 있어 백엔드를 직접 호출한다.
+// 운영 환경에서는 same-origin `/api` 경로를 사용하고 Next.js rewrite가 백엔드로 전달한다.
 const API_BASE =
   process.env.NODE_ENV === 'development'
     ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api`
@@ -30,67 +31,70 @@ function toText(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function ensureSource(value: unknown): ReportSource | null {
-  if (typeof value === 'string') {
-    const label = value.trim();
-    return label ? { label } : null;
-  }
-
+function ensureEvidence(value: unknown): EvidenceItem | null {
   if (!isRecord(value)) return null;
-
-  const label =
-    toText(value.label) ||
-    toText(value.title) ||
-    toText(value.name) ||
-    toText(value.url);
-
-  if (!label.trim()) return null;
-
-  const source: ReportSource = { label: label.trim() };
   const url = toText(value.url).trim();
+  const title = toText(value.title || value.label || value.name).trim();
+  const snippet = toText(value.snippet || value.note || value.description).trim();
+  const sourceType = toText(value.source_type).trim();
+  const sourceEngine = toText(value.source_engine).trim();
   const publisher = toText(value.publisher).trim();
   const publishedAt = toText(value.published_at || value.publishedAt).trim();
-  const note = toText(value.note).trim();
+  const relevanceScoreRaw = value.relevance_score;
+  const relevanceScore =
+    typeof relevanceScoreRaw === 'number' ? relevanceScoreRaw : Number(relevanceScoreRaw || 0);
 
-  if (url) source.url = url;
-  if (publisher) source.publisher = publisher;
-  if (publishedAt) source.published_at = publishedAt;
-  if (note) source.note = note;
+  if (!url || !title || !sourceType) return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (!['news', 'webkr', 'blog', 'cafearticle', 'doc'].includes(sourceType)) return null;
 
-  return source;
+  return {
+    source_type: sourceType as EvidenceItem['source_type'],
+    source_engine:
+      sourceEngine === 'naver' || sourceEngine === 'openai_web'
+        ? (sourceEngine as EvidenceItem['source_engine'])
+        : undefined,
+    title,
+    url,
+    publisher: publisher || undefined,
+    published_at: publishedAt || undefined,
+    snippet,
+    relevance_score: Number.isFinite(relevanceScore) ? relevanceScore : 0,
+  };
 }
 
-function parseLegacySources(value: unknown): ReportSource[] {
-  if (Array.isArray(value)) {
-    return value.map(ensureSource).filter((item): item is ReportSource => item !== null);
-  }
 
-  if (typeof value !== 'string') return [];
-
-  return value
-    .split(/\n+/)
-    .map((line) => line.replace(/^[-*•\d.\s]+/, '').trim())
-    .filter(Boolean)
-    .map((label) => ({ label }));
-}
-
-function normalizeReportSection(sectionValue: unknown, fallbackSources: ReportSource[]): ReportSection {
+function normalizeReportSection(sectionValue: unknown): ReportSection {
   if (isRecord(sectionValue)) {
-    const content = toText(sectionValue.content || sectionValue.summary || sectionValue.text).trim();
-    const rawSources = Array.isArray(sectionValue.sources) ? sectionValue.sources : [];
-    const sources = rawSources
-      .map(ensureSource)
-      .filter((item): item is ReportSource => item !== null);
+    const summary = toText(sectionValue.summary || sectionValue.content || sectionValue.text).trim();
+    const rawEvidence = Array.isArray(sectionValue.evidence)
+      ? sectionValue.evidence
+      : Array.isArray(sectionValue.sources)
+      ? sectionValue.sources
+      : [];
+    const evidence = rawEvidence
+      .map(ensureEvidence)
+      .filter((item): item is EvidenceItem => item !== null);
+    const rawClaims = Array.isArray(sectionValue.key_claims) ? sectionValue.key_claims : [];
+    const keyClaims = rawClaims.map(toText).map((item) => item.trim()).filter(Boolean);
+    const confidence = toText(sectionValue.confidence).trim();
 
     return {
-      content,
-      sources: sources.length > 0 ? sources : fallbackSources,
+      summary,
+      key_claims: keyClaims,
+      evidence,
+      confidence:
+        confidence === 'high' || confidence === 'medium' || confidence === 'low'
+          ? confidence
+          : 'low',
     };
   }
 
   return {
-    content: toText(sectionValue).trim(),
-    sources: fallbackSources,
+    summary: toText(sectionValue).trim(),
+    key_claims: [],
+    evidence: [],
+    confidence: 'low',
   };
 }
 
@@ -106,50 +110,13 @@ function normalizeRefined(value: unknown, brief: ResearchBrief): RefinedResearch
 
 function normalizeReport(value: unknown): MarketReport {
   const report = isRecord(value) ? value : {};
-  const fallbackSources = parseLegacySources(report.sources);
 
   return {
-    market_overview: normalizeReportSection(report.market_overview, fallbackSources),
-    competitive_landscape: normalizeReportSection(report.competitive_landscape, fallbackSources),
-    target_analysis: normalizeReportSection(report.target_analysis, fallbackSources),
-    trends: normalizeReportSection(report.trends, fallbackSources),
-    implications: normalizeReportSection(report.implications, fallbackSources),
-  };
-}
-
-function formatReportSource(source: ReportSource): string {
-  return [
-    source.label,
-    source.publisher,
-    source.published_at,
-    source.url,
-    source.note,
-  ]
-    .filter(Boolean)
-    .join(' | ');
-}
-
-function serializeMarketReportForBackend(report: MarketReport) {
-  const allSources = [
-    ...report.market_overview.sources,
-    ...report.competitive_landscape.sources,
-    ...report.target_analysis.sources,
-    ...report.trends.sources,
-    ...report.implications.sources,
-  ];
-
-  const uniqueSources = allSources.filter((source, index, array) => {
-    const key = formatReportSource(source);
-    return key && array.findIndex((item) => formatReportSource(item) === key) === index;
-  });
-
-  return {
-    market_overview: report.market_overview.content,
-    competitive_landscape: report.competitive_landscape.content,
-    target_analysis: report.target_analysis.content,
-    trends: report.trends.content,
-    implications: report.implications.content,
-    sources: uniqueSources.map(formatReportSource).join('\n'),
+    market_overview: normalizeReportSection(report.market_overview),
+    competitive_landscape: normalizeReportSection(report.competitive_landscape),
+    target_analysis: normalizeReportSection(report.target_analysis),
+    trends: normalizeReportSection(report.trends),
+    implications: normalizeReportSection(report.implications),
   };
 }
 
@@ -183,30 +150,94 @@ async function parseJsonResponse<T>(res: Response, fallbackMessage: string): Pro
   return payload as T;
 }
 
-/** Phase 2: 시장조사 */
-export async function fetchResearch(brief: ResearchBrief): Promise<ResearchResponse> {
+export type { ThinkingEvent } from './types';
+
+/** Phase 2: 시장조사 스트리밍 — 섹션 완료 시 onSection 콜백 호출 */
+export async function fetchResearchStream(
+  brief: ResearchBrief,
+  onSection: (field: string, content: string) => void,
+  onDone: (refined: RefinedResearch, report: MarketReport) => void,
+  onThinking?: (event: ThinkingEvent) => void,
+  onSectionDelta?: (field: string, delta: string) => void,
+): Promise<void> {
+  let res: Response;
   try {
-    const res = await fetch(`${API_BASE}/research`, {
+    res = await fetch(`${API_BASE}/research`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildLegacyResearchPayload(brief)),
+    });
+  } catch {
+    throw new Error('시장조사 중 네트워크 오류가 발생했습니다.');
+  }
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const message =
+      (isRecord(payload) && toText(payload.detail || payload.message).trim()) ||
+      `시장조사 실패: ${res.status}`;
+    throw new Error(message);
+  }
+  if (!res.body) throw new Error('시장조사 스트림이 비어 있습니다.');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let data: JsonRecord;
+      try {
+        data = JSON.parse(line);
+      } catch {
+        continue; // 부분적으로 잘린 청크일 수 있으므로 다음 줄을 기다린다.
+      }
+
+      if (data.step === 'error') {
+        throw new Error(toText(data.message) || '시장조사 오류');
+      }
+      if (data.step === 'thinking' && onThinking) {
+        onThinking({ agent: toText(data.agent) as ThinkingEvent['agent'], query: toText(data.query) });
+      }
+      if (data.step === 'section_delta' && onSectionDelta) {
+        onSectionDelta(toText(data.field), toText(data.delta));
+      }
+      if (data.step === 'section') {
+        onSection(toText(data.field), toText(data.content));
+      }
+      if (data.step === 'done') {
+        onDone(normalizeRefined(data.refined, brief), normalizeReport(data.report));
+        return;
+      }
+    }
+  }
+
+  throw new Error('시장조사 실패: 완료 응답을 받지 못했습니다.');
+}
+
+/** Phase 2-1: 웹 검색 없이 브리프만 빠르게 정제한다. */
+export async function fetchRefinedResearch(brief: ResearchBrief): Promise<RefinedResearch> {
+  try {
+    const res = await fetch(`${API_BASE}/research/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildLegacyResearchPayload(brief)),
     });
 
-    const json = await parseJsonResponse<JsonRecord>(res, '시장조사 실패');
-    return {
-      refined: normalizeRefined(json.refined, brief),
-      report: normalizeReport(json.report),
-    };
+    const json = await parseJsonResponse<JsonRecord>(res, '연구 정보 정제 실패');
+    return normalizeRefined(json, brief);
   } catch (error) {
     if (error instanceof Error) throw error;
-    throw new Error('시장조사 중 네트워크 오류가 발생했습니다.');
+    throw new Error('연구 정보 정제 중 네트워크 오류가 발생했습니다.');
   }
-}
-
-/** Phase 2-1: 연구 정보 정제 */
-export async function fetchRefinedResearch(brief: ResearchBrief): Promise<RefinedResearch> {
-  const result = await fetchResearch(brief);
-  return result.refined;
 }
 
 function buildBriefFromRefined(brief: ResearchBrief, refined: RefinedResearch): ResearchBrief {
@@ -219,13 +250,16 @@ function buildBriefFromRefined(brief: ResearchBrief, refined: RefinedResearch): 
   };
 }
 
-/** Phase 2-2: 정제된 연구 정보 기반 시장조사 보고서 생성 */
-export async function fetchMarketReportFromRefined(
+/** Phase 2-2: 사용자가 수정한 정제본을 기준으로 시장조사 스트림을 다시 시작한다. */
+export async function fetchMarketReportStream(
   brief: ResearchBrief,
   refined: RefinedResearch,
-): Promise<MarketReport> {
-  const result = await fetchResearch(buildBriefFromRefined(brief, refined));
-  return result.report;
+  onSection: (field: string, content: string) => void,
+  onDone: (refined: RefinedResearch, report: MarketReport) => void,
+  onThinking?: (event: ThinkingEvent) => void,
+  onSectionDelta?: (field: string, delta: string) => void,
+): Promise<void> {
+  return fetchResearchStream(buildBriefFromRefined(brief, refined), onSection, onDone, onThinking, onSectionDelta);
 }
 
 /** Phase 3: 에이전트 추천 */
@@ -234,10 +268,7 @@ export async function fetchAgents(data: AgentRequest): Promise<AgentSchema[]> {
     const res = await fetch(`${API_BASE}/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...data,
-        report: serializeMarketReportForBackend(data.report),
-      }),
+      body: JSON.stringify(data),
     });
 
     return await parseJsonResponse<AgentSchema[]>(res, '에이전트 추천 실패');
@@ -247,7 +278,7 @@ export async function fetchAgents(data: AgentRequest): Promise<AgentSchema[]> {
   }
 }
 
-/** SSE 이벤트 타입 */
+/** 회의 스트림에서 새 발언이 시작될 때 전달되는 메타데이터 */
 export interface SSEStartEvent {
   type: 'start';
   role: 'moderator' | 'agent';
@@ -257,7 +288,7 @@ export interface SSEStartEvent {
   color: string | null;
 }
 
-/** Phase 4: 회의 시뮬레이션 (SSE 토큰 스트리밍) */
+/** Phase 4: SSE를 읽어 start/delta/end 이벤트를 UI 콜백으로 분배한다. */
 export async function fetchMeeting(
   data: MeetingRequest,
   onStart: (meta: SSEStartEvent) => void,
@@ -265,6 +296,7 @@ export async function fetchMeeting(
   onEnd: (msg: MeetingMessage) => void,
   onDone: () => void,
   onTopicRefined?: (topic: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   let res: Response;
 
@@ -273,8 +305,12 @@ export async function fetchMeeting(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      signal,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return;
+    }
     throw new Error('회의 시뮬레이션 중 네트워크 오류가 발생했습니다.');
   }
 
@@ -295,7 +331,16 @@ export async function fetchMeeting(
   let buffer = '';
 
   while (true) {
-    const { done, value } = await reader.read();
+    let done: boolean;
+    let value: Uint8Array | undefined;
+    try {
+      ({ done, value } = await reader.read());
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      throw error;
+    }
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
@@ -332,18 +377,21 @@ export async function fetchMeeting(
               return;
           }
         } catch {
-          // 파싱 실패 무시
+          // keepalive나 불완전한 라인은 무시하고 다음 이벤트를 기다린다.
         }
       }
     }
   }
 
-  onDone();
+  if (!signal?.aborted) {
+    onDone();
+  }
 }
 
 /** Phase 5: 회의록 생성 */
 export async function fetchMinutes(data: MinutesRequest): Promise<string> {
   try {
+    // 회의 주제가 있으면 background 앞에 덧붙여 회의록 모델이 현재 논의를 바로 이해하게 한다.
     const brief =
       data.topic?.trim()
         ? {

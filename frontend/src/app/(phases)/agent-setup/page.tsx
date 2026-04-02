@@ -49,7 +49,7 @@ const MAX_AGENTS = 8;
 
 export default function Phase3Page() {
   const router = useRouter();
-  const { project, setAgents, setMeetingTopic, setMessages, setMinutes, setCurrentPhase } = useProject();
+  const { project, setAgents, setCurrentPhase, resetAfterAgentsChange } = useProject();
 
   // 상태
   const [loading, setLoading] = useState(false);
@@ -80,17 +80,13 @@ export default function Phase3Page() {
         refined: project.refined,
         report: project.marketReport,
       });
-      setAgents(result);
-      // 하위 단계 데이터 초기화
-      setMeetingTopic(null);
-      setMessages([]);
-      setMinutes(null);
+      resetAfterAgentsChange(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : '에이전트 추천 중 오류 발생');
     } finally {
       setLoading(false);
     }
-  }, [project.refined, project.marketReport, setAgents, setMeetingTopic, setMessages, setMinutes]);
+  }, [project.refined, project.marketReport, resetAfterAgentsChange]);
 
   /* 에이전트 삭제 */
   const removeAgent = (id: string) => {
@@ -153,11 +149,11 @@ export default function Phase3Page() {
   /* 네비게이션 */
   const goNext = () => {
     setCurrentPhase(4);
-    router.push('/phase-4');
+    router.push('/meeting');
   };
   const goPrev = () => {
     setCurrentPhase(2);
-    router.push('/phase-2');
+    router.push('/market-research');
   };
 
   /* 데이터 없으면 Phase 2로 안내 */

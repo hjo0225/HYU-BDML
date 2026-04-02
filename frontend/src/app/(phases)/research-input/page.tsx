@@ -26,7 +26,7 @@ const EMPTY_BRIEF: ResearchBrief = {
 
 export default function Phase1Page() {
   const router = useRouter();
-  const { project, setBrief, setRefined, setMarketReport, setAgents, setMeetingTopic, setMessages, setMinutes, setCurrentPhase } = useProject();
+  const { project, resetAfterBriefChange, setCurrentPhase } = useProject();
 
   const [form, setForm] = useState<ResearchBrief>({
     ...EMPTY_BRIEF,
@@ -58,15 +58,9 @@ export default function Phase1Page() {
   const hasDownstreamData = !!(project.refined || project.agents.length > 0 || project.messages.length > 0);
 
   const doSubmit = () => {
-    setBrief(form);
-    setRefined(null);
-    setMarketReport(null);
-    setAgents([]);
-    setMeetingTopic(null);
-    setMessages([]);
-    setMinutes(null);
+    resetAfterBriefChange(form);
     setCurrentPhase(2);
-    router.push('/phase-2');
+    router.push('/market-research');
   };
 
   const submit = () => {
