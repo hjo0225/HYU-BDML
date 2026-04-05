@@ -215,6 +215,45 @@ npm run dev
 
 프론트엔드와 백엔드를 분리 배포하는 구성이 가장 단순합니다.
 
+GitHub Actions에서 GCP 인증은 서비스 계정 키 대신 Workload Identity Federation을 사용합니다.
+
+필요한 GitHub repository secrets:
+
+- `GCP_PROJECT_ID`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `BACKEND_URL`
+- `FRONTEND_URL`
+
+`GCP_WORKLOAD_IDENTITY_PROVIDER` 값 예시:
+
+```text
+projects/1030831007575/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+```
+
+GitHub OIDC를 서비스 계정 `github-actions@bdml-492404.iam.gserviceaccount.com`에 연결하려면 아래와 같이 설정합니다.
+
+```bash
+gcloud iam workload-identity-pools create github-pool \
+  --project=bdml-492404 \
+  --location=global \
+  --display-name="GitHub Actions Pool"
+
+gcloud iam workload-identity-pools providers create-oidc github-provider \
+  --project=bdml-492404 \
+  --location=global \
+  --workload-identity-pool=github-pool \
+  --display-name="GitHub Actions Provider" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner,attribute.ref=assertion.ref"
+
+gcloud iam service-accounts add-iam-policy-binding github-actions@bdml-492404.iam.gserviceaccount.com \
+  --project=bdml-492404 \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/1030831007575/locations/global/workloadIdentityPools/github-pool/attribute.repository/OWNER/REPO"
+```
+
+위 명령의 `OWNER/REPO`는 실제 GitHub 저장소 경로로 바꿔야 합니다. 브랜치를 `main`으로 제한하려면 provider 생성 시 `--attribute-condition="assertion.repository=='OWNER/REPO' && assertion.ref=='refs/heads/main'"`를 추가하면 됩니다.
+
 ### 백엔드
 
 권장 환경 변수:
