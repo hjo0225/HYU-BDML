@@ -144,6 +144,13 @@ async def init_db() -> None:
     import sys
     import asyncio
 
+    socket_dir = "/cloudsql"
+    print(f"[DB] /cloudsql 존재 여부: {os.path.exists(socket_dir)}")
+    if os.path.exists(socket_dir):
+        print(f"[DB] /cloudsql 내용: {os.listdir(socket_dir)}")
+    else:
+        print("[DB] /cloudsql 디렉토리 없음")
+
     # Cloud SQL 소켓 준비 대기 (최대 30초)
     for attempt in range(6):
         try:
