@@ -16,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import func
 
+print(f"[DB] URL prefix: {DATABASE_URL[:40]}...")  # ← 이 줄 추가
+socket_dir = "/cloudsql"
+
 # ── 환경 변수 ──────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
