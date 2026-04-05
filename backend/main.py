@@ -4,11 +4,22 @@
 """
 import os
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import research, agents, meeting, minutes, usage
+from routers import auth, projects
+from database import init_db
 
-app = FastAPI(title="빅마랩 API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """앱 시작 시 DB 초기화 (Alembic 마이그레이션 또는 create_all)."""
+    await init_db()
+    yield
+
+
+app = FastAPI(title="빅마랩 API", version="2.0.0", lifespan=lifespan)
 
 local_dev_origins = {
     "http://localhost:3000",
@@ -25,7 +36,7 @@ allowed_origins = sorted(local_dev_origins | env_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_credentials=True,   # httpOnly 쿠키(refresh_token) 전송에 필요
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -36,8 +47,11 @@ app.include_router(agents.router)
 app.include_router(meeting.router)
 app.include_router(minutes.router)
 app.include_router(usage.router)
+app.include_router(auth.router)
+app.include_router(projects.router)
+
 
 @app.get("/api/health")
 async def health_check():
     """배포 환경에서 서버 생존 여부를 확인하는 간단한 헬스체크."""
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.0.0"}

@@ -21,6 +21,50 @@ const API_BASE =
     ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api`
     : '/api';
 
+// ── 인증 토큰 주입 ───────────────────────────────────────────────────────
+// AuthContext가 마운트되면 getToken 함수를 등록한다.
+let _getToken: (() => string | null) | null = null;
+export function registerTokenGetter(fn: () => string | null): void {
+  _getToken = fn;
+}
+
+/**
+ * 공통 fetch 래퍼: Authorization 헤더 자동 첨부 + credentials include.
+ * 401 응답 시 /api/auth/refresh를 시도하고, 실패하면 /login으로 리다이렉트한다.
+ */
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const token = _getToken?.();
+  const headers: HeadersInit = {
+    ...(options.headers as Record<string, string> | undefined),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  const res = await fetch(url, { ...options, headers, credentials: 'include' });
+
+  // 401: refresh 시도
+  if (res.status === 401) {
+    const refreshed = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (refreshed.ok) {
+      const data = await refreshed.json();
+      // 새 토큰으로 원래 요청 재시도
+      const retryHeaders: HeadersInit = {
+        ...(options.headers as Record<string, string> | undefined),
+        Authorization: `Bearer ${data.access_token}`,
+      };
+      return fetch(url, { ...options, headers: retryHeaders, credentials: 'include' });
+    }
+    // refresh도 실패하면 로그인 페이지로
+    if (typeof window !== 'undefined') {
+      window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+    }
+  }
+
+  return res;
+}
+
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -162,7 +206,7 @@ export async function fetchResearchStream(
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/research`, {
+    res = await apiFetch(`${API_BASE}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildLegacyResearchPayload(brief)),
@@ -226,7 +270,7 @@ export async function fetchResearchStream(
 /** Phase 2-1: 웹 검색 없이 브리프만 빠르게 정제한다. */
 export async function fetchRefinedResearch(brief: ResearchBrief): Promise<RefinedResearch> {
   try {
-    const res = await fetch(`${API_BASE}/research/refine`, {
+    const res = await apiFetch(`${API_BASE}/research/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildLegacyResearchPayload(brief)),
@@ -265,7 +309,7 @@ export async function fetchMarketReportStream(
 /** Phase 3: 에이전트 추천 */
 export async function fetchAgents(data: AgentRequest): Promise<AgentSchema[]> {
   try {
-    const res = await fetch(`${API_BASE}/agents`, {
+    const res = await apiFetch(`${API_BASE}/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -425,7 +469,7 @@ export async function synthesizePrompt(
   persona_profile: PersonaProfile
 ): Promise<{ system_prompt: string }> {
   try {
-    const response = await fetch(`${API_BASE}/agents/synthesize-prompt`, {
+    const response = await apiFetch(`${API_BASE}/agents/synthesize-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, type, persona_profile }),
@@ -436,3 +480,74 @@ export async function synthesizePrompt(
     throw new Error('system_prompt 합성 중 네트워크 오류가 발생했습니다.');
   }
 }
+
+// ── 프로젝트 API ───────────────────────────────────────────────────────────
+
+export interface ProjectSummary {
+  id: string;
+  title: string | null;
+  current_phase: number;
+  status: 'draft' | 'completed';
+  brief_summary: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  brief: Record<string, unknown> | null;
+  refined: Record<string, unknown> | null;
+  market_report: Record<string, unknown> | null;
+  agents: unknown[] | null;
+  meeting_topic: string | null;
+  meeting_messages: unknown[] | null;
+  minutes: string | null;
+}
+
+export type ProjectUpdatePayload = Partial<{
+  current_phase: number;
+  status: string;
+  title: string;
+  brief: Record<string, unknown>;
+  refined: Record<string, unknown>;
+  market_report: Record<string, unknown>;
+  agents: unknown[];
+  meeting_topic: string;
+  meeting_messages: unknown[];
+  minutes: string;
+}>;
+
+export async function createProject(brief: ResearchBrief): Promise<ProjectDetail> {
+  const res = await apiFetch(`${API_BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ brief }),
+  });
+  return parseJsonResponse<ProjectDetail>(res, '프로젝트 생성 실패');
+}
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const res = await apiFetch(`${API_BASE}/projects`);
+  return parseJsonResponse<ProjectSummary[]>(res, '프로젝트 목록 조회 실패');
+}
+
+export async function getProject(id: string): Promise<ProjectDetail> {
+  const res = await apiFetch(`${API_BASE}/projects/${id}`);
+  return parseJsonResponse<ProjectDetail>(res, '프로젝트 조회 실패');
+}
+
+export async function updateProject(
+  id: string,
+  data: ProjectUpdatePayload,
+): Promise<ProjectDetail> {
+  const res = await apiFetch(`${API_BASE}/projects/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return parseJsonResponse<ProjectDetail>(res, '프로젝트 저장 실패');
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await apiFetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+}
+

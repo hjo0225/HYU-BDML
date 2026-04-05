@@ -1,16 +1,25 @@
 """회의 시뮬레이션 SSE 엔드포인트."""
 import asyncio
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import User, get_db
 from models.schemas import MeetingRequest
+from services.auth_service import get_current_user
 from services.meeting_service import run_meeting_stream
 
 router = APIRouter(prefix="/api")
 
 
 @router.post("/meeting")
-async def meeting_endpoint(req: MeetingRequest, request: Request):
+async def meeting_endpoint(
+    req: MeetingRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """회의 시뮬레이션을 SSE로 스트리밍한다."""
 
     async def event_stream():

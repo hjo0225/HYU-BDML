@@ -1,0 +1,94 @@
+name: Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast3
+  REGISTRY: asia-northeast3-docker.pkg.dev
+  REPO: bigmarlab
+
+jobs:
+  # ── 백엔드 배포 ────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & Push Backend Image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/backend:${{ github.sha }}"
+          docker build -t "$IMAGE" ./backend
+          docker push "$IMAGE"
+          echo "BACKEND_IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy Backend to Cloud Run
+        run: |
+          gcloud run deploy bigmarlab-backend \
+            --image="${{ env.BACKEND_IMAGE }}" \
+            --region="${{ env.REGION }}" \
+            --platform=managed \
+            --min-instances=1 \
+            --max-instances=10 \
+            --memory=512Mi \
+            --allow-unauthenticated \
+            --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:bigmarlab-db" \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest" \
+            --set-env-vars="CORS_ORIGINS=${{ secrets.FRONTEND_URL }},ADMIN_EMAILS=hjo0225@hanyang.ac.kr" \
+            --quiet
+
+  # ── 프론트엔드 배포 (백엔드 완료 후) ──────────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & Push Frontend Image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/frontend:${{ github.sha }}"
+          docker build \
+            --build-arg NEXT_PUBLIC_BACKEND_URL="${{ secrets.BACKEND_URL }}" \
+            -t "$IMAGE" \
+            ./frontend
+          docker push "$IMAGE"
+          echo "FRONTEND_IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy Frontend to Cloud Run
+        run: |
+          gcloud run deploy bigmarlab-frontend \
+            --image="${{ env.FRONTEND_IMAGE }}" \
+            --region="${{ env.REGION }}" \
+            --platform=managed \
+            --min-instances=1 \
+            --max-instances=5 \
+            --memory=512Mi \
+            --allow-unauthenticated \
+            --set-env-vars="NODE_ENV=production,BACKEND_URL=${{ secrets.BACKEND_URL }}" \
+            --quiet

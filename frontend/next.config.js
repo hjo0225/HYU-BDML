@@ -2,6 +2,7 @@
 const backendBaseUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
 const nextConfig = {
+  output: 'standalone',  // Cloud Run 배포용 standalone 번들
   async rewrites() {
     return [
       {
