@@ -16,8 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import func
 
-print(f"[DB] URL prefix: {DATABASE_URL[:40]}...")  # ← 이 줄 추가
-socket_dir = "/cloudsql"
 
 # ── 환경 변수 ──────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
@@ -146,13 +144,6 @@ async def init_db() -> None:
     import subprocess
     import sys
     import asyncio
-
-    socket_dir = "/cloudsql"
-    print(f"[DB] /cloudsql 존재 여부: {os.path.exists(socket_dir)}")
-    if os.path.exists(socket_dir):
-        print(f"[DB] /cloudsql 내용: {os.listdir(socket_dir)}")
-    else:
-        print("[DB] /cloudsql 디렉토리 없음")
 
     # Cloud SQL 소켓 준비 대기 (최대 30초)
     for attempt in range(6):
