@@ -1,3 +1,5 @@
+# deploy.yml
+
 name: Deploy to GCP Cloud Run
 
 on:
@@ -36,16 +38,17 @@ jobs:
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
       - name: Build & Push Backend Image
+        id: build_backend
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/backend:${{ github.sha }}"
           docker build -t "$IMAGE" ./backend
           docker push "$IMAGE"
-          echo "BACKEND_IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Deploy Backend to Cloud Run
         run: |
           gcloud run deploy bigmarlab-backend \
-            --image="${{ env.BACKEND_IMAGE }}" \
+            --image="${{ steps.build_backend.outputs.image }}" \
             --region="${{ env.REGION }}" \
             --platform=managed \
             --min-instances=1 \
@@ -81,6 +84,7 @@ jobs:
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
       - name: Build & Push Frontend Image
+        id: build_frontend
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPO }}/frontend:${{ github.sha }}"
           docker build \
@@ -88,12 +92,12 @@ jobs:
             -t "$IMAGE" \
             ./frontend
           docker push "$IMAGE"
-          echo "FRONTEND_IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Deploy Frontend to Cloud Run
         run: |
           gcloud run deploy bigmarlab-frontend \
-            --image="${{ env.FRONTEND_IMAGE }}" \
+            --image="${{ steps.build_frontend.outputs.image }}" \
             --region="${{ env.REGION }}" \
             --platform=managed \
             --min-instances=1 \

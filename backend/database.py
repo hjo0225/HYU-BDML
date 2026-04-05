@@ -2,6 +2,7 @@
 
 DATABASE_URL 환경변수로 로컬(aiosqlite)과 배포(asyncpg/Cloud SQL) 자동 전환.
 """
+# database.py
 import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -139,11 +140,22 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # ── 테이블 생성 (개발용 / Alembic 없을 때) ────────────────────────────────
 
 async def init_db() -> None:
-    """앱 시작 시 호출. Alembic이 설정되어 있으면 alembic upgrade head 실행."""
     import subprocess
     import sys
+    import asyncio
 
-    # alembic.ini가 있으면 마이그레이션 실행
+    # Cloud SQL 소켓 준비 대기 (최대 30초)
+    for attempt in range(6):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(lambda c: None)  # 연결 테스트
+            break
+        except Exception as e:
+            print(f"[DB] 연결 대기 중... ({attempt+1}/6): {e}")
+            await asyncio.sleep(5)
+    else:
+        raise RuntimeError("[DB] Cloud SQL 연결 실패: 소켓을 찾을 수 없습니다.")
+
     alembic_ini = os.path.join(os.path.dirname(__file__), "alembic.ini")
     if os.path.exists(alembic_ini):
         result = subprocess.run(
@@ -158,7 +170,6 @@ async def init_db() -> None:
             print("[DB] Alembic 마이그레이션 완료")
         return
 
-    # alembic이 없으면 create_all로 테이블 생성 (로컬 개발 초기)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("[DB] 테이블 자동 생성 완료 (create_all)")
