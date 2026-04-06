@@ -21,6 +21,13 @@ const API_BASE =
     ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api`
     : '/api';
 
+// SSE(text/event-stream) 엔드포인트는 Next.js rewrite가 버퍼링해 실시간 스트리밍이 깨진다.
+// 백엔드 URL이 빌드 타임에 주입돼 있으면 프록시를 우회해 직접 호출한다.
+const SSE_BASE =
+  process.env.NEXT_PUBLIC_BACKEND_URL
+    ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/api`
+    : API_BASE;
+
 // ── 인증 토큰 주입 ───────────────────────────────────────────────────────
 // AuthContext가 마운트되면 getToken 함수를 등록한다.
 let _getToken: (() => string | null) | null = null;
@@ -345,7 +352,7 @@ export async function fetchMeeting(
   let res: Response;
 
   try {
-    res = await apiFetch(`${API_BASE}/meeting`, {
+    res = await apiFetch(`${SSE_BASE}/meeting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
