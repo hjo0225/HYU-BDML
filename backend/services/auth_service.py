@@ -1,6 +1,7 @@
 """인증 서비스: 비밀번호 해시, JWT 생성/검증, refresh_token DB 관리."""
 import hashlib
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +22,11 @@ ADMIN_EMAILS = {
     if e.strip()
 }
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-change-in-prod")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    # Avoid a predictable fallback key when the env var is missing.
+    JWT_SECRET_KEY = secrets.token_hex(32)
+    print("[AUTH] JWT_SECRET_KEY is not set; generated an ephemeral dev secret.")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))

@@ -56,7 +56,7 @@ jobs:
             --memory=512Mi \
             --allow-unauthenticated \
             --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:bigmarlab-db" \
-            --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest" \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,NAVER_CLIENT_ID=NAVER_CLIENT_ID:latest,NAVER_CLIENT_SECRET=NAVER_CLIENT_SECRET:latest" \
             --set-env-vars="CORS_ORIGINS=${{ secrets.FRONTEND_URL }},ADMIN_EMAILS=hjo0225@hanyang.ac.kr" \
             --quiet
 

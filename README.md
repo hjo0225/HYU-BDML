@@ -1,6 +1,16 @@
 # Interactive Multiagent
 
-정성조사 기획 과정을 하나의 흐름으로 연결한 멀티 에이전트 리서치 애플리케이션입니다.  
+> 정성조사 기획 과정을 하나의 흐름으로 연결한 멀티 에이전트 리서치 애플리케이션
+
+[![Deploy to GCP](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml/badge.svg)](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml)
+![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4.1-412991?logo=openai&logoColor=white)
+![GCP](https://img.shields.io/badge/GCP-Cloud_Run-4285F4?logo=googlecloud&logoColor=white)
+
 사용자가 연구 브리프를 입력하면 AI가 내용을 정제하고, 한국 시장 중심의 웹 리서치를 수행하고, 조사 목적에 맞는 가상 참여자를 구성한 뒤, FGI 형식의 회의를 시뮬레이션하고 마지막으로 회의록까지 생성합니다.
 
 프론트엔드는 Next.js, 백엔드는 FastAPI로 구성되어 있으며, 백엔드에서는 OpenAI SDK, OpenAI Agents SDK, LangGraph, LangChain OpenAI를 함께 사용해 단계별 작업을 오케스트레이션합니다.
