@@ -345,7 +345,7 @@ export async function fetchMeeting(
   let res: Response;
 
   try {
-    res = await fetch(`${API_BASE}/meeting`, {
+    res = await apiFetch(`${API_BASE}/meeting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -444,7 +444,7 @@ export async function fetchMinutes(data: MinutesRequest): Promise<string> {
           }
         : data.brief;
 
-    const res = await fetch(`${API_BASE}/minutes`, {
+    const res = await apiFetch(`${API_BASE}/minutes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
