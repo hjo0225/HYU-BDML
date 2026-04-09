@@ -2,16 +2,14 @@
 
 > **한 줄 요약:** 연구 브리프 입력 하나로 시장조사 → 가상 참여자 구성 → FGI 시뮬레이션 → 회의록 생성까지 자동 수행하는 멀티 에이전트 리서치 워크플로우
 
-[![Deploy to GCP](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml/badge.svg)](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml)
-![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
-![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4.1-412991?logo=openai&logoColor=white)
-![GCP](https://img.shields.io/badge/GCP-Cloud_Run-4285F4?logo=googlecloud&logoColor=white)
-
----
+[![Deploy to GCP](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml/badge.svg?style=for-the-badge)](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml)
+![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4.1-412991?style=for-the-badge&logo=openai&logoColor=white)
+![GCP](https://img.shields.io/badge/GCP-Cloud_Run-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
 
 ## 1. 개요
 
@@ -21,15 +19,13 @@
 
 ### 사용자 흐름 (5단계)
 
-| 단계 | 라우트 | 기능 |
-|------|--------|------|
-| 1 | `/research-input` | 연구 브리프 입력 |
-| 2 | `/market-research` | 연구 정보 정제 + 시장조사 스트리밍 |
-| 3 | `/agent-setup` | 가상 참여자(에이전트) 추천 및 편집 |
-| 4 | `/meeting` | FGI 회의 시뮬레이션 (SSE) |
-| 5 | `/minutes` | 회의록 생성 및 Markdown 내보내기 |
-
----
+| 단계 | 라우트             | 기능                               |
+| ---- | ------------------ | ---------------------------------- |
+| 1    | `/research-input`  | 연구 브리프 입력                   |
+| 2    | `/market-research` | 연구 정보 정제 + 시장조사 스트리밍 |
+| 3    | `/agent-setup`     | 가상 참여자(에이전트) 추천 및 편집 |
+| 4    | `/meeting`         | FGI 회의 시뮬레이션 (SSE)          |
+| 5    | `/minutes`         | 회의록 생성 및 Markdown 내보내기   |
 
 ## 2. 핵심 문제 해결
 
@@ -63,16 +59,14 @@ LLM Orchestration
 
 ### ⚖️ Why this tech? (Trade-offs)
 
-| 선택한 기술 | 도입 이유 | 고려했던 대안 및 포기한 이유 |
-|---|---|---|
-| **LangGraph** | 회의 시뮬레이션의 라운드 전환·종료 조건을 상태머신으로 명확하게 표현 | LangChain LCEL만으로는 분기·루프 로직 표현이 장황해짐 |
-| **SSE (Server-Sent Events)** | 회의 발언을 토큰 단위로 실시간 스트리밍, 연결 유지 단순 | WebSocket은 양방향이 필요 없는 단방향 스트림에 과도한 설계 |
-| **NDJSON 스트리밍** | 시장조사 섹션을 순서대로 점진적 렌더링 가능 | 단일 JSON 응답은 전체 완료 전까지 화면이 비어있어 UX 저하 |
-| **Naver Search API** | 한국어 시장 정보의 밀도·신뢰도 확보 | OpenAI Web Search만 사용 시 한국 시장 맥락 데이터 부족 |
-| **sessionStorage** | 별도 DB 없이 단계 간 상태 전달, 프로토타입 속도 우선 | Redux/Zustand는 새로고침 시 소실 문제 동일하면서 설정 비용 높음 |
-| **GCP Cloud Run** | 컨테이너 단위 분리 배포, Workload Identity로 키 관리 불필요 | EC2/GCE는 인스턴스 관리 부담, Vercel은 백엔드 장시간 SSE 스트림에 타임아웃 이슈 |
-
----
+| 선택한 기술                  | 도입 이유                                                            | 고려했던 대안 및 포기한 이유                                                    |
+| ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **LangGraph**                | 회의 시뮬레이션의 라운드 전환·종료 조건을 상태머신으로 명확하게 표현 | LangChain LCEL만으로는 분기·루프 로직 표현이 장황해짐                           |
+| **SSE (Server-Sent Events)** | 회의 발언을 토큰 단위로 실시간 스트리밍, 연결 유지 단순              | WebSocket은 양방향이 필요 없는 단방향 스트림에 과도한 설계                      |
+| **NDJSON 스트리밍**          | 시장조사 섹션을 순서대로 점진적 렌더링 가능                          | 단일 JSON 응답은 전체 완료 전까지 화면이 비어있어 UX 저하                       |
+| **Naver Search API**         | 한국어 시장 정보의 밀도·신뢰도 확보                                  | OpenAI Web Search만 사용 시 한국 시장 맥락 데이터 부족                          |
+| **sessionStorage**           | 별도 DB 없이 단계 간 상태 전달, 프로토타입 속도 우선                 | Redux/Zustand는 새로고침 시 소실 문제 동일하면서 설정 비용 높음                 |
+| **GCP Cloud Run**            | 컨테이너 단위 분리 배포, Workload Identity로 키 관리 불필요          | EC2/GCE는 인스턴스 관리 부담, Vercel은 백엔드 장시간 SSE 스트림에 타임아웃 이슈 |
 
 ## 3. 핵심 기능 및 트러블슈팅
 
@@ -93,8 +87,6 @@ LLM Orchestration
 - **상황:** 사용자가 편집한 페르소나 필드(나이·성향·말투 등)와 회의에서 실제 사용되는 system prompt가 불일치하는 문제
 - **해결:** `POST /api/agents/synthesize-prompt`에서 편집된 페르소나 프로필을 받아 LLM이 일관된 system prompt로 재합성. 저장 전 프리뷰 가능
 - **결과:** 페르소나 편집 내용이 회의 발언 톤·관점에 실제로 반영됨
-
----
 
 ## 4. 실행 방법
 
@@ -147,17 +139,17 @@ docker build -t interactive-multiagent-frontend ./frontend \
 docker run -p 3000:3000 interactive-multiagent-frontend
 ```
 
----
-
 ## 5. 유지보수
 
 - **CI/CD:** GitHub Actions + GCP Workload Identity Federation → Cloud Run 자동 배포 (`deploy.yml`)
+
   - 서비스 계정 키 대신 OIDC 기반 인증으로 시크릿 관리 최소화
   - 필요 secrets: `GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `BACKEND_URL`, `FRONTEND_URL`
 
 - **API Document:** `http://localhost:8000/docs` (FastAPI 자동 생성 Swagger UI)
 
 - **Test Strategy:**
+
   - 현재 E2E 위주 수동 검증 (각 Phase 입출력 확인)
   - 핵심 검증 대상: SSE 스트림 단절 여부, 페르소나 합성 정합성, 단계 초기화 규칙 (상위 단계 변경 시 하위 단계 결과 리셋)
 
