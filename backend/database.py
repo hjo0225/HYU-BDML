@@ -111,6 +111,19 @@ class Project(Base):
     updated_at       = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
 
+class ProjectEdit(Base):
+    """사용자가 AI 생성 결과를 수정한 이력."""
+    __tablename__ = "project_edits"
+
+    id         = Column(BigInteger, primary_key=True, autoincrement=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    field      = Column(String(100), nullable=False)   # 'refined_background' | 'agent_added' 등
+    old_value  = Column(Text, nullable=True)
+    new_value  = Column(Text, nullable=True)
+    edited_at  = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 

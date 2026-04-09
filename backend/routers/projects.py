@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import Project, User, get_db
+from database import Project, ProjectEdit, User, get_db
 from services.auth_service import get_current_user
 from services.project_service import generate_project_title
 
@@ -152,6 +152,76 @@ async def get_project(
     return _project_to_dict(project)
 
 
+def _record_edits(
+    edits: list,
+    project_id: str,
+    user_id: str,
+    field: str,
+    old_value: str | None,
+    new_value: str | None,
+) -> None:
+    """변경이 있을 때만 편집 이력을 추가한다."""
+    if old_value is None or old_value == new_value:
+        return
+    edits.append(
+        ProjectEdit(
+            project_id=project_id,
+            user_id=user_id,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    )
+
+
+def _diff_refined(project_id: str, user_id: str, old: dict, new: dict) -> list[ProjectEdit]:
+    """정제본 sub-field 변경 이력을 반환한다."""
+    edits: list[ProjectEdit] = []
+    for key in ("refined_background", "refined_objective", "refined_usage_plan"):
+        _record_edits(edits, project_id, user_id, key, old.get(key), new.get(key))
+    return edits
+
+
+def _diff_agents(project_id: str, user_id: str, old_list: list, new_list: list) -> list[ProjectEdit]:
+    """에이전트 추가·삭제·수정 이력을 반환한다."""
+    edits: list[ProjectEdit] = []
+    old_map = {a["id"]: a for a in old_list if isinstance(a, dict) and "id" in a}
+    new_map = {a["id"]: a for a in new_list if isinstance(a, dict) and "id" in a}
+
+    for aid, agent in new_map.items():
+        if aid not in old_map:
+            edits.append(ProjectEdit(
+                project_id=project_id, user_id=user_id,
+                field="agent_added",
+                old_value=None,
+                new_value=agent.get("name", aid),
+            ))
+
+    for aid, agent in old_map.items():
+        if aid not in new_map:
+            edits.append(ProjectEdit(
+                project_id=project_id, user_id=user_id,
+                field="agent_removed",
+                old_value=agent.get("name", aid),
+                new_value=None,
+            ))
+
+    for aid in old_map:
+        if aid not in new_map:
+            continue
+        old_a, new_a = old_map[aid], new_map[aid]
+        for key in ("name", "description"):
+            _record_edits(edits, project_id, user_id,
+                          f"agent_{key}",
+                          str(old_a.get(key, "") or ""),
+                          str(new_a.get(key, "") or ""))
+        old_profile = json.dumps(old_a.get("persona_profile") or {}, ensure_ascii=False, sort_keys=True)
+        new_profile = json.dumps(new_a.get("persona_profile") or {}, ensure_ascii=False, sort_keys=True)
+        _record_edits(edits, project_id, user_id, "agent_persona", old_profile, new_profile)
+
+    return edits
+
+
 @router.patch("/{project_id}")
 async def update_project(
     project_id: str,
@@ -166,6 +236,23 @@ async def update_project(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+
+    # 편집 이력 수집
+    edit_records: list[ProjectEdit] = []
+
+    if req.refined is not None:
+        old_refined = _parse_jsonb(project.refined) or {}
+        if old_refined:  # AI 최초 저장본이 있을 때만 비교
+            edit_records += _diff_refined(project_id, current_user.id, old_refined, req.refined)
+
+    if req.agents is not None:
+        old_agents = _parse_jsonb(project.agents) or []
+        if old_agents:  # AI 추천본이 있을 때만 비교
+            edit_records += _diff_agents(project_id, current_user.id, old_agents, req.agents)
+
+    if req.meeting_topic is not None and project.meeting_topic:
+        _record_edits(edit_records, project_id, current_user.id,
+                      "meeting_topic", project.meeting_topic, req.meeting_topic)
 
     # 요청에서 None이 아닌 필드만 업데이트
     if req.current_phase is not None:
@@ -190,6 +277,8 @@ async def update_project(
         project.minutes = req.minutes
 
     project.updated_at = datetime.now(timezone.utc)
+    for record in edit_records:
+        db.add(record)
     await db.flush()
     return _project_to_dict(project)
 

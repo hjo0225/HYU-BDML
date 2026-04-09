@@ -80,4 +80,5 @@ yarn-error.log*
 # ── 프로젝트 특정 ─────────────────────────────────────────────────────────────
 .claude/
 .claude/*
-claude.md
+.claude.md
+.docs/*
