@@ -226,6 +226,10 @@ async def init_db() -> None:
             print("[DB] Alembic 마이그레이션 완료")
         return
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("[DB] 테이블 자동 생성 완료 (create_all)")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("[DB] 테이블 자동 생성 완료 (create_all)")
+    except Exception as e:
+        # 이미 테이블이 존재하는 경우 (Cloud SQL에서 타입 충돌 가능)
+        print(f"[DB] create_all 건너뜀 (테이블이 이미 존재할 수 있음): {e}")
