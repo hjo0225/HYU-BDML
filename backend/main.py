@@ -4,6 +4,9 @@
 """
 import os
 
+from dotenv import load_dotenv
+load_dotenv()  # 라우터 import 전에 .env 로드 (ChatOpenAI, AsyncOpenAI 등�� 환경변수 필요)
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

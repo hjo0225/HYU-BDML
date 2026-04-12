@@ -82,3 +82,8 @@ yarn-error.log*
 .claude/*
 .claude.md
 .docs/*
+
+# ── 패널 데이터 (개인정보) ───────────────────────────────────────────────────
+backend/raw/
+backend/personas/
+backend/rag/embedding_cache.json

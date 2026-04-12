@@ -1,4 +1,5 @@
 """인증 라우터: 회원가입, 로그인, 토큰 갱신, 로그아웃, 내 정보 조회."""
+import os
 import uuid
 from typing import Annotated
 
@@ -26,13 +27,16 @@ _COOKIE_NAME = "refresh_token"
 _COOKIE_MAX_AGE = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600
 
 
+_IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+
 def _set_refresh_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=_COOKIE_NAME,
         value=token,
         max_age=_COOKIE_MAX_AGE,
         httponly=True,
-        secure=True,       # HTTPS에서만 전송
+        secure=_IS_PROD,   # 로컬(HTTP)에서는 False, 배포(HTTPS)에서는 True
         samesite="lax",    # CSRF 방어
         path="/api/auth",  # auth 엔드포인트에만 쿠키 전송
     )
