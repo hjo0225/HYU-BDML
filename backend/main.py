@@ -4,8 +4,11 @@
 """
 import os
 
-from dotenv import load_dotenv
-load_dotenv()  # 라우터 import 전에 .env 로드 (ChatOpenAI, AsyncOpenAI 등�� 환경변수 필요)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # 로컬 개발용 .env 로드 (Cloud Run은 환경변수 직접 주입)
+except ImportError:
+    pass
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
