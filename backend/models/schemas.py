@@ -125,6 +125,14 @@ class AgentRequest(BaseModel):
     refined: RefinedResearch
     report: MarketReport
 
+class AgentStreamRequest(BaseModel):
+    """주제 인식 에이전트 스트림 요청 — RAG 패널 / LLM 가상 모드 분기."""
+    brief: ResearchBrief
+    refined: RefinedResearch
+    report: MarketReport
+    topic: str = ""
+    mode: Literal["rag", "llm"] = "rag"
+
 class SynthesizePromptRequest(BaseModel):
     """저장된 페르소나를 다시 system prompt로 합성할 때 사용하는 요청."""
     name: str

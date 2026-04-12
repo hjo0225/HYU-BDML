@@ -12,7 +12,7 @@ const PHASE_GROUPS = [
     title: "분석",
     steps: [
       { phase: 2, label: "시장조사", path: "/market-research" },
-      { phase: 3, label: "에이전트 결정", path: "/agent-setup" },
+      { phase: 3, label: "주제 · 에이전트", path: "/agent-setup" },
     ],
   },
   {

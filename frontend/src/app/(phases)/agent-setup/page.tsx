@@ -3,9 +3,9 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProject } from '@/contexts/ProjectContext';
-import { fetchAgentsStream } from '@/lib/api';
+import { fetchAgentsStreamV2 } from '@/lib/api';
 import type { AgentBuildProgressEvent } from '@/lib/api';
-import type { AgentSchema } from '@/lib/types';
+import type { AgentSchema, AgentMode } from '@/lib/types';
 import { buildSystemPromptFromPersona } from '@/lib/persona';
 
 /* 타입 라벨 매핑 */
@@ -35,9 +35,23 @@ const EMPTY_AGENT: AgentSchema = {
 
 const MAX_AGENTS = 8;
 
+type SetupStep = 'topic' | 'mode' | 'agents';
+
 export default function Phase3Page() {
   const router = useRouter();
-  const { project, setAgents, setCurrentPhase, resetAfterAgentsChange } = useProject();
+  const {
+    project, setAgents, setAgentMode, setMeetingTopic,
+    setCurrentPhase, resetAfterAgentsChange,
+  } = useProject();
+
+  /* 위저드 상태 — 에이전트가 이미 있으면 agents 단계에서 시작 */
+  const [setupStep, setSetupStep] = useState<SetupStep>(
+    project.agents.length > 0 ? 'agents' : 'topic',
+  );
+  const [localTopic, setLocalTopic] = useState(project.meetingTopic ?? '');
+  const [selectedMode, setSelectedMode] = useState<AgentMode>(
+    (project.agentMode as AgentMode) ?? 'rag',
+  );
 
   const [loading, setLoading] = useState(false);
   const [buildProgress, setBuildProgress] = useState<AgentBuildProgressEvent | null>(null);
@@ -51,7 +65,7 @@ export default function Phase3Page() {
   const agents = project.agents;
   const hasAgents = agents.length > 0;
 
-  /* 패널 선정 요청 */
+  /* 에이전트 생성 요청 (RAG / LLM 통합) */
   const requestRecommend = useCallback(async () => {
     if (!project.brief || !project.refined || !project.marketReport) {
       setError('시장조사가 필요합니다. 이전 단계를 먼저 완료해주세요.');
@@ -61,21 +75,30 @@ export default function Phase3Page() {
     setBuildProgress(null);
     setError(null);
     try {
-      await fetchAgentsStream(
-        { brief: project.brief, refined: project.refined, report: project.marketReport },
+      await fetchAgentsStreamV2(
+        {
+          brief: project.brief,
+          refined: project.refined,
+          report: project.marketReport,
+          topic: localTopic,
+          mode: selectedMode,
+        },
         (event) => setBuildProgress(event),
         (agents) => {
           resetAfterAgentsChange(agents);
+          setAgentMode(selectedMode);
+          setMeetingTopic(localTopic);
           setLoading(false);
           setBuildProgress(null);
+          setSetupStep('agents');
         },
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : '패널 선정 중 오류 발생');
+      setError(err instanceof Error ? err.message : '에이전트 생성 중 오류 발생');
       setLoading(false);
       setBuildProgress(null);
     }
-  }, [project.refined, project.marketReport, resetAfterAgentsChange]);
+  }, [project.brief, project.refined, project.marketReport, localTopic, selectedMode, resetAfterAgentsChange, setAgentMode, setMeetingTopic]);
 
   /* 에이전트 삭제 */
   const removeAgent = (id: string) => {
@@ -91,7 +114,6 @@ export default function Phase3Page() {
   /* 편집 저장 */
   const saveEdit = () => {
     if (!editData) return;
-    // 기존 LLM 페르소나 에이전트는 system_prompt 자동 재생성
     let saved = editData;
     if (!editData.demographics && editData.persona_profile) {
       saved = {
@@ -127,7 +149,7 @@ export default function Phase3Page() {
     return (
       <div className="card">
         <div className="card-header">
-          <div className="card-title">🤖 에이전트 구성</div>
+          <div className="card-title">💬 주제 · 에이전트 구성</div>
         </div>
         <p className="text-sm text-text-secondary mb-4">
           시장조사가 완료되지 않았습니다. Phase 2에서 먼저 시장조사를 수행해주세요.
@@ -139,30 +161,146 @@ export default function Phase3Page() {
 
   return (
     <div>
-      {/* ── 헤더 카드 ── */}
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: hasAgents ? 0 : 14 }}>
-          <div className="card-title">
-            🤖 에이전트 구성
-            {hasAgents && (
-              <span className="badge" style={{ background: '#f0f7ee', color: 'var(--green)' }}>
-                {agents.length}명
-              </span>
-            )}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* Step 1: 회의 주제 입력                                           */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {setupStep === 'topic' && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">💬 회의 주제 설정</div>
           </div>
-          {hasAgents && (
-            <button className="btn btn-ghost text-[11px]" onClick={requestRecommend} disabled={loading}>
-              🔄 재선정
-            </button>
-          )}
-        </div>
+          <p className="text-xs text-text-secondary mb-4">
+            FGI에서 논의할 핵심 주제를 입력하세요. 주제에 맞춰 최적의 참여자를 구성합니다.
+          </p>
 
-        {/* 로딩 — 단계별 진행 표시 */}
-        {loading && (
+          {/* 연구 정보 요약 카드 */}
+          <div style={{ background: '#f7f8fa', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+            <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>연구 배경</div>
+            <div style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3 }}>
+              {project.refined?.refined_background || project.brief?.background || '—'}
+            </div>
+            <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginTop: 8, marginBottom: 4 }}>연구 목적</div>
+            <div style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
+              {project.refined?.refined_objective || project.brief?.objective || '—'}
+            </div>
+          </div>
+
+          <div className="field-group">
+            <div className="field-label">회의 주제</div>
+            <textarea
+              className="field-textarea"
+              rows={3}
+              value={localTopic}
+              onChange={(e) => setLocalTopic(e.target.value)}
+              placeholder="예: 20-30대 직장인의 건강기능식품 구매 결정 요인과 브랜드 인식"
+            />
+          </div>
+
+          <div className="action-bar" style={{ marginTop: 16 }}>
+            <button className="btn btn-secondary" onClick={goPrev}>← 시장조사 수정</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setMeetingTopic(localTopic.trim());
+                setSetupStep('mode');
+              }}
+              disabled={!localTopic.trim()}
+            >
+              다음: 방식 선택 →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* Step 2: 모드 선택 (RAG 패널 / LLM 가상)                         */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {setupStep === 'mode' && !loading && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">🤖 참여자 구성 방식</div>
+          </div>
+          <p className="text-xs text-text-secondary mb-2">
+            주제: <strong>{localTopic}</strong>
+          </p>
+          <p className="text-xs text-text-secondary mb-4">
+            FGI 참여자를 어떤 방식으로 구성할지 선택하세요.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            {/* RAG 패널 카드 */}
+            <div
+              onClick={() => setSelectedMode('rag')}
+              style={{
+                padding: '20px 16px',
+                borderRadius: 10,
+                border: selectedMode === 'rag' ? '2px solid #1B4B8C' : '2px solid #e0e0e0',
+                background: selectedMode === 'rag' ? '#f0f5fb' : '#fff',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                position: 'relative',
+              }}
+            >
+              {selectedMode === 'rag' && (
+                <span style={{ position: 'absolute', top: 8, right: 10, fontSize: 9, background: '#1B4B8C', color: '#fff', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                  추천
+                </span>
+              )}
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>
+                실제 패널 데이터 기반
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                500명의 실제 소비자 패널에서 주제 관련성과 클러스터 다양성을 고려해 최적 참여자를 선정합니다.
+              </div>
+            </div>
+
+            {/* LLM 가상 카드 */}
+            <div
+              onClick={() => setSelectedMode('llm')}
+              style={{
+                padding: '20px 16px',
+                borderRadius: 10,
+                border: selectedMode === 'llm' ? '2px solid #1B4B8C' : '2px solid #e0e0e0',
+                background: selectedMode === 'llm' ? '#f0f5fb' : '#fff',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🤖</div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>
+                LLM 가상 에이전트
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                시장조사 결과를 기반으로 AI가 가상의 소비자 페르소나를 자동 생성합니다.
+              </div>
+            </div>
+          </div>
+
+          <div className="action-bar">
+            <button className="btn btn-secondary" onClick={() => setSetupStep('topic')}>← 주제 수정</button>
+            <button className="btn btn-primary" onClick={requestRecommend}>
+              에이전트 생성 시작 →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* 로딩 상태 (모드 선택 후 생성 중)                                  */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {loading && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">🤖 에이전트 구성</div>
+          </div>
           <div className="spinner-wrap">
             <div className="spinner" />
             <div className="spinner-text">
-              {buildProgress?.message || '실제 패널 데이터를 기반으로 참여자를 선정하고 있습니다...'}
+              {buildProgress?.message || (selectedMode === 'rag'
+                ? '실제 패널 데이터를 기반으로 참여자를 선정하고 있습니다...'
+                : 'LLM이 가상 에이전트를 생성하고 있습니다...'
+              )}
             </div>
             {buildProgress && buildProgress.total > 0 && buildProgress.step !== 'selecting' && (
               <div style={{ marginTop: 8, width: '100%', maxWidth: 260 }}>
@@ -176,34 +314,51 @@ export default function Phase3Page() {
               </div>
             )}
           </div>
-        )}
+          {error && (
+            <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)', marginTop: 12 }}>
+              <div>{error}</div>
+              <button className="btn btn-ghost text-[11px] mt-1" style={{ color: 'var(--red)' }} onClick={requestRecommend}>
+                다시 시도
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
-        {/* 시작 전 */}
-        {!loading && !hasAgents && (
-          <>
-            <p className="text-xs text-text-secondary mb-4">
-              연구 맥락에 맞는 실제 패널 데이터를 분석해 FGI 참여자를 자동으로 구성합니다.
-            </p>
-            {error && (
-              <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
-                <div>{error}</div>
-                <button className="btn btn-ghost text-[11px] mt-1" style={{ color: 'var(--red)' }} onClick={requestRecommend}>
-                  다시 시도
-                </button>
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* Step 3: 에이전트 결과 + 편집                                      */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {setupStep === 'agents' && hasAgents && !loading && (
+        <>
+          {/* 헤더 카드 */}
+          <div className="card">
+            <div className="card-header" style={{ marginBottom: 0 }}>
+              <div className="card-title">
+                🤖 에이전트 구성
+                <span className="badge" style={{ background: '#f0f7ee', color: 'var(--green)' }}>
+                  {agents.length}명
+                </span>
+                <span className="badge" style={{ background: '#E8F0FA', color: '#1B4B8C', marginLeft: 4, fontSize: 10 }}>
+                  {project.agentMode === 'rag' ? '📊 패널 기반' : '🤖 LLM 생성'}
+                </span>
+              </div>
+              <button className="btn btn-ghost text-[11px]" onClick={() => setSetupStep('topic')} disabled={loading}>
+                🔄 처음부터 다시
+              </button>
+            </div>
+            {project.meetingTopic && (
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
+                주제: <strong>{project.meetingTopic}</strong>
               </div>
             )}
-            <button className="btn btn-primary" onClick={requestRecommend}>
-              패널 선정 시작 →
-            </button>
-          </>
-        )}
-      </div>
+          </div>
 
-      {hasAgents && !loading && (
-        <>
           {/* 추천 배너 */}
           <div className="recommend-banner">
-            📊 <strong>데이터 기반 패널 선정 완료:</strong>&nbsp; 클러스터 다양성을 고려해 참여자를 구성했습니다.
+            {project.agentMode === 'rag'
+              ? '📊 데이터 기반 패널 선정 완료: 주제 관련성과 클러스터 다양성을 고려해 참여자를 구성했습니다.'
+              : '🤖 가상 에이전트 생성 완료: 시장조사 결과 기반으로 참여자 페르소나를 구성했습니다.'
+            }
           </div>
 
           {error && (
@@ -480,7 +635,7 @@ export default function Phase3Page() {
 
           {/* ── 액션 바 ── */}
           <div className="action-bar">
-            <button className="btn btn-secondary" onClick={goPrev}>← 시장조사 수정</button>
+            <button className="btn btn-secondary" onClick={() => setSetupStep('topic')}>← 주제 · 방식 수정</button>
             <button className="btn btn-primary" onClick={goNext}>회의 시작 →</button>
           </div>
         </>

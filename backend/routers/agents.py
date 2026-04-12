@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import User, get_db
-from models.schemas import AgentRequest, SynthesizePromptRequest
+from models.schemas import AgentRequest, AgentStreamRequest, SynthesizePromptRequest
 from services.auth_service import get_current_user
 from services.agent_service import (
     recommend_agents,
@@ -68,6 +68,72 @@ async def recommend_agents_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/agents/stream/v2")
+async def recommend_agents_stream_v2(
+    req: AgentStreamRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 3 (새 플로우): 주제 인식 에이전트 선정 — mode에 따라 RAG/LLM 분기."""
+
+    if req.mode == "rag":
+        async def rag_stream():
+            try:
+                async for event in build_personas_stream(
+                    target_customer=req.brief.target_customer,
+                    n_agents=5,
+                    topic=req.topic,
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                traceback.print_exc()
+                error_event = {
+                    "type": "build_progress", "step": "error",
+                    "current": 0, "total": 5,
+                    "panel_id": None, "message": str(e),
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            rag_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    else:
+        # LLM 모드: SSE 포맷으로 래핑해 프론트 통일 처리
+        async def llm_stream():
+            try:
+                yield f"data: {json.dumps({'type': 'build_progress', 'step': 'selecting', 'current': 0, 'total': 5, 'panel_id': None, 'message': 'LLM 기반 가상 에이전트 생성 중...'}, ensure_ascii=False)}\n\n"
+                agents = await recommend_agents(
+                    AgentRequest(brief=req.brief, refined=req.refined, report=req.report)
+                )
+                done_event = {
+                    "type": "build_progress",
+                    "step": "done",
+                    "current": len(agents),
+                    "total": len(agents),
+                    "panel_id": None,
+                    "message": f"가상 에이전트 생성 완료 ({len(agents)}명)",
+                    "agents": [a.model_dump() for a in agents],
+                }
+                yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                traceback.print_exc()
+                error_event = {
+                    "type": "build_progress", "step": "error",
+                    "current": 0, "total": 5,
+                    "panel_id": None, "message": str(e),
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            llm_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
 
 
 @router.post("/agents/synthesize-prompt")

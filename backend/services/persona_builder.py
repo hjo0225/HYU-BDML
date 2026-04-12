@@ -5,6 +5,7 @@ CSV/파일 시스템 의존 없이 Cloud SQL에서 직접 데이터를 가져온
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import AsyncGenerator
 
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, Panel, PanelMemory
 from rag.panel_selector import load_panels, filter_by_target, select_representative_panels
+from rag.embedder import embed
 
 # 에이전트 카드 색상 팔레트 (panel_id 인덱스 기반)
 _COLORS = [
@@ -150,13 +152,37 @@ def _default_tags(scratch: dict) -> list[str]:
     return tags[:3]
 
 
+async def load_panel_memories_bulk(
+    session: AsyncSession,
+    panel_ids: list[str],
+) -> dict[str, list[dict]]:
+    """필터링된 패널들의 메모리를 한 번에 조회. 임베딩 포함."""
+    result = await session.execute(
+        select(PanelMemory).where(PanelMemory.panel_id.in_(panel_ids))
+    )
+    rows = result.scalars().all()
+    out: dict[str, list[dict]] = {pid: [] for pid in panel_ids}
+    for r in rows:
+        emb = r.embedding
+        if isinstance(emb, str):
+            emb = json.loads(emb)
+        out[r.panel_id].append({
+            "text": r.text,
+            "importance": r.importance,
+            "embedding": emb,
+        })
+    return out
+
+
 async def build_personas_stream(
     target_customer: str = "",
     n_agents: int = 5,
+    topic: str = "",
 ) -> AsyncGenerator[dict, None]:
     """
     DB에서 패널 선정 → persona 조회 → 진행 이벤트 yield.
     각 이벤트는 AgentBuildProgressEvent 형태의 dict.
+    topic이 주어지면 주제 관련성을 반영해 패널을 선정한다.
     """
     total = n_agents
 
@@ -167,7 +193,8 @@ async def build_personas_stream(
         "current": 0,
         "total": total,
         "panel_id": None,
-        "message": "클러스터 다양성 기반 패널 선정 중...",
+        "message": "클러스터 다양성 기반 패널 선정 중..."
+            + (f" (주제: {topic[:30]}...)" if len(topic) > 30 else f" (주제: {topic})" if topic else ""),
     }
 
     try:
@@ -198,7 +225,21 @@ async def build_personas_stream(
     # ── Step 2: 연령 필터 + 클러스터 선정 ──
     try:
         filtered = filter_by_target(panels, target_customer)
-        selected_ids = select_representative_panels(filtered, n_agents)
+
+        # 주제가 있으면 topic 임베딩 + 패널 메모리로 주제 관련성 반영
+        topic_embedding = None
+        panel_memories = None
+        if topic.strip():
+            topic_embedding = await asyncio.to_thread(embed, topic)
+            async with AsyncSessionLocal() as session:
+                candidate_ids = [p["panel_id"] for p in filtered]
+                panel_memories = await load_panel_memories_bulk(session, candidate_ids)
+
+        selected_ids = select_representative_panels(
+            filtered, n_agents,
+            topic_embedding=topic_embedding,
+            panel_memories=panel_memories,
+        )
     except Exception as e:
         yield {
             "type": "build_progress",

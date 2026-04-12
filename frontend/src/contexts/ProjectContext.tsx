@@ -15,6 +15,7 @@ import type {
   RefinedResearch,
   MarketReport,
   AgentSchema,
+  AgentMode,
   MeetingMessage,
 } from '@/lib/types';
 import {
@@ -34,6 +35,7 @@ const defaultProject: ProjectData = {
   refined: null,
   marketReport: null,
   agents: [],
+  agentMode: null,
   meetingTopic: null,
   messages: [],
   minutes: null,
@@ -94,6 +96,7 @@ function migrateProjectData(value: unknown): ProjectData {
       ? (value.marketReport as unknown as MarketReport)
       : null,
     agents: Array.isArray(value.agents) ? (value.agents as AgentSchema[]) : [],
+    agentMode: value.agentMode === 'rag' || value.agentMode === 'llm' ? value.agentMode : null,
     meetingTopic: typeof value.meetingTopic === 'string' ? value.meetingTopic : null,
     messages: Array.isArray(value.messages) ? (value.messages as MeetingMessage[]) : [],
     minutes: typeof value.minutes === 'string' ? value.minutes : null,
@@ -113,11 +116,11 @@ function buildUpdatePayload(project: ProjectData, phase: number): ProjectUpdateP
     payload.refined = project.refined as unknown as Record<string, unknown>;
     payload.market_report = project.marketReport as unknown as Record<string, unknown>;
   }
-  if (phase >= 4 && project.agents.length > 0) {
-    payload.agents = project.agents as unknown[];
+  if (phase >= 4) {
+    if (project.meetingTopic) payload.meeting_topic = project.meetingTopic;
+    if (project.agents.length > 0) payload.agents = project.agents as unknown[];
   }
   if (phase >= 5) {
-    if (project.meetingTopic) payload.meeting_topic = project.meetingTopic;
     if (project.messages.length > 0) payload.meeting_messages = project.messages as unknown[];
   }
   if (project.minutes) {
@@ -139,6 +142,7 @@ interface ProjectContextValue {
   setRefined: (refined: RefinedResearch | null) => void;
   setMarketReport: (report: MarketReport | null) => void;
   setAgents: (agents: AgentSchema[]) => void;
+  setAgentMode: (mode: AgentMode | null) => void;
   setMeetingTopic: (topic: string | null) => void;
   addMessage: (msg: MeetingMessage) => void;
   setMessages: (msgs: MeetingMessage[]) => void;
@@ -244,13 +248,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       sessionStorage.setItem(PROJECT_ID_KEY, id);
 
       // 백엔드 필드 → ProjectData 매핑
+      const agents = Array.isArray(data.agents) ? (data.agents as AgentSchema[]) : [];
+      // 에이전트에 panel_id가 있으면 RAG 모드, 아니면 LLM 모드로 복원
+      const hasPanel = agents.some((a: AgentSchema) => a.panel_id);
       const loaded: ProjectData = {
         brief: data.brief ? normalizeBrief(data.brief) : null,
         refined: data.refined ? normalizeRefined(data.refined) : null,
         marketReport: isRecord(data.market_report)
           ? (data.market_report as unknown as MarketReport)
           : null,
-        agents: Array.isArray(data.agents) ? (data.agents as AgentSchema[]) : [],
+        agents,
+        agentMode: agents.length > 0 ? (hasPanel ? 'rag' : 'llm') : null,
         meetingTopic: data.meeting_topic ?? null,
         messages: Array.isArray(data.meeting_messages)
           ? (data.meeting_messages as MeetingMessage[])
@@ -279,6 +287,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setRefined: (refined) => update({ refined }),
     setMarketReport: (report) => update({ marketReport: report }),
     setAgents: (agents) => update({ agents }),
+    setAgentMode: (agentMode) => update({ agentMode }),
     setMeetingTopic: (meetingTopic) => update({ meetingTopic }),
     addMessage: (msg) =>
       setProject((prev) => ({ ...prev, messages: [...prev.messages, msg] })),
@@ -335,7 +344,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setProject((prev) => ({
         ...prev,
         agents,
-        meetingTopic: null,
+        // meetingTopic은 유지 (Phase 3에서 주제 먼저 설정 후 에이전트 생성)
         messages: [],
         minutes: null,
       })),

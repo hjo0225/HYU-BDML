@@ -34,10 +34,10 @@ export default function Phase4Page() {
     startMeetingSession,
   } = useProject();
 
-  // 상태
-  const [topic, setTopic] = useState(project.meetingTopic ?? '');
-  const [phase, setPhase] = useState<'input' | 'running' | 'done'>(() =>
-    project.messages.length > 0 ? 'done' : 'input',
+  // 상태 — 주제는 Phase 3에서 설정됨
+  const [displayTopic, setDisplayTopic] = useState(project.meetingTopic ?? '');
+  const [phase, setPhase] = useState<'running' | 'done'>(() =>
+    project.messages.length > 0 ? 'done' : 'running',
   );
   const [error, setError] = useState<string | null>(null);
   const [speakingAgent, setSpeakingAgent] = useState<string | null>(null);
@@ -112,7 +112,11 @@ export default function Phase4Page() {
 
   /* 회의 시작 */
   const startMeeting = useCallback(async () => {
-    if (!topic.trim()) return;
+    const meetingTopic = project.meetingTopic ?? '';
+    if (!meetingTopic.trim()) {
+      setError('회의 주제가 설정되지 않았습니다. 에이전트 구성 단계로 돌아가세요.');
+      return;
+    }
     if (!project.agents.length) {
       setError('에이전트가 없습니다. Phase 3에서 먼저 구성해주세요.');
       return;
@@ -120,7 +124,7 @@ export default function Phase4Page() {
 
     setPhase('running');
     setMeetingDesign(null);
-    startMeetingSession(topic.trim());
+    startMeetingSession(meetingTopic.trim());
     setError(null);
     setSpeakingAgent(null);
     setStreamingMeta(null);
@@ -138,7 +142,7 @@ export default function Phase4Page() {
 
     try {
       await fetchMeeting(
-        { agents: project.agents, topic, research_context: context, max_rounds: maxRounds, panel_ids },
+        { agents: project.agents, topic: meetingTopic, research_context: context, max_rounds: maxRounds, panel_ids },
         // onStart
         (meta) => {
           if (abortRef.current) return;
@@ -172,7 +176,7 @@ export default function Phase4Page() {
         // onTopicRefined
         (refined) => {
           if (!abortRef.current) {
-            setTopic(refined);
+            setDisplayTopic(refined);
             setMeetingTopic(refined);
           }
         },
@@ -192,7 +196,16 @@ export default function Phase4Page() {
     } finally {
       controllerRef.current = null;
     }
-  }, [topic, project, setMeetingTopic, startMeetingSession, addMessage]);
+  }, [project, setMeetingTopic, startMeetingSession, addMessage, maxRounds]);
+
+  // 마운트 시 자동 회의 시작 (메시지가 없을 때)
+  const hasStarted = useRef(false);
+  useEffect(() => {
+    if (phase === 'running' && project.messages.length === 0 && !hasStarted.current && project.agents.length > 0) {
+      hasStarted.current = true;
+      startMeeting();
+    }
+  }, [phase, project.messages.length, project.agents.length, startMeeting]);
 
   /* 회의 종료 */
   const stopMeeting = () => {
@@ -211,67 +224,16 @@ export default function Phase4Page() {
   const goPrev = () => { setCurrentPhase(3); router.push('/agent-setup'); };
 
   /* 데이터 없으면 Phase 3으로 안내 */
-  if (!project.agents.length && phase === 'input') {
+  if (!project.agents.length) {
     return (
       <div className="card">
         <div className="card-header">
           <div className="card-title">💬 회의 시뮬레이션</div>
         </div>
         <p className="text-sm text-text-secondary mb-4">
-          에이전트가 구성되지 않았습니다. Phase 3에서 먼저 에이전트를 설정해주세요.
+          에이전트가 구성되지 않았습니다. 에이전트 구성 단계에서 먼저 주제와 참여자를 설정해주세요.
         </p>
         <button className="btn btn-primary" onClick={goPrev}>← 에이전트 구성으로</button>
-      </div>
-    );
-  }
-
-  /* ── 주제 입력 화면 ── */
-  if (phase === 'input') {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}>
-        <div className="card" style={{ maxWidth: 520, width: '100%' }}>
-          <div className="card-header">
-            <div className="card-title">💬 회의 시뮬레이션</div>
-          </div>
-          <p className="text-xs text-text-secondary mb-4">
-            AI 에이전트들이 FGI 형식으로 토론합니다. 논의할 주제를 입력해주세요.
-          </p>
-
-          <div className="field-group">
-            <div className="field-label">회의 주제</div>
-            <textarea
-              className="field-textarea"
-              rows={3}
-              placeholder="이번 세션에서 논의할 주제를 입력하세요"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-            />
-          </div>
-
-          {/* 참여 에이전트 미리보기 */}
-          <div style={{ padding: '10px 14px', background: 'var(--bg)', borderRadius: 6, marginBottom: 14 }}>
-            <div className="text-[10px] font-semibold text-text-muted uppercase mb-2">
-              참여 에이전트 ({project.agents.length}명)
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {project.agents.map((a) => (
-                <span key={a.id} className="agent-tag" style={{ fontSize: 11 }}>
-                  {a.emoji} {a.name}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {error && (
-            <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
-              {error}
-            </div>
-          )}
-
-          <button className="btn btn-primary w-full justify-center" onClick={startMeeting} disabled={!topic.trim()}>
-            회의 시작 →
-          </button>
-        </div>
       </div>
     );
   }
@@ -322,7 +284,7 @@ export default function Phase4Page() {
         <div className="meeting-chat" style={{ maxHeight: 'calc(100vh - 220px)' }}>
           {/* 헤더 */}
           <div className="chat-header">
-            <div className="chat-header-title">{topic || 'FGI 시뮬레이션'}</div>
+            <div className="chat-header-title">{displayTopic || 'FGI 시뮬레이션'}</div>
             {phase === 'running' ? (
               <div className="chat-header-status">
                 <div className="chat-header-dot" />
@@ -421,6 +383,11 @@ export default function Phase4Page() {
 
           {/* 하단 컨트롤 */}
           <div className="chat-controls">
+            {error && (
+              <div className="mb-2 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)', width: '100%' }}>
+                {error}
+              </div>
+            )}
             {phase === 'running' && (
               <button className="btn btn-danger" onClick={stopMeeting}>⏹ 회의 종료</button>
             )}

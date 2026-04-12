@@ -102,6 +102,17 @@ export interface AgentRequest {
   report: MarketReport;
 }
 
+/** 에이전트 생성 모드: RAG 실제 패널 / LLM 가상 에이전트 */
+export type AgentMode = 'rag' | 'llm';
+
+export interface AgentStreamRequest {
+  brief: ResearchBrief;
+  refined: RefinedResearch;
+  report: MarketReport;
+  topic: string;
+  mode: AgentMode;
+}
+
 // ── 회의 설계 ──
 export interface DiscussionQuestion {
   order: number;
@@ -151,6 +162,7 @@ export interface ProjectData {
   refined: RefinedResearch | null;
   marketReport: MarketReport | null;
   agents: AgentSchema[];
+  agentMode: AgentMode | null;
   meetingTopic: string | null;
   messages: MeetingMessage[];
   minutes: string | null;

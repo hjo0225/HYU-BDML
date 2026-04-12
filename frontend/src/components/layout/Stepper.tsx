@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 const STEPS = [
   { phase: 1, label: '연구 정보 입력', path: '/research-input' },
   { phase: 2, label: '시장조사', path: '/market-research' },
-  { phase: 3, label: '에이전트 결정', path: '/agent-setup' },
+  { phase: 3, label: '주제 · 에이전트', path: '/agent-setup' },
   { phase: 4, label: '회의 시뮬레이션', path: '/meeting' },
   { phase: 5, label: '회의록 · 내보내기', path: '/minutes' },
 ];

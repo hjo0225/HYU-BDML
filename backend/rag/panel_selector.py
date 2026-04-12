@@ -1,6 +1,8 @@
 """
 panel_selector.py
 DB에서 패널 데이터를 조회하여 클러스터 다양성 기반 N명 선정.
+주제(topic) 임베딩이 주어지면 패널 기억과의 코사인 유사도를 반영해
+주제 관련성이 높은 패널을 우선 선정한다.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Panel
+from .retriever import cos_sim
 
 DIM_COLS = [
     "dim_night_owl", "dim_gamer", "dim_social_diner", "dim_drinker",
@@ -91,19 +94,53 @@ def filter_by_target(panels: list[dict], target_customer: str) -> list[dict]:
     return filtered if len(filtered) >= max(5, len(panels) // 10) else panels
 
 
+def score_panels_by_topic(
+    panels: list[dict],
+    topic_embedding: list[float],
+    panel_memories: dict[str, list[dict]],
+) -> dict[str, float]:
+    """
+    각 패널의 메모리와 topic_embedding 간 평균 코사인 유사도를 계산한다.
+    메모리가 없는 패널은 0.0.
+    """
+    scores: dict[str, float] = {}
+    for p in panels:
+        pid = p["panel_id"]
+        mems = panel_memories.get(pid, [])
+        if not mems:
+            scores[pid] = 0.0
+            continue
+        sims = []
+        for m in mems:
+            emb = m.get("embedding")
+            if emb:
+                sims.append(cos_sim(topic_embedding, emb))
+        scores[pid] = float(np.mean(sims)) if sims else 0.0
+    return scores
+
+
 def select_representative_panels(
     panels: list[dict],
     n: int = 5,
+    topic_embedding: list[float] | None = None,
+    panel_memories: dict[str, list[dict]] | None = None,
+    topic_weight: float = 0.3,
 ) -> list[str]:
     """
     클러스터 다양성 기반으로 n명 선정. 완전 결정론적.
-    각 클러스터의 중심에 가장 가까운 패널을 한 명씩 선택한다.
+    topic_embedding이 주어지면 주제 관련성을 반영해 패널을 선택한다.
+    (1-topic_weight)*cluster_centrality + topic_weight*topic_relevance
     """
     # 클러스터 목록
     clusters = sorted(set(p["cluster"] for p in panels))
     n_clusters = len(clusters)
     if n_clusters == 0:
         return []
+
+    # 주제 관련성 스코어 (있으면)
+    topic_scores: dict[str, float] = {}
+    if topic_embedding and panel_memories:
+        topic_scores = score_panels_by_topic(panels, topic_embedding, panel_memories)
 
     # n개 클러스터를 균등 간격으로 선택
     step = n_clusters / n
@@ -125,7 +162,19 @@ def select_representative_panels(
         normalized = (dims - col_min) / col_range
         center = normalized.mean(axis=0)
         dists = np.linalg.norm(normalized - center, axis=1)
-        best_idx = int(np.argmin(dists))
+
+        if topic_scores:
+            # 거리를 0~1로 정규화 (작을수록 좋으므로 1-norm)
+            max_dist = dists.max() if dists.max() > 0 else 1.0
+            centrality = 1.0 - (dists / max_dist)
+            relevance = np.array([
+                topic_scores.get(p["panel_id"], 0.0) for p in cluster_panels
+            ])
+            combined = (1 - topic_weight) * centrality + topic_weight * relevance
+            best_idx = int(np.argmax(combined))
+        else:
+            best_idx = int(np.argmin(dists))
+
         panel_ids.append(cluster_panels[best_idx]["panel_id"])
 
     return panel_ids

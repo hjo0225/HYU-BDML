@@ -2,6 +2,7 @@
 import type {
   ResearchBrief,
   AgentRequest,
+  AgentStreamRequest,
   AgentSchema,
   PersonaProfile,
   MeetingRequest,
@@ -384,6 +385,68 @@ export async function fetchAgentsStream(
         } catch (e) {
           if (e instanceof Error && e.message.includes('패널')) throw e;
           // JSON 파싱 오류는 무시
+        }
+      }
+    }
+  }
+}
+
+/** Phase 3 (새 플로우): 주제 인식 에이전트 선정 — RAG 또는 LLM 모드 */
+export async function fetchAgentsStreamV2(
+  data: AgentStreamRequest,
+  onProgress: (event: AgentBuildProgressEvent) => void,
+  onDone: (agents: AgentSchema[]) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await apiFetch(`${SSE_BASE}/agents/stream/v2`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    throw new Error('에이전트 생성 중 네트워크 오류가 발생했습니다.');
+  }
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const message =
+      (isRecord(payload) && toText(payload.detail || payload.message).trim()) ||
+      `에이전트 생성 실패: ${res.status}`;
+    throw new Error(message);
+  }
+  if (!res.body) throw new Error('에이전트 생성 스트림이 비어 있습니다.');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const raw = line.slice(6);
+        try {
+          const parsed = JSON.parse(raw) as AgentBuildProgressEvent;
+          onProgress(parsed);
+          if (parsed.step === 'done' && parsed.agents) {
+            onDone(parsed.agents as AgentSchema[]);
+            return;
+          }
+          if (parsed.step === 'error') {
+            throw new Error(parsed.message || '에이전트 생성 중 오류 발생');
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.includes('에이전트')) throw e;
         }
       }
     }
