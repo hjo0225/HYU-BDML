@@ -5,6 +5,7 @@
 import asyncio
 import json
 import operator
+import re
 from typing import TypedDict, Annotated, AsyncGenerator
 
 from openai import AsyncOpenAI
@@ -12,16 +13,21 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from models.schemas import AgentSchema, MeetingMessage
+from pathlib import Path
+
+from models.schemas import AgentSchema, MeetingDesign, MeetingMessage
 from prompts.moderator import (
     CLOSING_PROMPT,
     FOLLOWUP_AND_SATURATION_PROMPT,
     INSIGHT_CHECK_PROMPT,
+    MEETING_DESIGN_PROMPT,
     MODERATOR_PROMPT,
     PARTICIPANT_RULES_PROMPT,
     SPEAKER_SELECTION_PROMPT,
     TOPIC_REFINE_PROMPT,
 )
+from prompts.rag_utterance import UTTERANCE_PROMPT
+from rag.retriever import retrieve
 
 # import 시점에 `.env`를 로드해 LangChain/OpenAI 호출이 같은 환경 변수를 사용하게 한다.
 import services.openai_client  # noqa: F401
@@ -95,7 +101,7 @@ async def moderator_opening(state: MeetingState) -> dict:
         )),
     ])
     _log_langchain_usage(response, "meeting/moderator_opening")
-    opening = response.content
+    opening = _clean_meeting_text(response.content, "모더레이터")
 
     msg = MeetingMessage(
         role="moderator",
@@ -172,13 +178,12 @@ async def agent_speak(state: MeetingState) -> dict:
 
     # 첫 라운드는 아이스브레이킹, 이후 라운드는 심화 답변 중심으로 유도한다.
     current_round = state["current_round"]
-    if current_round == 1 and speaker_id not in state["spoke_this_round"]:
-        turn_instruction = "첫 번째 라운드입니다. 간단히 인사하고 주제에 대한 첫 의견을 말하세요."
-    else:
-        turn_instruction = (
-            f"{current_round}번째 라운드입니다. 인사하지 마세요. "
-            f"이전 자신의 발언과 다른 참여자 의견을 참고하여 심화된 의견을 제시하세요."
-        )
+    has_spoken_before = any(h["speaker"] == agent_data["name"] for h in state["history"])
+    turn_instruction = (
+        f"{current_round}번째 라운드입니다. "
+        f"{_build_turn_instruction(current_round, has_spoken_before)}\n"
+        "이전 자신의 발언을 반복하지 말고, 다른 참여자 의견을 참고해 내용을 구체화하세요."
+    )
 
     # 실제 발언 본문 생성
     response = await llm.ainvoke([
@@ -186,7 +191,7 @@ async def agent_speak(state: MeetingState) -> dict:
         HumanMessage(content=f"현재까지 대화:\n{history_text}\n\n{turn_instruction}"),
     ])
     _log_langchain_usage(response, f"meeting/agent/{agent_data['name']}")
-    content = response.content
+    content = _clean_meeting_text(response.content, agent_data["name"])
 
     msg = MeetingMessage(
         role="agent",
@@ -225,10 +230,10 @@ async def moderator_followup(state: MeetingState) -> dict:
     # 구조화 응답 파싱
     try:
         parsed = json.loads(response.content)
-        followup_text = parsed["followup"]
+        followup_text = _clean_meeting_text(parsed["followup"], "모더레이터")
         has_new = parsed["has_new_insight"]
     except (json.JSONDecodeError, KeyError):
-        followup_text = response.content
+        followup_text = _clean_meeting_text(response.content, "모더레이터")
         has_new = True  # 판단이 불명확하면 회의를 더 이어가는 쪽이 안전하다.
 
     # 새 인사이트가 없으면 카운터를 누적하고, 있으면 다시 0으로 초기화한다.
@@ -244,7 +249,7 @@ async def moderator_followup(state: MeetingState) -> dict:
             HumanMessage(content=f"전체 대화:\n{history_text}\n\n마무리하세요."),
         ])
         _log_langchain_usage(closing_response, "meeting/moderator_closing")
-        followup_text = closing_response.content
+        followup_text = _clean_meeting_text(closing_response.content, "모더레이터")
 
     msg = MeetingMessage(
         role="moderator",
@@ -309,10 +314,104 @@ def build_meeting_graph():
 _meeting_graph = build_meeting_graph()
 
 
+_PERSONAS_DIR = Path(__file__).parent.parent / "personas"
+
+
+# ── RAG 헬퍼 ──
+def _format_demographics(scratch: dict) -> str:
+    age = scratch.get("age", "")
+    gender = scratch.get("gender", "")
+    occupation = scratch.get("occupation", "직업 미상")
+    region = scratch.get("region", "지역 미상")
+    education = scratch.get("education", "")
+    parts = [f"나이: {age}세" if age else "", f"성별: {gender}" if gender else "",
+             f"직업: {occupation}", f"지역: {region}", f"학력: {education}" if education else ""]
+    return ", ".join(p for p in parts if p)
+
+
+def _format_memories(memories: list[dict]) -> str:
+    lines = [f"- {m['text']}" for m in memories if m.get("text")]
+    return "\n".join(lines) if lines else "관련 기억 없음"
+
+
+async def generate_meeting_design(
+    topic: str,
+    research_context: str,
+    agent_summaries: str,
+) -> dict:
+    """FGI 회의 설계안 생성 (meeting_design 이벤트용)."""
+    response = await llm_structured.ainvoke([
+        SystemMessage(content=MEETING_DESIGN_PROMPT),
+        HumanMessage(content=(
+            f"회의 주제: {topic}\n\n"
+            f"참여 패널:\n{agent_summaries}\n\n"
+            f"연구 맥락:\n{research_context[:1200]}"
+        )),
+    ])
+    _log_langchain_usage(response, "meeting/design")
+    try:
+        return json.loads(response.content)
+    except (json.JSONDecodeError, KeyError):
+        return {
+            "session_objective": f"{topic}에 대한 소비자 인식과 경험 탐색",
+            "discussion_questions": [],
+            "key_themes": [],
+            "moderator_notes": "",
+        }
+
+
 # ── SSE 헬퍼 ──
 def _sse(data: dict) -> str:
     """SSE 포맷 문자열 생성"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _clean_meeting_text(text: str, speaker_name: str | None = None) -> str:
+    """모델 출력의 불필요한 화자 라벨과 과도한 표기를 정리한다."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+
+    prefixes = [r"모더레이터", r"진행자"]
+    if speaker_name:
+        prefixes.append(re.escape(speaker_name))
+    prefix_pattern = r"^\s*(?:\[?(?:" + "|".join(prefixes) + r")\]?\s*[:：\-]\s*)"
+    cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?m)^\s*[A-Z]\s*$", "", cleaned)
+    cleaned = cleaned.replace("~", "")
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _build_turn_instruction(current_round: int, has_spoken_before: bool) -> str:
+    """라운드별로 발화 구조를 고정해 내용만 바뀌도록 유도한다."""
+    if not has_spoken_before:
+        return (
+            "이번 발언은 '주장 -> 이유/경험 -> 짧은 정리' 구조로 말하세요.\n"
+            "- 첫 문장: 주제에 대한 자신의 핵심 입장을 분명히 말할 것\n"
+            "- 둘째 문장: 이유나 개인 경험을 덧붙일 것\n"
+            "- 셋째 문장(선택): 핵심 포인트를 짧게 정리할 것\n"
+            "- 인사나 자기소개 없이 바로 의견을 말할 것\n"
+            "- 번호, 제목, '주장:', '이유:' 같은 꼬리표를 붙이지 말 것"
+        )
+
+    if current_round == 2:
+        return (
+            "이번 발언은 '상대 의견 언급 -> 동의/반박 -> 내 근거' 구조로 말하세요.\n"
+            "- 먼저 직전 또는 인상적인 다른 참여자 의견을 짧게 언급할 것\n"
+            "- 그 의견에 대해 동의, 반박, 보완 중 하나를 분명히 할 것\n"
+            "- 마지막에는 자신의 경험이나 근거로 입장을 강화할 것\n"
+            "- 번호, 제목, '반박:' 같은 꼬리표를 붙이지 말 것"
+        )
+
+    return (
+        "이번 발언은 '쟁점 정리 -> 최종 입장 -> 시사점' 구조로 말하세요.\n"
+        "- 앞선 대화에서 중요한 쟁점을 한 문장으로 짚을 것\n"
+        "- 그 다음 자신의 최종 입장을 분명히 말할 것\n"
+        "- 마지막에는 왜 그 입장인지 또는 어떤 조건에서 달라질 수 있는지 덧붙일 것\n"
+        "- 번호, 제목, '결론:' 같은 꼬리표를 붙이지 말 것"
+    )
 
 
 async def _stream_llm_turn(
@@ -347,7 +446,77 @@ async def _stream_llm_turn(
         output_tokens = len(full_text) // 3
     tracker.log(service=usage_label, model="gpt-4o-mini", input_tokens=input_tokens, output_tokens=output_tokens)
 
-    yield _sse({"type": "end", "content": full_text, **meta})
+    full_text = _clean_meeting_text(full_text, meta.get("agent_name"))
+    yield _sse({"type": "end", "content": full_text, "retrieved_memory_count": 0, **meta})
+    meta["_full_text"] = full_text
+
+
+async def _stream_rag_turn(
+    panel_id: str,
+    agent_data: dict,
+    human_prompt: str,
+    meta: dict,
+    n_retrieve: int = 25,
+    usage_label: str = "meeting/stream/rag",
+) -> AsyncGenerator[str, None]:
+    """RAG 에이전트 발언: 메모리 검색 → 스트리밍 발화."""
+    persona_path = _PERSONAS_DIR / f"{panel_id}.json"
+    retrieved_count = 0
+
+    if persona_path.exists():
+        with open(persona_path, encoding="utf-8") as f:
+            persona = json.load(f)
+
+        scratch = persona.get("scratch", {})
+        demographics_text = _format_demographics(scratch)
+        memories = persona.get("memories", [])
+
+        if memories:
+            try:
+                # retrieve(persona, focal_point, n_count) — 전체 persona dict 전달
+                retrieved = await asyncio.to_thread(retrieve, persona, human_prompt, n_retrieve)
+                retrieved_count = len(retrieved)
+                memories_text = _format_memories(retrieved)
+            except Exception:
+                memories_text = _format_memories(memories[:10])
+                retrieved_count = min(10, len(memories))
+        else:
+            memories_text = "관련 기억 없음"
+
+        system_prompt = UTTERANCE_PROMPT.format(
+            demographics=demographics_text,
+            memories=memories_text,
+        )
+    else:
+        # 페르소나 파일 없으면 기존 system_prompt 로 폴백
+        system_prompt = agent_data.get("system_prompt", "") + "\n\n" + PARTICIPANT_RULES_PROMPT
+
+    yield _sse({"type": "start", **meta})
+
+    full_text = ""
+    input_tokens = 0
+    output_tokens = 0
+    async for chunk in llm.astream([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=human_prompt),
+    ]):
+        delta = chunk.content
+        if delta:
+            full_text += delta
+            yield _sse({"type": "delta", "delta": delta})
+        usage = getattr(chunk, "usage_metadata", None)
+        if usage:
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+
+    if not input_tokens and not output_tokens:
+        input_tokens = len(system_prompt + human_prompt) // 3
+        output_tokens = len(full_text) // 3
+    tracker.log(service=usage_label, model="gpt-4o-mini",
+                input_tokens=input_tokens, output_tokens=output_tokens)
+
+    full_text = _clean_meeting_text(full_text, meta.get("agent_name"))
+    yield _sse({"type": "end", "content": full_text, "retrieved_memory_count": retrieved_count, **meta})
     meta["_full_text"] = full_text
 
 
@@ -506,6 +675,7 @@ async def run_meeting_stream(
     topic: str,
     context: str,
     max_rounds: int = 5,
+    panel_ids: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """FGI 회의 시뮬레이션 — SSE 문자열을 토큰 단위로 yield.
     LangGraph 그래프를 수동 step으로 실행하며 발언 노드만 토큰 스트리밍."""
@@ -524,6 +694,24 @@ async def run_meeting_stream(
     yield _sse({"type": "topic_refined", "topic": refined_topic})
     await asyncio.sleep(0)
     topic = refined_topic  # 이후 모든 모델 호출은 정제된 주제를 기준으로 진행한다.
+
+    # 회의 설계안 생성 (meeting_design 이벤트)
+    _panel_ids: dict[str, str] = panel_ids or {}
+    agent_summaries = "\n".join(
+        "- {name} ({demo})".format(
+            name=a.name,
+            demo="{ag} {g} {occ} {reg}".format(
+                ag=a.demographics.age_group if a.demographics else "",
+                g=a.demographics.gender if a.demographics else "",
+                occ=a.demographics.occupation if a.demographics else "",
+                reg=a.demographics.region if a.demographics else "",
+            ).strip() or a.description,
+        )
+        for a in agents
+    )
+    design_dict = await generate_meeting_design(topic, context, agent_summaries)
+    yield _sse({"type": "meeting_design", "design": design_dict})
+    await asyncio.sleep(0)
 
     state: MeetingState = {
         "topic": topic,
@@ -581,23 +769,35 @@ async def run_meeting_stream(
             history_text = "\n".join(history_lines)
 
             current_round = state["current_round"]
-            if current_round == 1 and speaker_id not in state["spoke_this_round"]:
-                turn_instruction = "첫 번째 라운드입니다. 간단히 인사하고 주제에 대한 첫 의견을 말하세요."
-            else:
-                turn_instruction = (
-                    f"{current_round}번째 라운드입니다. 인사하지 마세요. "
-                    f"이전 자신의 발언과 다른 참여자 의견을 참고하여 심화된 의견을 제시하세요."
-                )
+            has_spoken_before = any(h["speaker"] == agent_data["name"] for h in state["history"])
+            turn_instruction = (
+                f"{current_round}번째 라운드입니다. "
+                f"{_build_turn_instruction(current_round, has_spoken_before)}\n"
+                "이전 자신의 발언을 반복하지 말고, 다른 참여자 의견을 참고해 내용을 구체화하세요."
+            )
 
             meta = _agent_meta(agent_data)
-            async for chunk in _stream_llm_turn(
-                agent_data["system_prompt"] + "\n\n" + PARTICIPANT_RULES_PROMPT,
-                f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
-                meta,
-                usage_label=f"meeting/stream/agent/{agent_data['name']}",
-            ):
-                yield chunk
-                await asyncio.sleep(0)
+            panel_id = _panel_ids.get(speaker_id)
+
+            if panel_id:
+                async for chunk in _stream_rag_turn(
+                    panel_id,
+                    agent_data,
+                    f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
+                    meta,
+                    usage_label=f"meeting/stream/agent/{agent_data['name']}",
+                ):
+                    yield chunk
+                    await asyncio.sleep(0)
+            else:
+                async for chunk in _stream_llm_turn(
+                    agent_data["system_prompt"] + "\n\n" + PARTICIPANT_RULES_PROMPT,
+                    f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
+                    meta,
+                    usage_label=f"meeting/stream/agent/{agent_data['name']}",
+                ):
+                    yield chunk
+                    await asyncio.sleep(0)
 
             content = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": agent_data["name"], "content": content}]
