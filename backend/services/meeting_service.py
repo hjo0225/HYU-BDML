@@ -13,8 +13,6 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from pathlib import Path
-
 from models.schemas import AgentSchema, MeetingDesign, MeetingMessage
 from prompts.moderator import (
     CLOSING_PROMPT,
@@ -28,6 +26,8 @@ from prompts.moderator import (
 )
 from prompts.rag_utterance import UTTERANCE_PROMPT
 from rag.retriever import retrieve
+from services.persona_builder import load_persona_from_db
+from database import AsyncSessionLocal
 
 # import 시점에 `.env`를 로드해 LangChain/OpenAI 호출이 같은 환경 변수를 사용하게 한다.
 import services.openai_client  # noqa: F401
@@ -314,9 +314,6 @@ def build_meeting_graph():
 _meeting_graph = build_meeting_graph()
 
 
-_PERSONAS_DIR = Path(__file__).parent.parent / "personas"
-
-
 # ── RAG 헬퍼 ──
 def _format_demographics(scratch: dict) -> str:
     age = scratch.get("age", "")
@@ -456,24 +453,21 @@ async def _stream_rag_turn(
     agent_data: dict,
     human_prompt: str,
     meta: dict,
+    persona_cache: dict[str, dict],
     n_retrieve: int = 25,
     usage_label: str = "meeting/stream/rag",
 ) -> AsyncGenerator[str, None]:
-    """RAG 에이전트 발언: 메모리 검색 → 스트리밍 발화."""
-    persona_path = _PERSONAS_DIR / f"{panel_id}.json"
+    """RAG 에이전트 발언: DB 캐시에서 persona 조회 → 메모리 검색 → 스트리밍 발화."""
     retrieved_count = 0
+    persona = persona_cache.get(panel_id)
 
-    if persona_path.exists():
-        with open(persona_path, encoding="utf-8") as f:
-            persona = json.load(f)
-
+    if persona:
         scratch = persona.get("scratch", {})
         demographics_text = _format_demographics(scratch)
         memories = persona.get("memories", [])
 
         if memories:
             try:
-                # retrieve(persona, focal_point, n_count) — 전체 persona dict 전달
                 retrieved = await asyncio.to_thread(retrieve, persona, human_prompt, n_retrieve)
                 retrieved_count = len(retrieved)
                 memories_text = _format_memories(retrieved)
@@ -488,7 +482,7 @@ async def _stream_rag_turn(
             memories=memories_text,
         )
     else:
-        # 페르소나 파일 없으면 기존 system_prompt 로 폴백
+        # persona 없으면 기존 system_prompt로 폴백
         system_prompt = agent_data.get("system_prompt", "") + "\n\n" + PARTICIPANT_RULES_PROMPT
 
     yield _sse({"type": "start", **meta})
@@ -697,6 +691,16 @@ async def run_meeting_stream(
 
     # 회의 설계안 생성 (meeting_design 이벤트)
     _panel_ids: dict[str, str] = panel_ids or {}
+
+    # RAG 에이전트의 persona를 DB에서 한 번만 조회해 캐싱한다.
+    persona_cache: dict[str, dict] = {}
+    if _panel_ids:
+        async with AsyncSessionLocal() as session:
+            for pid in set(_panel_ids.values()):
+                persona = await load_persona_from_db(session, pid)
+                if persona:
+                    persona_cache[pid] = persona
+
     agent_summaries = "\n".join(
         "- {name} ({demo})".format(
             name=a.name,
@@ -785,6 +789,7 @@ async def run_meeting_stream(
                     agent_data,
                     f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
                     meta,
+                    persona_cache=persona_cache,
                     usage_label=f"meeting/stream/agent/{agent_data['name']}",
                 ):
                     yield chunk

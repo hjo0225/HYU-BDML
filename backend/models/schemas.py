@@ -58,6 +58,39 @@ class ResearchResponse(BaseModel):
     refined: RefinedResearch
     report: MarketReport
 
+# ── RAG 에이전트 ──
+
+class AgentDemographics(BaseModel):
+    """프론트엔드에 공개되는 요약 인구통계 (raw scratch/memories 미포함)."""
+    age_group: str    # 예: "40대"
+    gender: str       # 예: "남성"
+    occupation: str   # 예: "생산/기술직"
+    region: str       # 예: "경기"
+
+class AgentBuildProgressEvent(BaseModel):
+    """Phase 3 패널 빌드 SSE 이벤트."""
+    type: Literal["build_progress"] = "build_progress"
+    step: Literal["selecting", "building", "embedding", "done", "error"]
+    current: int
+    total: int
+    panel_id: str | None = None
+    message: str
+    agents: list[dict] | None = None  # step=="done"일 때만
+
+class DiscussionQuestion(BaseModel):
+    """회의 설계의 단일 토론 질문."""
+    order: int
+    question: str
+    focus_area: str
+    rationale: str
+
+class MeetingDesign(BaseModel):
+    """Phase 4 회의 시작 전 생성되는 구조화 토론 프레임워크."""
+    session_objective: str
+    discussion_questions: list[DiscussionQuestion]
+    key_themes: list[str]
+    moderator_notes: str
+
 # ── 에이전트 ──
 class PersonaProfile(BaseModel):
     """참여자 캐릭터를 system prompt로 바꾸기 위한 구조화 프로필."""
@@ -81,6 +114,10 @@ class AgentSchema(BaseModel):
     system_prompt: str
     color: str
     persona_profile: PersonaProfile | None = None
+    # RAG 기반 실제 패널 필드 (panel_id가 있으면 RAG 모드)
+    panel_id: str | None = None
+    demographics: AgentDemographics | None = None
+    memory_count: int | None = None
 
 class AgentRequest(BaseModel):
     """에이전트 추천에 필요한 전체 입력 묶음."""
@@ -101,6 +138,8 @@ class MeetingRequest(BaseModel):
     topic: str
     research_context: str
     max_rounds: int = 5
+    # RAG 모드: {agent.id: panel_id} 맵 (에이전트별 분기에 사용)
+    panel_ids: dict[str, str] = Field(default_factory=dict)
 
 class MeetingMessage(BaseModel):
     """회의 로그에 저장되는 개별 발언."""
@@ -110,6 +149,8 @@ class MeetingMessage(BaseModel):
     agent_emoji: str
     content: str
     color: str | None = None
+    # RAG 에이전트 발화 시 검색된 메모리 수 (텍스트 미포함)
+    retrieved_memory_count: int | None = None
 
 # ── 회의록 ──
 class MinutesRequest(BaseModel):

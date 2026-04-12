@@ -6,6 +6,7 @@ import type {
   PersonaProfile,
   MeetingRequest,
   MeetingMessage,
+  MeetingDesign,
   MinutesRequest,
   MarketReport,
   RefinedResearch,
@@ -313,7 +314,83 @@ export async function fetchMarketReportStream(
   return fetchResearchStream(buildBriefFromRefined(brief, refined), onSection, onDone, onThinking, onSectionDelta);
 }
 
-/** Phase 3: 에이전트 추천 */
+/** Phase 3 SSE: 에이전트 빌드 진행 이벤트 */
+export type AgentBuildStep = 'selecting' | 'building' | 'embedding' | 'done' | 'error';
+
+export interface AgentBuildProgressEvent {
+  type: 'build_progress';
+  step: AgentBuildStep;
+  current: number;
+  total: number;
+  panel_id: string | null;
+  message: string;
+  agents?: AgentSchema[];
+}
+
+/** Phase 3 (RAG): 실제 패널 데이터 기반 에이전트 선정 — SSE 스트리밍 */
+export async function fetchAgentsStream(
+  data: AgentRequest,
+  onProgress: (event: AgentBuildProgressEvent) => void,
+  onDone: (agents: AgentSchema[]) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await apiFetch(`${SSE_BASE}/agents/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    throw new Error('패널 선정 중 네트워크 오류가 발생했습니다.');
+  }
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const message =
+      (isRecord(payload) && toText(payload.detail || payload.message).trim()) ||
+      `패널 선정 실패: ${res.status}`;
+    throw new Error(message);
+  }
+  if (!res.body) throw new Error('패널 선정 스트림이 비어 있습니다.');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const raw = line.slice(6);
+        try {
+          const parsed = JSON.parse(raw) as AgentBuildProgressEvent;
+          onProgress(parsed);
+          if (parsed.step === 'done' && parsed.agents) {
+            onDone(parsed.agents as AgentSchema[]);
+            return;
+          }
+          if (parsed.step === 'error') {
+            throw new Error(parsed.message || '패널 선정 중 오류 발생');
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.includes('패널')) throw e;
+          // JSON 파싱 오류는 무시
+        }
+      }
+    }
+  }
+}
+
+/** Phase 3 (레거시): LLM 기반 에이전트 추천 */
 export async function fetchAgents(data: AgentRequest): Promise<AgentSchema[]> {
   try {
     const res = await apiFetch(`${API_BASE}/agents`, {
@@ -348,6 +425,7 @@ export async function fetchMeeting(
   onDone: () => void,
   onTopicRefined?: (topic: string) => void,
   signal?: AbortSignal,
+  onMeetingDesign?: (design: MeetingDesign) => void,
 ): Promise<void> {
   let res: Response;
 
@@ -407,6 +485,9 @@ export async function fetchMeeting(
             case 'topic_refined':
               onTopicRefined?.(parsed.topic);
               break;
+            case 'meeting_design':
+              onMeetingDesign?.(parsed.design as MeetingDesign);
+              break;
             case 'start':
               onStart(parsed as SSEStartEvent);
               break;
@@ -421,6 +502,9 @@ export async function fetchMeeting(
                 agent_emoji: parsed.agent_emoji,
                 content: parsed.content,
                 color: parsed.color ?? null,
+                retrieved_memory_count: typeof parsed.retrieved_memory_count === 'number'
+                  ? parsed.retrieved_memory_count
+                  : undefined,
               } as MeetingMessage);
               break;
             case 'done':

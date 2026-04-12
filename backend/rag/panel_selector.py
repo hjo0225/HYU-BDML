@@ -1,0 +1,131 @@
+"""
+panel_selector.py
+DB에서 패널 데이터를 조회하여 클러스터 다양성 기반 N명 선정.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime
+
+import numpy as np
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import Panel
+
+DIM_COLS = [
+    "dim_night_owl", "dim_gamer", "dim_social_diner", "dim_drinker",
+    "dim_shopper", "dim_health", "dim_entertainment",
+    "dim_weekend_oriented",
+]
+
+
+async def load_panels(session: AsyncSession) -> list[dict]:
+    """DB에서 전체 패널 목록 조회 → dict 리스트 반환."""
+    result = await session.execute(select(Panel))
+    panels = result.scalars().all()
+    return [_panel_to_dict(p) for p in panels]
+
+
+def _panel_to_dict(p: Panel) -> dict:
+    """ORM Panel → dict 변환."""
+    return {
+        "panel_id": p.panel_id,
+        "cluster": p.cluster,
+        "age": p.age,
+        "gender": p.gender,
+        "occupation": p.occupation,
+        "region": p.region,
+        "dim_night_owl": p.dim_night_owl,
+        "dim_gamer": p.dim_gamer,
+        "dim_social_diner": p.dim_social_diner,
+        "dim_drinker": p.dim_drinker,
+        "dim_shopper": p.dim_shopper,
+        "dim_health": p.dim_health,
+        "dim_entertainment": p.dim_entertainment,
+        "dim_weekend_oriented": p.dim_weekend_oriented,
+    }
+
+
+def filter_by_target(panels: list[dict], target_customer: str) -> list[dict]:
+    """
+    target_customer 문자열에서 연령대를 파싱해 패널을 필터링한다.
+    파싱 불가 시 전체 반환.
+    """
+    if not target_customer:
+        return panels
+
+    # "2030대", "20-30대", "2030" 형태 파싱
+    multi = re.search(r'([1-9][0-9])(?:대)?\s*[-~]\s*([1-9][0-9])(?:대)?', target_customer)
+    century = re.search(r'([1-9]0)([1-9]0)(?:대)?', target_customer)
+    single = re.search(r'([1-9][0-9])(?:대)', target_customer)
+
+    min_age, max_age = None, None
+
+    if multi:
+        try:
+            a, b = int(multi.group(1)), int(multi.group(2))
+            min_age, max_age = min(a, b), max(a, b) + 9
+        except ValueError:
+            pass
+    elif century:
+        try:
+            a, b = int(century.group(1)), int(century.group(2))
+            min_age, max_age = min(a, b), max(a, b) + 9
+        except ValueError:
+            pass
+    elif single:
+        try:
+            a = int(single.group(1))
+            min_age, max_age = a, a + 9
+        except ValueError:
+            pass
+
+    if min_age is None:
+        return panels
+
+    filtered = [p for p in panels if p.get("age") and min_age <= p["age"] <= max_age]
+    # 필터 결과가 너무 적으면 전체 반환
+    return filtered if len(filtered) >= max(5, len(panels) // 10) else panels
+
+
+def select_representative_panels(
+    panels: list[dict],
+    n: int = 5,
+) -> list[str]:
+    """
+    클러스터 다양성 기반으로 n명 선정. 완전 결정론적.
+    각 클러스터의 중심에 가장 가까운 패널을 한 명씩 선택한다.
+    """
+    # 클러스터 목록
+    clusters = sorted(set(p["cluster"] for p in panels))
+    n_clusters = len(clusters)
+    if n_clusters == 0:
+        return []
+
+    # n개 클러스터를 균등 간격으로 선택
+    step = n_clusters / n
+    selected_clusters = [clusters[int(i * step)] for i in range(min(n, n_clusters))]
+
+    # 전체 패널의 차원 통계 (정규화용)
+    all_dims = np.array([[p.get(c, 0) or 0 for c in DIM_COLS] for p in panels])
+    col_min = all_dims.min(axis=0)
+    col_max = all_dims.max(axis=0)
+    col_range = np.where(col_max - col_min == 0, 1, col_max - col_min)
+
+    panel_ids: list[str] = []
+    for cluster_id in selected_clusters:
+        cluster_panels = [p for p in panels if p["cluster"] == cluster_id]
+        if not cluster_panels:
+            cluster_panels = panels
+
+        dims = np.array([[p.get(c, 0) or 0 for c in DIM_COLS] for p in cluster_panels])
+        normalized = (dims - col_min) / col_range
+        center = normalized.mean(axis=0)
+        dists = np.linalg.norm(normalized - center, axis=1)
+        best_idx = int(np.argmin(dists))
+        panel_ids.append(cluster_panels[best_idx]["panel_id"])
+
+    return panel_ids

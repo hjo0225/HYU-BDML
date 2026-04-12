@@ -63,6 +63,20 @@ export interface PersonaProfile {
   communication_style: string;
 }
 
+/** agent_project 기반 실제 패널 데이터 — UI에 공개할 요약 인구통계 */
+export interface AgentDemographics {
+  age_group: string;   // 예: "40대"
+  gender: string;      // 예: "여성"
+  occupation: string;  // 예: "자영업"
+  region: string;      // 예: "서울"
+}
+
+/** agent_project memory_builder 산출물 — 에피소드 기억 단위 */
+export interface Memory {
+  text: string;
+  importance: number;  // 0~10
+}
+
 export interface AgentSchema {
   id: string;
   type: 'customer' | 'expert' | 'custom';
@@ -72,7 +86,14 @@ export interface AgentSchema {
   tags: string[];
   system_prompt: string;
   color: string;
+  // 기존 LLM 생성 페르소나 (하위 호환)
   persona_profile?: PersonaProfile | null;
+  // agent_project 기반 실제 패널 데이터
+  panel_id?: string;
+  cluster_id?: string;
+  demographics?: AgentDemographics;
+  memories?: Memory[];
+  memory_count?: number;
 }
 
 export interface AgentRequest {
@@ -81,12 +102,28 @@ export interface AgentRequest {
   report: MarketReport;
 }
 
+// ── 회의 설계 ──
+export interface DiscussionQuestion {
+  order: number;
+  question: string;
+  focus_area: string;
+  rationale: string;
+}
+
+export interface MeetingDesign {
+  session_objective: string;
+  discussion_questions: DiscussionQuestion[];
+  key_themes: string[];
+  moderator_notes: string;
+}
+
 // ── 회의 ──
 export interface MeetingRequest {
   agents: AgentSchema[];
   topic: string;
   research_context: string;
   max_rounds?: number;
+  panel_ids?: Record<string, string>;
 }
 
 export interface MeetingMessage {
@@ -96,6 +133,8 @@ export interface MeetingMessage {
   agent_emoji: string;
   content: string;
   color: string | null;
+  /** RAG 검색에서 활성화된 메모리 개수 */
+  retrieved_memory_count?: number;
 }
 
 // ── 회의록 ──

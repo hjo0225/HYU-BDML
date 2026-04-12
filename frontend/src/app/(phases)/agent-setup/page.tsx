@@ -3,13 +3,14 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProject } from '@/contexts/ProjectContext';
-import { fetchAgents } from '@/lib/api';
+import { fetchAgentsStream } from '@/lib/api';
+import type { AgentBuildProgressEvent } from '@/lib/api';
 import type { AgentSchema } from '@/lib/types';
 import { buildSystemPromptFromPersona } from '@/lib/persona';
 
 /* 타입 라벨 매핑 */
 const TYPE_LABELS: Record<string, string> = {
-  customer: '가상 고객',
+  customer: '실제 패널',
   expert: '도메인 전문가',
   custom: '커스텀',
 };
@@ -20,29 +21,16 @@ const GENDER_LABELS: Record<'male' | 'female' | 'other', string> = {
   other: '',
 };
 
-/* 빈 페르소나 프로필 */
-const EMPTY_PERSONA = {
-  age: 25,
-  gender: 'female' as const,
-  occupation: '',
-  personality: '',
-  consumption_style: '',
-  experience: '',
-  pain_points: '',
-  communication_style: '',
-};
-
-/* 빈 에이전트 템플릿 */
+/* 커스텀 에이전트 추가용 빈 템플릿 */
 const EMPTY_AGENT: AgentSchema = {
   id: '',
-  type: 'customer',
+  type: 'custom',
   name: '',
   emoji: '👤',
   description: '',
   tags: [],
   system_prompt: '',
   color: '#2E6DB4',
-  persona_profile: { ...EMPTY_PERSONA },
 };
 
 const MAX_AGENTS = 8;
@@ -51,40 +39,41 @@ export default function Phase3Page() {
   const router = useRouter();
   const { project, setAgents, setCurrentPhase, resetAfterAgentsChange } = useProject();
 
-  // 상태
   const [loading, setLoading] = useState(false);
+  const [buildProgress, setBuildProgress] = useState<AgentBuildProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<AgentSchema | null>(null);
-  const [isPromptPreviewOpen, setIsPromptPreviewOpen] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [newAgent, setNewAgent] = useState<AgentSchema>({ ...EMPTY_AGENT });
 
   const agents = project.agents;
   const hasAgents = agents.length > 0;
 
-  /* AI 에이전트 추천 요청 */
+  /* 패널 선정 요청 */
   const requestRecommend = useCallback(async () => {
     if (!project.brief || !project.refined || !project.marketReport) {
       setError('시장조사가 필요합니다. 이전 단계를 먼저 완료해주세요.');
       return;
     }
-
     setLoading(true);
+    setBuildProgress(null);
     setError(null);
-
     try {
-      const result = await fetchAgents({
-        brief: project.brief,
-        refined: project.refined,
-        report: project.marketReport,
-      });
-      resetAfterAgentsChange(result);
+      await fetchAgentsStream(
+        { brief: project.brief, refined: project.refined, report: project.marketReport },
+        (event) => setBuildProgress(event),
+        (agents) => {
+          resetAfterAgentsChange(agents);
+          setLoading(false);
+          setBuildProgress(null);
+        },
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : '에이전트 추천 중 오류 발생');
-    } finally {
+      setError(err instanceof Error ? err.message : '패널 선정 중 오류 발생');
       setLoading(false);
+      setBuildProgress(null);
     }
   }, [project.refined, project.marketReport, resetAfterAgentsChange]);
 
@@ -97,13 +86,20 @@ export default function Phase3Page() {
   const startEdit = (agent: AgentSchema) => {
     setEditingId(agent.id);
     setEditData({ ...agent });
-    setIsPromptPreviewOpen(true);
   };
 
   /* 편집 저장 */
   const saveEdit = () => {
     if (!editData) return;
-    setAgents(agents.map((a) => (a.id === editData.id ? editData : a)));
+    // 기존 LLM 페르소나 에이전트는 system_prompt 자동 재생성
+    let saved = editData;
+    if (!editData.demographics && editData.persona_profile) {
+      saved = {
+        ...editData,
+        system_prompt: buildSystemPromptFromPersona(editData.name, editData.type, editData.persona_profile),
+      };
+    }
+    setAgents(agents.map((a) => (a.id === saved.id ? saved : a)));
     setEditingId(null);
     setEditData(null);
   };
@@ -112,49 +108,19 @@ export default function Phase3Page() {
   const cancelEdit = () => {
     setEditingId(null);
     setEditData(null);
-    setIsPromptPreviewOpen(false);
   };
 
-  const updateEditData = (updater: (prev: AgentSchema) => AgentSchema) => {
-    setEditData((prev) => {
-      if (!prev) return prev;
-      const next = updater(prev);
-      if (next.persona_profile) {
-        next.system_prompt = buildSystemPromptFromPersona(
-          next.name,
-          next.type,
-          next.persona_profile,
-        );
-      }
-      return next;
-    });
-  };
-
-  /* 에이전트 추가 */
+  /* 커스텀 에이전트 추가 */
   const addAgent = () => {
     const id = `agent-${Date.now()}`;
-    const created: AgentSchema = { ...newAgent, id };
-    if (created.persona_profile) {
-      created.system_prompt = buildSystemPromptFromPersona(
-        created.name,
-        created.type,
-        created.persona_profile,
-      );
-    }
-    setAgents([...agents, created]);
+    setAgents([...agents, { ...newAgent, id }]);
     setAddMode(false);
-    setNewAgent({ ...EMPTY_AGENT, persona_profile: { ...EMPTY_PERSONA } });
+    setNewAgent({ ...EMPTY_AGENT });
   };
 
   /* 네비게이션 */
-  const goNext = () => {
-    setCurrentPhase(4);
-    router.push('/meeting');
-  };
-  const goPrev = () => {
-    setCurrentPhase(2);
-    router.push('/market-research');
-  };
+  const goNext = () => { setCurrentPhase(4); router.push('/meeting'); };
+  const goPrev = () => { setCurrentPhase(2); router.push('/market-research'); };
 
   /* 데이터 없으면 Phase 2로 안내 */
   if (!project.refined || !project.marketReport) {
@@ -166,9 +132,7 @@ export default function Phase3Page() {
         <p className="text-sm text-text-secondary mb-4">
           시장조사가 완료되지 않았습니다. Phase 2에서 먼저 시장조사를 수행해주세요.
         </p>
-        <button className="btn btn-primary" onClick={goPrev}>
-          ← 시장조사로 이동
-        </button>
+        <button className="btn btn-primary" onClick={goPrev}>← 시장조사로 이동</button>
       </div>
     );
   }
@@ -187,29 +151,38 @@ export default function Phase3Page() {
             )}
           </div>
           {hasAgents && (
-            <button
-              className="btn btn-ghost text-[11px]"
-              onClick={requestRecommend}
-              disabled={loading}
-            >
-              🔄 재추천
+            <button className="btn btn-ghost text-[11px]" onClick={requestRecommend} disabled={loading}>
+              🔄 재선정
             </button>
           )}
         </div>
 
-        {/* 로딩 */}
+        {/* 로딩 — 단계별 진행 표시 */}
         {loading && (
           <div className="spinner-wrap">
             <div className="spinner" />
-            <div className="spinner-text">AI가 에이전트를 구성하고 있습니다...</div>
+            <div className="spinner-text">
+              {buildProgress?.message || '실제 패널 데이터를 기반으로 참여자를 선정하고 있습니다...'}
+            </div>
+            {buildProgress && buildProgress.total > 0 && buildProgress.step !== 'selecting' && (
+              <div style={{ marginTop: 8, width: '100%', maxWidth: 260 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
+                  <span>{buildProgress.step === 'done' ? '완료' : '진행 중'}</span>
+                  <span>{buildProgress.current}/{buildProgress.total}</span>
+                </div>
+                <div style={{ height: 4, background: '#e0e0e0', borderRadius: 2 }}>
+                  <div style={{ height: '100%', background: '#1B4B8C', borderRadius: 2, width: `${(buildProgress.current / buildProgress.total) * 100}%`, transition: 'width 0.3s' }} />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* 시작 전 (에이전트 없음) */}
+        {/* 시작 전 */}
         {!loading && !hasAgents && (
           <>
             <p className="text-xs text-text-secondary mb-4">
-              시장조사 결과를 기반으로 AI가 FGI에 적합한 에이전트를 추천합니다.
+              연구 맥락에 맞는 실제 패널 데이터를 분석해 FGI 참여자를 자동으로 구성합니다.
             </p>
             {error && (
               <div className="mb-3 p-2.5 rounded-md text-xs" style={{ background: '#fdecea', color: 'var(--red)' }}>
@@ -220,18 +193,17 @@ export default function Phase3Page() {
               </div>
             )}
             <button className="btn btn-primary" onClick={requestRecommend}>
-              에이전트 추천받기 →
+              패널 선정 시작 →
             </button>
           </>
         )}
       </div>
 
-      {/* ── 에이전트 그리드 ── */}
       {hasAgents && !loading && (
         <>
           {/* 추천 배너 */}
           <div className="recommend-banner">
-            💡 <strong>오케스트레이터 추천:</strong>&nbsp; 연구 목적에 맞춰 에이전트를 구성했습니다. 자유롭게 수정하세요.
+            📊 <strong>데이터 기반 패널 선정 완료:</strong>&nbsp; 클러스터 다양성을 고려해 참여자를 구성했습니다.
           </div>
 
           {error && (
@@ -253,97 +225,119 @@ export default function Phase3Page() {
                   <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={cancelEdit}>✕</button>
                 </div>
                 <div className="drawer-body">
-                  {/* 기본 정보 */}
+
+                  {/* 편집 가능 필드 */}
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>기본 정보</div>
                   <div className="field-group">
                     <div className="field-label">이모지</div>
-                    <input className="field-input" value={editData.emoji} onChange={(e) => updateEditData((prev) => ({ ...prev, emoji: e.target.value }))} />
+                    <input className="field-input" value={editData.emoji} onChange={(e) => setEditData({ ...editData, emoji: e.target.value })} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">이름</div>
-                    <input className="field-input" value={editData.name} onChange={(e) => updateEditData((prev) => ({ ...prev, name: e.target.value }))} />
-                  </div>
-                  <div className="field-group">
-                    <div className="field-label">유형</div>
-                    <select className="field-input" value={editData.type} onChange={(e) => updateEditData((prev) => ({ ...prev, type: e.target.value as AgentSchema['type'] }))}>
-                      <option value="customer">가상 고객</option>
-                      <option value="expert">도메인 전문가</option>
-                      <option value="custom">커스텀</option>
-                    </select>
+                    <input className="field-input" value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">설명</div>
-                    <textarea className="field-textarea" rows={2} value={editData.description} onChange={(e) => updateEditData((prev) => ({ ...prev, description: e.target.value }))} />
+                    <textarea className="field-textarea" rows={2} value={editData.description} onChange={(e) => setEditData({ ...editData, description: e.target.value })} />
                   </div>
                   <div className="field-group">
                     <div className="field-label">태그 (쉼표 구분)</div>
-                    <input className="field-input" value={editData.tags.join(', ')} onChange={(e) => updateEditData((prev) => ({ ...prev, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) }))} />
+                    <input className="field-input" value={editData.tags.join(', ')} onChange={(e) => setEditData({ ...editData, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} />
                   </div>
 
-                  {editData.persona_profile ? (
+                  {/* ── 데이터 기반 에이전트: 읽기 전용 인구통계 + 메모리 ── */}
+                  {editData.demographics && (
                     <>
-                      {/* 기본 정보 (페르소나) */}
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>기본 정보 (페르소나)</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        인구통계
+                        <span style={{ fontSize: 9, background: '#f0f0f0', color: 'var(--text-muted)', padding: '1px 5px', borderRadius: 3, fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>읽기 전용</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', marginBottom: 12 }}>
+                        {([
+                          ['나이대', editData.demographics.age_group],
+                          ['성별', editData.demographics.gender],
+                          ['직업', editData.demographics.occupation],
+                          ['지역', editData.demographics.region],
+                        ] as [string, string][]).map(([label, value]) => (
+                          <div key={label} style={{ padding: '6px 8px', background: '#f7f8fa', borderRadius: 4 }}>
+                            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
+                            <div style={{ fontSize: 12, fontWeight: 500 }}>{value || '—'}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {editData.memories && editData.memories.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '4px 0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            메모리 ({editData.memories.length}개)
+                            <span style={{ fontSize: 9, background: '#f0f0f0', color: 'var(--text-muted)', padding: '1px 5px', borderRadius: 3, fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>읽기 전용</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {editData.memories.map((m, i) => (
+                              <div
+                                key={i}
+                                style={{
+                                  padding: '7px 10px',
+                                  background: '#f7f8fa',
+                                  borderRadius: 6,
+                                  borderLeft: `3px solid ${m.importance >= 7 ? '#1B4B8C' : m.importance >= 4 ? '#A3C4E8' : '#E0E0E0'}`,
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                  <div style={{ flex: 1, height: 3, background: '#e0e0e0', borderRadius: 2 }}>
+                                    <div style={{ width: `${m.importance * 10}%`, height: '100%', background: '#1B4B8C', borderRadius: 2 }} />
+                                  </div>
+                                  <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>{m.importance}/10</span>
+                                </div>
+                                <div style={{ fontSize: 11, lineHeight: 1.5, color: 'var(--text-secondary)' }}>{m.text}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* ── 기존 LLM 페르소나 에이전트 (하위 호환) ── */}
+                  {!editData.demographics && editData.persona_profile && (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>페르소나</div>
                       <div className="field-group">
                         <div className="field-label">나이</div>
-                        <input className="field-input" type="number" value={editData.persona_profile.age} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, age: Number(e.target.value) || 0 } }))} />
-                      </div>
-                      <div className="field-group">
-                        <div className="field-label">성별</div>
-                        <select className="field-input" value={editData.persona_profile.gender} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'] } }))}>
-                          <option value="male">남성</option>
-                          <option value="female">여성</option>
-                          <option value="other">기타</option>
-                        </select>
+                        <input className="field-input" type="number" value={editData.persona_profile.age} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, age: Number(e.target.value) || 0 } })} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">직업</div>
-                        <input className="field-input" value={editData.persona_profile.occupation} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, occupation: e.target.value } }))} />
+                        <input className="field-input" value={editData.persona_profile.occupation} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, occupation: e.target.value } })} />
                       </div>
-
-                      {/* 성격 & 행동 */}
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>성격 & 행동</div>
                       <div className="field-group">
                         <div className="field-label">성격</div>
-                        <input className="field-input" value={editData.persona_profile.personality} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, personality: e.target.value } }))} />
+                        <input className="field-input" value={editData.persona_profile.personality} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, personality: e.target.value } })} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">소비 스타일</div>
-                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.consumption_style} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, consumption_style: e.target.value } }))} />
+                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.consumption_style} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, consumption_style: e.target.value } })} />
                       </div>
-                      <div className="field-group">
-                        <div className="field-label">말투</div>
-                        <input className="field-input" value={editData.persona_profile.communication_style} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, communication_style: e.target.value } }))} />
-                      </div>
-
-                      {/* 경험 & 니즈 */}
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '16px 0 8px' }}>경험 & 니즈</div>
                       <div className="field-group">
                         <div className="field-label">관련 경험</div>
-                        <textarea className="field-textarea" rows={3} value={editData.persona_profile.experience} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, experience: e.target.value } }))} />
+                        <textarea className="field-textarea" rows={3} value={editData.persona_profile.experience} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, experience: e.target.value } })} />
                       </div>
                       <div className="field-group">
                         <div className="field-label">불만/니즈</div>
-                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.pain_points} onChange={(e) => updateEditData((prev) => ({ ...prev, persona_profile: { ...prev.persona_profile!, pain_points: e.target.value } }))} />
+                        <textarea className="field-textarea" rows={2} value={editData.persona_profile.pain_points} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, pain_points: e.target.value } })} />
                       </div>
-
-                      {/* AI 생성 프롬프트 미리보기 */}
-                      <div className="field-group" style={{ marginTop: 8 }}>
-                        <button className="btn btn-ghost w-full justify-between" onClick={() => setIsPromptPreviewOpen((prev) => !prev)}>
-                          AI 생성 프롬프트 미리보기
-                          <span>{isPromptPreviewOpen ? '접기' : '펼치기'}</span>
-                        </button>
-                        {isPromptPreviewOpen && (
-                          <div className="agent-desc" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>
-                            {editData.system_prompt}
-                          </div>
-                        )}
+                      <div className="field-group">
+                        <div className="field-label">말투</div>
+                        <input className="field-input" value={editData.persona_profile.communication_style} onChange={(e) => setEditData({ ...editData, persona_profile: { ...editData.persona_profile!, communication_style: e.target.value } })} />
                       </div>
                     </>
-                  ) : (
-                    <div className="field-group">
+                  )}
+
+                  {/* ── 커스텀 에이전트: 시스템 프롬프트 직접 편집 ── */}
+                  {!editData.demographics && !editData.persona_profile && (
+                    <div className="field-group" style={{ marginTop: 8 }}>
                       <div className="field-label">시스템 프롬프트</div>
-                      <textarea className="field-textarea" rows={4} value={editData.system_prompt} onChange={(e) => updateEditData((prev) => ({ ...prev, system_prompt: e.target.value }))} />
+                      <textarea className="field-textarea" rows={4} value={editData.system_prompt} onChange={(e) => setEditData({ ...editData, system_prompt: e.target.value })} />
                     </div>
                   )}
                 </div>
@@ -355,104 +349,96 @@ export default function Phase3Page() {
             </>
           )}
 
+          {/* ── 에이전트 그리드 ── */}
           <div className="agent-grid">
-            {agents.map((agent) =>
-              (
-                /* ── 일반 카드 (항상 표시) ── */
+            {agents.map((agent) => {
+              const hasDemographics = !!agent.demographics;
+              const hasPersona = !!agent.persona_profile;
+              const memCount = agent.memory_count ?? agent.memories?.length ?? 0;
+
+              return (
                 <div key={agent.id} className="agent-card" style={{ borderTop: `3px solid ${agent.color}`, paddingTop: 14 }}>
                   <div className="agent-actions">
                     {deletingId === agent.id ? (
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <button
-                          className="agent-action-btn"
-                          title="삭제 확인"
-                          style={{ color: 'var(--red)', fontSize: 10, padding: '2px 6px' }}
-                          onClick={() => { removeAgent(agent.id); setDeletingId(null); }}
-                        >
-                          삭제
-                        </button>
-                        <button
-                          className="agent-action-btn"
-                          title="취소"
-                          style={{ fontSize: 10, padding: '2px 6px' }}
-                          onClick={() => setDeletingId(null)}
-                        >
-                          취소
-                        </button>
+                        <button className="agent-action-btn" style={{ color: 'var(--red)', fontSize: 10, padding: '2px 6px' }} onClick={() => { removeAgent(agent.id); setDeletingId(null); }}>삭제</button>
+                        <button className="agent-action-btn" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => setDeletingId(null)}>취소</button>
                       </div>
                     ) : (
                       <>
-                        <button
-                          className="agent-action-btn"
-                          title="수정"
-                          onClick={() => startEdit(agent)}
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          className="agent-action-btn"
-                          title="삭제"
-                          onClick={() => setDeletingId(agent.id)}
-                        >
-                          ✕
-                        </button>
+                        <button className="agent-action-btn" title="수정" onClick={() => startEdit(agent)}>✏️</button>
+                        <button className="agent-action-btn" title="삭제" onClick={() => setDeletingId(agent.id)}>✕</button>
                       </>
                     )}
                   </div>
+
                   <div className={`agent-avatar avatar-${agent.type}`}>{agent.emoji}</div>
                   <div className="agent-name">{agent.name}</div>
                   <div className={`agent-type type-${agent.type}`}>
                     {TYPE_LABELS[agent.type] || agent.type}
                   </div>
-                  {agent.persona_profile ? (
+
+                  {/* 인구통계 + 메모리 배지 (데이터 기반 에이전트) */}
+                  {hasDemographics ? (
                     <div className="agent-persona">
                       <div className="agent-persona-meta">
-                        <span>{agent.persona_profile.age}세</span>
-                        {GENDER_LABELS[agent.persona_profile.gender] && (
+                        <span>{agent.demographics!.age_group}</span>
+                        <span className="agent-persona-separator">·</span>
+                        <span>{agent.demographics!.gender}</span>
+                        <span className="agent-persona-separator">·</span>
+                        <span>{agent.demographics!.occupation}</span>
+                        {agent.demographics!.region && (
                           <>
                             <span className="agent-persona-separator">·</span>
-                            <span>{GENDER_LABELS[agent.persona_profile.gender]}</span>
+                            <span>{agent.demographics!.region}</span>
+                          </>
+                        )}
+                      </div>
+                      {memCount > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <span style={{ fontSize: 10, background: '#E8F0FA', color: '#1B4B8C', padding: '3px 8px', borderRadius: 10, fontWeight: 600 }}>
+                            🧠 {memCount}개 메모리
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : hasPersona ? (
+                    /* 기존 LLM 페르소나 (하위 호환) */
+                    <div className="agent-persona">
+                      <div className="agent-persona-meta">
+                        <span>{agent.persona_profile!.age}세</span>
+                        {GENDER_LABELS[agent.persona_profile!.gender] && (
+                          <>
+                            <span className="agent-persona-separator">·</span>
+                            <span>{GENDER_LABELS[agent.persona_profile!.gender]}</span>
                           </>
                         )}
                         <span className="agent-persona-separator">·</span>
-                        <span>{agent.persona_profile.occupation}</span>
+                        <span>{agent.persona_profile!.occupation}</span>
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">성격:</span>
-                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.personality}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile!.personality}</span>
                       </div>
                       <div className="agent-persona-row">
                         <span className="agent-persona-label">소비:</span>
-                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.consumption_style}</span>
-                      </div>
-                      <div className="agent-persona-row">
-                        <span className="agent-persona-label">경험:</span>
-                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.experience}</span>
-                      </div>
-                      <div className="agent-persona-row">
-                        <span className="agent-persona-label">니즈:</span>
-                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile.pain_points}</span>
-                      </div>
-                      <div className="agent-persona-row">
-                        <span className="agent-persona-label">말투:</span>
-                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 1 }}>{agent.persona_profile.communication_style}</span>
+                        <span style={{ overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{agent.persona_profile!.consumption_style}</span>
                       </div>
                     </div>
                   ) : (
-                    <div className="agent-desc">{agent.system_prompt}</div>
+                    <div className="agent-desc">{agent.description || agent.system_prompt}</div>
                   )}
+
                   <div className="agent-tags">
                     {agent.tags.map((tag) => (
-                      <span key={tag} className="agent-tag">
-                        {tag}
-                      </span>
+                      <span key={tag} className="agent-tag">{tag}</span>
                     ))}
                   </div>
                 </div>
-              ),
-            )}
+              );
+            })}
 
-            {/* ── 에이전트 추가 카드 ── */}
+            {/* 커스텀 에이전트 추가 카드 */}
             {agents.length < MAX_AGENTS && !addMode && (
               <div className="agent-add-card" onClick={() => setAddMode(true)}>
                 <span style={{ fontSize: 20 }}>+</span>
@@ -461,243 +447,32 @@ export default function Phase3Page() {
               </div>
             )}
 
-            {/* ── 추가 입력 카드 ── */}
+            {/* 추가 입력 카드 (커스텀 전용) */}
             {addMode && (
               <div className="agent-card" style={{ borderColor: 'var(--accent)' }}>
                 <div className="field-group">
                   <div className="field-label">이모지</div>
-                  <input
-                    className="field-input"
-                    value={newAgent.emoji}
-                    onChange={(e) => setNewAgent({ ...newAgent, emoji: e.target.value })}
-                  />
+                  <input className="field-input" value={newAgent.emoji} onChange={(e) => setNewAgent({ ...newAgent, emoji: e.target.value })} />
                 </div>
                 <div className="field-group">
                   <div className="field-label">이름</div>
-                  <input
-                    className="field-input"
-                    value={newAgent.name}
-                    onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
-                    placeholder="예: 김서연"
-                  />
-                </div>
-                <div className="field-group">
-                  <div className="field-label">유형</div>
-                  <select
-                    className="field-input"
-                    value={newAgent.type}
-                    onChange={(e) => {
-                      const type = e.target.value as AgentSchema['type'];
-                      setNewAgent({
-                        ...newAgent,
-                        type,
-                        persona_profile: type !== 'custom' ? (newAgent.persona_profile ?? { ...EMPTY_PERSONA }) : null,
-                      });
-                    }}
-                  >
-                    <option value="customer">가상 고객</option>
-                    <option value="expert">도메인 전문가</option>
-                    <option value="custom">커스텀</option>
-                  </select>
+                  <input className="field-input" value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} placeholder="예: 김서연" />
                 </div>
                 <div className="field-group">
                   <div className="field-label">설명</div>
-                  <textarea
-                    className="field-textarea"
-                    rows={3}
-                    value={newAgent.description}
-                    onChange={(e) => setNewAgent({ ...newAgent, description: e.target.value })}
-                    placeholder="에이전트 설명을 입력하세요"
-                  />
+                  <textarea className="field-textarea" rows={3} value={newAgent.description} onChange={(e) => setNewAgent({ ...newAgent, description: e.target.value })} placeholder="에이전트 설명을 입력하세요" />
                 </div>
                 <div className="field-group">
                   <div className="field-label">태그 (쉼표 구분)</div>
-                  <input
-                    className="field-input"
-                    value={newAgent.tags.join(', ')}
-                    onChange={(e) =>
-                      setNewAgent({
-                        ...newAgent,
-                        tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
-                      })
-                    }
-                    placeholder="태그1, 태그2, 태그3"
-                  />
+                  <input className="field-input" value={newAgent.tags.join(', ')} onChange={(e) => setNewAgent({ ...newAgent, tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} placeholder="태그1, 태그2" />
                 </div>
-                {newAgent.persona_profile ? (
-                  <>
-                    <div className="field-group">
-                      <div className="field-label">나이</div>
-                      <input
-                        className="field-input"
-                        type="number"
-                        value={newAgent.persona_profile.age}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              age: Number(e.target.value) || 0,
-                            },
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">성별</div>
-                      <select
-                        className="field-input"
-                        value={newAgent.persona_profile.gender}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              gender: e.target.value as NonNullable<AgentSchema['persona_profile']>['gender'],
-                            },
-                          })
-                        }
-                      >
-                        <option value="male">남성</option>
-                        <option value="female">여성</option>
-                        <option value="other">기타</option>
-                      </select>
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">직업</div>
-                      <input
-                        className="field-input"
-                        value={newAgent.persona_profile.occupation}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              occupation: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="예: IT기업 UX디자이너"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">성격</div>
-                      <input
-                        className="field-input"
-                        value={newAgent.persona_profile.personality}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              personality: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="예: 외향적, 트렌드에 민감, 충동적"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">소비 스타일</div>
-                      <textarea
-                        className="field-textarea"
-                        rows={2}
-                        value={newAgent.persona_profile.consumption_style}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              consumption_style: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="예: SNS에서 본 제품을 바로 구매하는 편"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">관련 경험</div>
-                      <textarea
-                        className="field-textarea"
-                        rows={3}
-                        value={newAgent.persona_profile.experience}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              experience: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="구체적인 이용 에피소드를 작성하세요"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">불만/니즈</div>
-                      <textarea
-                        className="field-textarea"
-                        rows={2}
-                        value={newAgent.persona_profile.pain_points}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              pain_points: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="구체적인 불만이나 니즈를 작성하세요"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <div className="field-label">말투</div>
-                      <input
-                        className="field-input"
-                        value={newAgent.persona_profile.communication_style}
-                        onChange={(e) =>
-                          setNewAgent({
-                            ...newAgent,
-                            persona_profile: {
-                              ...newAgent.persona_profile!,
-                              communication_style: e.target.value,
-                            },
-                          })
-                        }
-                        placeholder="예: 수다스럽고 감탄사가 많음"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className="field-group">
-                    <div className="field-label">시스템 프롬프트</div>
-                    <textarea
-                      className="field-textarea"
-                      rows={4}
-                      value={newAgent.system_prompt}
-                      onChange={(e) => setNewAgent({ ...newAgent, system_prompt: e.target.value })}
-                      placeholder="에이전트의 페르소나를 상세히 작성하세요"
-                    />
-                  </div>
-                )}
+                <div className="field-group">
+                  <div className="field-label">시스템 프롬프트</div>
+                  <textarea className="field-textarea" rows={4} value={newAgent.system_prompt} onChange={(e) => setNewAgent({ ...newAgent, system_prompt: e.target.value })} placeholder="에이전트의 페르소나를 상세히 작성하세요" />
+                </div>
                 <div className="flex gap-2 mt-2">
-                  <button
-                    className="btn btn-primary flex-1 justify-center"
-                    onClick={addAgent}
-                    disabled={!newAgent.name.trim()}
-                  >
-                    추가
-                  </button>
-                  <button
-                    className="btn btn-secondary flex-1 justify-center"
-                    onClick={() => {
-                      setAddMode(false);
-                      setNewAgent({ ...EMPTY_AGENT, persona_profile: { ...EMPTY_PERSONA } });
-                    }}
-                  >
-                    취소
-                  </button>
+                  <button className="btn btn-primary flex-1 justify-center" onClick={addAgent} disabled={!newAgent.name.trim()}>추가</button>
+                  <button className="btn btn-secondary flex-1 justify-center" onClick={() => { setAddMode(false); setNewAgent({ ...EMPTY_AGENT }); }}>취소</button>
                 </div>
               </div>
             )}
@@ -705,12 +480,8 @@ export default function Phase3Page() {
 
           {/* ── 액션 바 ── */}
           <div className="action-bar">
-            <button className="btn btn-secondary" onClick={goPrev}>
-              ← 시장조사 수정
-            </button>
-            <button className="btn btn-primary" onClick={goNext}>
-              회의 시작 →
-            </button>
+            <button className="btn btn-secondary" onClick={goPrev}>← 시장조사 수정</button>
+            <button className="btn btn-primary" onClick={goNext}>회의 시작 →</button>
           </div>
         </>
       )}

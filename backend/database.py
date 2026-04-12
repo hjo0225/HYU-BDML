@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, ForeignKey, Integer,
+    BigInteger, Boolean, Column, Float, ForeignKey, Integer,
     Numeric, String, Text, DateTime,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -137,6 +137,48 @@ class ActivityLog(Base):
     cost_usd      = Column(Numeric(10, 6), nullable=False, default=0.0)
     extra_json    = _jsonb_col()
     created_at    = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# ── 패널 데이터 (RAG) ─────────────────────────────────────────────────────
+
+class Panel(Base):
+    """500명 FGI 패널 — 사전 적재된 인구통계 + 행동 차원."""
+    __tablename__ = "panels"
+
+    panel_id        = Column(String(20), primary_key=True)
+    cluster         = Column(Integer, nullable=False)
+
+    # 인구통계 (디코딩 완료된 값)
+    age             = Column(Integer, nullable=True)
+    gender          = Column(String(10), nullable=True)
+    occupation      = Column(String(50), nullable=True)
+    region          = Column(String(50), nullable=True)
+
+    # 행동 차원 (0-1 비율, 클러스터링/필터링용)
+    dim_night_owl       = Column(Float, nullable=True)
+    dim_gamer           = Column(Float, nullable=True)
+    dim_social_diner    = Column(Float, nullable=True)
+    dim_drinker         = Column(Float, nullable=True)
+    dim_shopper         = Column(Float, nullable=True)
+    dim_health          = Column(Float, nullable=True)
+    dim_entertainment   = Column(Float, nullable=True)
+    dim_weekend_oriented = Column(Float, nullable=True)
+
+    # 사전 계산된 scratch (전체 인구통계 dict)
+    scratch         = _jsonb_col(nullable=False)
+
+
+class PanelMemory(Base):
+    """패널별 카테고리 메모리 — 임베딩 포함."""
+    __tablename__ = "panel_memories"
+
+    id          = Column(BigInteger, primary_key=True, autoincrement=True)
+    panel_id    = Column(String(20), ForeignKey("panels.panel_id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    category    = Column(String(50), nullable=False)
+    text        = Column(Text, nullable=False)
+    importance  = Column(Integer, nullable=False, default=50)
+    embedding   = _jsonb_col(nullable=False)   # list[float] 1536차원
 
 
 # ── 세션 Dependency ────────────────────────────────────────────────────────

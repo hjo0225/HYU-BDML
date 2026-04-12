@@ -22,6 +22,13 @@ async def meeting_endpoint(
 ):
     """회의 시뮬레이션을 SSE로 스트리밍한다."""
 
+    # 에이전트에서 panel_id 맵 추출 (RAG 경로 분기용)
+    panel_ids = {
+        agent.id: agent.panel_id
+        for agent in req.agents
+        if agent.panel_id
+    }
+
     async def event_stream():
         try:
             async for chunk in run_meeting_stream(
@@ -29,6 +36,7 @@ async def meeting_endpoint(
                 req.topic,
                 req.research_context,
                 req.max_rounds,
+                panel_ids=panel_ids,
             ):
                 # 브라우저 연결이 끊긴 뒤에도 생성기를 계속 돌리면 불필요한 토큰 비용이 생긴다.
                 if await request.is_disconnected():
