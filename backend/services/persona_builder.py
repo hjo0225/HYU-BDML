@@ -219,7 +219,7 @@ async def _synthesize_panel_query(brief: str, report_summary: str, topic: str) -
 
 async def build_personas_stream(
     target_customer: str = "",
-    n_agents: int = 5,
+    n_agents: int = 3,
     topic: str = "",
     brief_text: str = "",
     report_summary: str = "",

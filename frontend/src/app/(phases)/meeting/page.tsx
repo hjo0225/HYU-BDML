@@ -81,13 +81,10 @@ export default function Phase4Page() {
     };
   }, []);
 
-  // 라운드 계산
+  // 라운드 계산 (백엔드가 질문 수 기반으로 라운드를 결정하므로 표시용)
   const agentCount = project.agents.length;
-  const maxRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
   const agentMessages = project.messages.filter((m) => m.role === 'agent').length;
-  const currentRound = agentCount > 0
-    ? Math.min(Math.ceil(agentMessages / agentCount), maxRounds)
-    : 0;
+  const currentRound = agentCount > 0 ? Math.ceil(agentMessages / agentCount) : 0;
 
   /* 경과 시간 포맷 */
   const formatElapsed = (s: number) => {
@@ -128,7 +125,7 @@ export default function Phase4Page() {
 
     try {
       await fetchMeeting(
-        { agents: project.agents, topic: meetingTopic, research_context: context, max_rounds: maxRounds, panel_ids },
+        { agents: project.agents, topic: meetingTopic, research_context: context, panel_ids },
         // onStart
         (meta) => {
           if (abortRef.current) return;
@@ -182,7 +179,7 @@ export default function Phase4Page() {
     } finally {
       controllerRef.current = null;
     }
-  }, [project, setMeetingTopic, startMeetingSession, addMessage, maxRounds]);
+  }, [project, setMeetingTopic, startMeetingSession, addMessage]);
 
   // 마운트 시 자동 회의 시작 (메시지가 없을 때)
   const hasStarted = useRef(false);

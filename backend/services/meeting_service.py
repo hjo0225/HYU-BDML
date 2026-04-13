@@ -239,8 +239,10 @@ async def moderator_followup(state: MeetingState) -> dict:
     # 새 인사이트가 없으면 카운터를 누적하고, 있으면 다시 0으로 초기화한다.
     new_saturation = 0 if has_new else state["saturation_count"] + 1
 
-    # 인사이트 고갈 또는 최대 라운드 도달 시 종료한다.
-    should_end = new_saturation >= 2 or current_round >= state["max_rounds"]
+    # 최대 라운드 도달 또는 인사이트 고갈(최소 3라운드 후) 시 종료한다.
+    min_rounds_done = current_round >= state["max_rounds"]
+    saturation_exceeded = new_saturation >= 3 and current_round >= 3
+    should_end = min_rounds_done or saturation_exceeded
 
     # 종료하는 턴이면 팔로업 대신 마무리 멘트를 만든다.
     if should_end:
@@ -692,7 +694,10 @@ async def _check_new_insight(state: MeetingState) -> dict:
         pass
 
     new_saturation = 0 if has_new else state["saturation_count"] + 1
-    should_end = new_saturation >= 2 or current_round >= state["max_rounds"]
+    # 최소 라운드(질문 수)를 보장: max_rounds 미달이면 saturation으로 종료하지 않음
+    min_rounds_done = current_round >= state["max_rounds"]
+    saturation_exceeded = new_saturation >= 3 and current_round >= 3  # 최소 3라운드 후 판정
+    should_end = min_rounds_done or saturation_exceeded
 
     return {
         "saturation_count": new_saturation,
@@ -754,13 +759,20 @@ async def run_meeting_stream(
     yield _sse({"type": "meeting_design", "design": design_dict})
     await asyncio.sleep(0)
 
+    # 토론 질문 목록 추출 → 질문 수가 라운드 수를 결정
+    discussion_questions: list[str] = []
+    for q in design_dict.get("discussion_questions", []):
+        discussion_questions.append(q.get("question", ""))
+    # 질문이 없으면 기본 max_rounds 사용, 있으면 질문 수로 결정
+    effective_max_rounds = len(discussion_questions) if discussion_questions else max_rounds
+
     state: MeetingState = {
         "topic": topic,
         "context": context,
         "agents": [a.model_dump() for a in agents],
         "history": [],
         "current_round": 0,
-        "max_rounds": max_rounds,
+        "max_rounds": effective_max_rounds,
         "spoke_this_round": [],
         "next_speaker_id": "",
         "saturation_count": 0,
@@ -871,8 +883,11 @@ async def run_meeting_stream(
         has_ended = followup_result["should_end"]
         search_context, next_search_count = await _maybe_run_meeting_search(state)
 
-        if has_ended:
-            # 종료 조건이 충족되면 바로 마무리 멘트를 생성한다.
+        # 다음 라운드에서 사용할 질문 인덱스 (0-based, current_round는 1-based)
+        next_q_idx = state["current_round"]  # 현재 라운드가 끝났으니 다음 질문 인덱스
+
+        if has_ended or next_q_idx >= len(discussion_questions):
+            # 종료 조건 충족 또는 모든 질문 소진 → 마무리
             history_text = "\n".join(
                 f"[{h['speaker']}]: {h['content']}" for h in state["history"]
             )
@@ -891,8 +906,10 @@ async def run_meeting_stream(
                 await asyncio.sleep(0)
             closing = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": closing}]
+            state["should_end"] = True
         else:
-            # 회의를 이어갈 경우 다음 라운드를 위한 팔로업 질문을 만든다.
+            # 다음 질문으로 전환: 이번 라운드 요약 + 다음 질문 제시
+            next_question = discussion_questions[next_q_idx]
             history_text = "\n".join(
                 f"[{h['speaker']}]: {h['content']}" for h in state["history"]
             )
@@ -903,7 +920,8 @@ async def run_meeting_stream(
                     f"현재 라운드: {state['current_round']}\n"
                     f"전체 대화:\n{history_text}\n\n"
                     f"{search_context}\n\n"
-                    "이번 라운드의 핵심 논점을 정리하고 팔로업 질문을 던지세요."
+                    f"이번 라운드의 핵심 논점을 1~2문장으로 짧게 정리한 뒤, "
+                    f"다음 질문으로 자연스럽게 넘어가세요:\n\"{next_question}\""
                 ),
                 meta,
                 usage_label="meeting/stream/moderator_followup",
@@ -912,7 +930,6 @@ async def run_meeting_stream(
                 await asyncio.sleep(0)
             followup_text = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": followup_text}]
-            # 모더레이터 팔로업을 라운드 요약으로 누적 + 다음 라운드 질문으로 갱신
             round_summaries.append(f"[라운드 {state['current_round']}] {followup_text}")
             current_moderator_question = followup_text
 

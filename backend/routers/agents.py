@@ -44,7 +44,7 @@ async def recommend_agents_stream(
         try:
             async for event in build_personas_stream(
                 target_customer=req.brief.target_customer,
-                n_agents=5,
+                n_agents=3,
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
@@ -93,7 +93,7 @@ async def recommend_agents_stream_v2(
             try:
                 async for event in build_personas_stream(
                     target_customer=req.brief.target_customer,
-                    n_agents=5,
+                    n_agents=3,
                     topic=req.topic,
                     brief_text=brief_text,
                     report_summary=report_summary,
