@@ -47,7 +47,7 @@ export default function Sidebar() {
     >
       {/* 로고 */}
       <div className="px-5 py-4 border-b border-border">
-        <img src="/logo.png" alt="BDML" style={{ height: 32, width: 'auto' }} />
+        <img src="/logo.png" alt="BDML" style={{ height: 64, width: 'auto' }} />
       </div>
 
       {/* Phase 그룹 */}
