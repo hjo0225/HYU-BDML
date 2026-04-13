@@ -1,4 +1,4 @@
-# Interactive Multiagent - AI FGI Simulation
+# HYU_BDML - AI FGI Simulation
 
 > **한 줄 요약:** 연구 브리프 입력 하나로 시장조사 → 가상 참여자 구성 → FGI 시뮬레이션 → 회의록 생성까지 자동 수행하는 멀티 에이전트 리서치 워크플로우
 
@@ -19,13 +19,13 @@
 
 ### 사용자 흐름 (5단계)
 
-| 단계 | 라우트             | 기능                               |
-| ---- | ------------------ | ---------------------------------- |
-| 1    | `/research-input`  | 연구 브리프 입력                   |
-| 2    | `/market-research` | 연구 정보 정제 + 시장조사 스트리밍 |
+| 단계 | 라우트             | 기능                                                   |
+| ---- | ------------------ | ------------------------------------------------------ |
+| 1    | `/research-input`  | 연구 브리프 입력                                       |
+| 2    | `/market-research` | 연구 정보 정제 + 시장조사 스트리밍                     |
 | 3    | `/agent-setup`     | 주제 설정 → 모드 선택(RAG/LLM) → 에이전트 추천 및 편집 |
-| 4    | `/meeting`         | FGI 회의 시뮬레이션 (SSE)          |
-| 5    | `/minutes`         | 회의록 생성 및 Markdown 내보내기   |
+| 4    | `/meeting`         | FGI 회의 시뮬레이션 (SSE)                              |
+| 5    | `/minutes`         | 회의록 생성 및 Markdown 내보내기                       |
 
 ## 2. 핵심 문제 해결
 
@@ -177,25 +177,27 @@ docker run -p 3000:3000 interactive-multiagent-frontend
 
 ## 5. DB 스키마
 
-| 테이블 | 설명 | 주요 컬럼 |
-|--------|------|-----------|
-| **users** | 사용자 | id(UUID), email, hashed_pw, name, role, is_active |
-| **refresh_tokens** | JWT 리프레시 토큰 | token_hash(SHA-256), expires_at, is_revoked |
-| **projects** | 연구 세션 | brief, refined, market_report, agents, meeting_topic, meeting_messages, minutes (각 JSONB/Text) |
-| **project_edits** | 수정 이력 감사 로그 | field, old_value, new_value |
-| **activity_logs** | 토큰 사용량 추적 | action, model, input_tokens, output_tokens, cost_usd |
-| **panels** | FGI 패널 500명 | panel_id, cluster, age, gender, 8개 행동 차원(dim_*), scratch(JSONB) |
-| **panel_memories** | 패널별 자전적 기억 | panel_id, category(14종), text, importance, embedding(1536차원) |
+| 테이블             | 설명                | 주요 컬럼                                                                                       |
+| ------------------ | ------------------- | ----------------------------------------------------------------------------------------------- |
+| **users**          | 사용자              | id(UUID), email, hashed_pw, name, role, is_active                                               |
+| **refresh_tokens** | JWT 리프레시 토큰   | token_hash(SHA-256), expires_at, is_revoked                                                     |
+| **projects**       | 연구 세션           | brief, refined, market_report, agents, meeting_topic, meeting_messages, minutes (각 JSONB/Text) |
+| **project_edits**  | 수정 이력 감사 로그 | field, old_value, new_value                                                                     |
+| **activity_logs**  | 토큰 사용량 추적    | action, model, input_tokens, output_tokens, cost_usd                                            |
+| **panels**         | FGI 패널 500명      | panel*id, cluster, age, gender, 8개 행동 차원(dim*\*), scratch(JSONB)                           |
+| **panel_memories** | 패널별 자전적 기억  | panel_id, category(14종), text, importance, embedding(1536차원)                                 |
 
 ## 6. 유지보수
 
 - **CI/CD:** GitHub Actions + GCP Workload Identity Federation → Cloud Run 자동 배포 (`deploy.yml`)
+
   - OIDC 기반 인증으로 서비스 계정 키 불필요
   - 필요 secrets: `GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `BACKEND_URL`, `FRONTEND_URL`
 
 - **API Document:** `http://localhost:8000/docs` (FastAPI 자동 생성 Swagger UI)
 
 - **Test Strategy:**
+
   - 현재 E2E 위주 수동 검증 (각 Phase 입출력 확인)
   - 핵심 검증 대상: SSE 스트림 단절 여부, RAG 패널 선택 정합성, 페르소나 합성 일관성, 단계 초기화 규칙 (상위 단계 변경 시 하위 단계 결과 리셋), RAG 영감 연쇄 (다른 참여자 발언에 의한 메모리 검색 변화)
 
