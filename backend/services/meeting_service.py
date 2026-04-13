@@ -26,7 +26,7 @@ from prompts.moderator import (
 )
 from prompts.rag_utterance import UTTERANCE_PROMPT
 from rag.retriever import retrieve
-from services.persona_builder import load_persona_from_db
+from services.persona_builder import load_persona_from_db, _CATEGORY_LABELS
 from database import AsyncSessionLocal
 
 # import 시점에 `.env`를 로드해 LangChain/OpenAI 호출이 같은 환경 변수를 사용하게 한다.
@@ -498,6 +498,7 @@ async def _stream_rag_turn(
     """
     focal = retrieval_query or human_prompt
     retrieved_count = 0
+    activated_categories: list[str] = []
     persona = persona_cache.get(panel_id)
 
     if persona:
@@ -510,6 +511,11 @@ async def _stream_rag_turn(
                 retrieved = await asyncio.to_thread(retrieve, persona, focal, n_retrieve)
                 retrieved_count = len(retrieved)
                 memories_text = _format_memories(retrieved)
+                # 활성화된 카테고리 추출 (중복 제거, 순서 유지)
+                activated_categories = list(dict.fromkeys(
+                    _CATEGORY_LABELS.get(m.get("category", ""), m.get("category", ""))
+                    for m in retrieved if m.get("category")
+                ))
             except Exception:
                 memories_text = _format_memories(memories[:10])
                 retrieved_count = min(10, len(memories))
@@ -549,7 +555,13 @@ async def _stream_rag_turn(
                 input_tokens=input_tokens, output_tokens=output_tokens)
 
     full_text = _clean_meeting_text(full_text, meta.get("agent_name"))
-    yield _sse({"type": "end", "content": full_text, "retrieved_memory_count": retrieved_count, **meta})
+    yield _sse({
+        "type": "end",
+        "content": full_text,
+        "retrieved_memory_count": retrieved_count,
+        "activated_categories": activated_categories,
+        **meta,
+    })
     meta["_full_text"] = full_text
 
 

@@ -568,6 +568,9 @@ export async function fetchMeeting(
                 retrieved_memory_count: typeof parsed.retrieved_memory_count === 'number'
                   ? parsed.retrieved_memory_count
                   : undefined,
+                activated_categories: Array.isArray(parsed.activated_categories)
+                  ? parsed.activated_categories
+                  : undefined,
               } as MeetingMessage);
               break;
             case 'done':

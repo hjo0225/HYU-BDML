@@ -94,6 +94,7 @@ export interface AgentSchema {
   demographics?: AgentDemographics;
   memories?: Memory[];
   memory_count?: number;
+  data_categories?: string[];
 }
 
 export interface AgentRequest {
@@ -146,6 +147,8 @@ export interface MeetingMessage {
   color: string | null;
   /** RAG 검색에서 활성화된 메모리 개수 */
   retrieved_memory_count?: number;
+  /** RAG 발언의 근거 데이터 카테고리 */
+  activated_categories?: string[];
 }
 
 // ── 회의록 ──

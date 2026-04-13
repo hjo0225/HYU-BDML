@@ -311,6 +311,15 @@ export default function Phase4Page() {
                           {msg.agent_name}
                         </div>
                         <div className="chat-msg-text">{msg.content}</div>
+                        {msg.activated_categories && msg.activated_categories.length > 0 && (
+                          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {msg.activated_categories.map((cat, ci) => (
+                              <span key={ci} style={{ fontSize: 9, background: '#E8F0FA', color: '#1B4B8C', padding: '1px 5px', borderRadius: 3, fontWeight: 500 }}>
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
