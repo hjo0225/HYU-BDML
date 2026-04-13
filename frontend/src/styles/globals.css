@@ -94,7 +94,7 @@ body {
 }
 
 .topnav-logo img {
-  height: 60px;
+  height: 32px;
   width: auto;
   display: block;
 }
@@ -1333,7 +1333,7 @@ details[open] .minutes-appendix-summary::before {
 }
 
 .auth-card__logo img {
-  height: 160px;
+  height: 64px;
   width: auto;
   display: block;
 }
@@ -1517,7 +1517,7 @@ details[open] .minutes-appendix-summary::before {
 }
 
 .project-list-header__logo img {
-  height: 88px;
+  height: 38px;
   width: auto;
   display: block;
 }
