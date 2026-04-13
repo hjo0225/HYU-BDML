@@ -87,3 +87,7 @@ yarn-error.log*
 backend/raw/
 backend/personas/
 backend/rag/embedding_cache.json
+docs/RAG/raw/
+
+# ── 테스트 출력 ──────────────────────────────────────────────────────────────
+backend/rag_test_results.json

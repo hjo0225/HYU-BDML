@@ -819,6 +819,8 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
 }
 
 .insight-title {

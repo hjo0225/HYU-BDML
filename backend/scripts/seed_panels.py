@@ -3,16 +3,13 @@ seed_panels.py — CSV 패널 데이터를 DB에 적재하는 스크립트.
 
 사용법:
     cd backend
-    python -m scripts.seed_panels              # 전체 500명 (10명마다 계속 여부 확인)
-    python -m scripts.seed_panels --batch 20   # 20명 단위로 확인
-    python -m scripts.seed_panels --no-confirm  # 확인 없이 전체 적재
+    python -m scripts.seed_panels              # 전체 500명 (확인 없이 자동 적재)
     python -m scripts.seed_panels --limit 5    # 테스트용 5명
     python -m scripts.seed_panels --skip-embedding  # 임베딩 생략 (빠른 테스트)
 
 특징:
     - 매 패널마다 즉시 commit → 중간에 끊겨도 적재된 데이터 유지
     - 중복 panel_id 자동 건너뜀 → 재실행 시 이어서 적재
-    - 10명(기본) 단위로 계속할지 확인 → 중단 후 재실행 가능
 """
 from __future__ import annotations
 
@@ -48,26 +45,10 @@ def load_codebook() -> dict:
         return json.load(f)
 
 
-def ask_continue(done: int, total: int, skipped: int) -> bool:
-    """사용자에게 계속 여부를 묻는다."""
-    remaining = total - done - skipped
-    print(f"\n{'='*50}")
-    print(f"  진행: {done}명 적재 완료 / {skipped}명 건너뜀 / 남은 {remaining}명")
-    print(f"{'='*50}")
-    answer = input("  계속할까요? (y/n, 기본 y): ").strip().lower()
-    if answer in ("n", "no", "ㅜ"):
-        print(f"\n[seed] 중단합니다. 다음 실행 시 나머지 {remaining}명부터 이어서 적재됩니다.")
-        return False
-    print()
-    return True
-
-
 async def seed(
     limit: int | None = None,
     skip_embedding: bool = False,
     skip_importance: bool = True,
-    batch_size: int = 10,
-    no_confirm: bool = False,
 ):
     """CSV → DB 적재 메인 로직."""
 
@@ -173,19 +154,12 @@ async def seed(
         done_count += 1
         print(f"  [{idx+1}/{total}] {panel_id} — scratch + {len(memories)}개 메모리 적재 ✓")
 
-        # batch_size마다 계속 여부 확인
-        if not no_confirm and done_count > 0 and done_count % batch_size == 0:
-            if not ask_continue(done_count, total, skipped_count):
-                return
-
     print(f"\n[seed] 완료! 신규 {done_count}명 적재 / {skipped_count}명 건너뜀 / 전체 {existing + done_count}명")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CSV 패널 데이터를 DB에 적재")
     parser.add_argument("--limit", type=int, default=None, help="적재할 패널 수 제한 (테스트용)")
-    parser.add_argument("--batch", type=int, default=10, help="N명마다 계속 여부 확인 (기본: 10)")
-    parser.add_argument("--no-confirm", action="store_true", help="확인 없이 전체 적재")
     parser.add_argument("--skip-embedding", action="store_true", help="임베딩 생략 (빠른 테스트)")
     parser.add_argument("--skip-importance", action="store_true", default=True, help="importance LLM 호출 생략")
     args = parser.parse_args()
@@ -194,8 +168,6 @@ def main():
         limit=args.limit,
         skip_embedding=args.skip_embedding,
         skip_importance=args.skip_importance,
-        batch_size=args.batch,
-        no_confirm=args.no_confirm,
     ))
 
 

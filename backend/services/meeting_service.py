@@ -315,15 +315,51 @@ _meeting_graph = build_meeting_graph()
 
 
 # ── RAG 헬퍼 ──
-def _format_demographics(scratch: dict) -> str:
+def _format_profile(scratch: dict) -> str:
+    """scratch dict를 1인칭 서사형 프로필 텍스트로 변환."""
+    parts: list[str] = []
+
+    # 기본 인구통계
     age = scratch.get("age", "")
     gender = scratch.get("gender", "")
-    occupation = scratch.get("occupation", "직업 미상")
-    region = scratch.get("region", "지역 미상")
-    education = scratch.get("education", "")
-    parts = [f"나이: {age}세" if age else "", f"성별: {gender}" if gender else "",
-             f"직업: {occupation}", f"지역: {region}", f"학력: {education}" if education else ""]
-    return ", ".join(p for p in parts if p)
+    region = scratch.get("region", "")
+    occupation = scratch.get("occupation", "")
+    if age and gender:
+        parts.append(f"{region} 사는 {age}세 {gender}".strip())
+    if occupation:
+        parts.append(f"직업은 {occupation}")
+
+    # 가구·결혼
+    marital = scratch.get("marital_status", "")
+    if marital:
+        parts.append(marital)
+    children = scratch.get("children_in_household", [])
+    if children:
+        parts.append(f"자녀: {', '.join(children)}")
+
+    # 성격·라이프스타일
+    strong = scratch.get("strong_traits", [])
+    if strong:
+        parts.append(f"활발한 편: {', '.join(strong)}")
+    weak = scratch.get("weak_traits", [])
+    if weak:
+        parts.append(f"별로 안 하는 편: {', '.join(weak)}")
+
+    # 소비·패션·투자 스타일
+    styles = []
+    for key, label in [("consumption_style", "소비"), ("fashion_style", "패션"), ("investment_style", "투자")]:
+        v = scratch.get(key)
+        if v:
+            styles.append(f"{label}은 {v}")
+    if styles:
+        parts.append(", ".join(styles))
+
+    # 최근 생애사건
+    events = scratch.get("recent_life_events", [])
+    if events:
+        parts.append(f"최근에 {', '.join(events)} 경험")
+
+    return ". ".join(parts) if parts else "프로필 정보 없음"
 
 
 def _format_memories(memories: list[dict]) -> str:
@@ -454,21 +490,28 @@ async def _stream_rag_turn(
     human_prompt: str,
     meta: dict,
     persona_cache: dict[str, dict],
+    retrieval_query: str | None = None,
     n_retrieve: int = 25,
     usage_label: str = "meeting/stream/rag",
 ) -> AsyncGenerator[str, None]:
-    """RAG 에이전트 발언: DB 캐시에서 persona 조회 → 메모리 검색 → 스트리밍 발화."""
+    """RAG 에이전트 발언: DB 캐시에서 persona 조회 → 메모리 검색 → 스트리밍 발화.
+
+    retrieval_query: 메모리 검색용 쿼리 (모더레이터 질문 + 직전 발언).
+                     None이면 human_prompt를 그대로 사용 (폴백).
+    human_prompt: LLM 발언 생성에 전달되는 전체 대화 컨텍스트.
+    """
+    focal = retrieval_query or human_prompt
     retrieved_count = 0
     persona = persona_cache.get(panel_id)
 
     if persona:
         scratch = persona.get("scratch", {})
-        demographics_text = _format_demographics(scratch)
+        profile_text = _format_profile(scratch)
         memories = persona.get("memories", [])
 
         if memories:
             try:
-                retrieved = await asyncio.to_thread(retrieve, persona, human_prompt, n_retrieve)
+                retrieved = await asyncio.to_thread(retrieve, persona, focal, n_retrieve)
                 retrieved_count = len(retrieved)
                 memories_text = _format_memories(retrieved)
             except Exception:
@@ -478,7 +521,7 @@ async def _stream_rag_turn(
             memories_text = "관련 기억 없음"
 
         system_prompt = UTTERANCE_PROMPT.format(
-            demographics=demographics_text,
+            profile=profile_text,
             memories=memories_text,
         )
     else:
@@ -751,6 +794,11 @@ async def run_meeting_stream(
     state["spoke_this_round"] = []
     state["saturation_count"] = 0
 
+    # 라운드 요약 누적 (이전 라운드 맥락을 다음 라운드 retrieval에 전달)
+    round_summaries: list[str] = []
+    # 현재 라운드의 모더레이터 질문 (라운드 시작 시 갱신)
+    current_moderator_question = opening
+
     # 2. 라운드 루프
     while not state["should_end"]:
         # 같은 라운드 안에서 참여자가 한 번씩 발언할 때까지 반복한다.
@@ -784,12 +832,26 @@ async def run_meeting_stream(
             panel_id = _panel_ids.get(speaker_id)
 
             if panel_id:
+                # 메모리 검색용 쿼리: 이전 라운드 요약 + 모더레이터 질문 + 직전 발언들
+                recent_utterances = [
+                    h["content"] for h in state["history"]
+                    if h["speaker"] != "모더레이터" and h["speaker"] != agent_data["name"]
+                ][-3:]  # 직전 최대 3명의 발언
+                retrieval_parts = []
+                if round_summaries:
+                    retrieval_parts.append("이전 논의: " + " ".join(round_summaries))
+                retrieval_parts.append("현재 질문: " + current_moderator_question)
+                if recent_utterances:
+                    retrieval_parts.append("다른 참여자 발언:\n" + "\n".join(recent_utterances))
+                retrieval_query = "\n\n".join(retrieval_parts)
+
                 async for chunk in _stream_rag_turn(
                     panel_id,
                     agent_data,
                     f"현재까지 대화:\n{history_text}\n\n{turn_instruction}",
                     meta,
                     persona_cache=persona_cache,
+                    retrieval_query=retrieval_query,
                     usage_label=f"meeting/stream/agent/{agent_data['name']}",
                 ):
                     yield chunk
@@ -856,6 +918,9 @@ async def run_meeting_stream(
                 await asyncio.sleep(0)
             followup_text = meta["_full_text"]
             state["history"] = state["history"] + [{"speaker": "모더레이터", "content": followup_text}]
+            # 모더레이터 팔로업을 라운드 요약으로 누적 + 다음 라운드 질문으로 갱신
+            round_summaries.append(f"[라운드 {state['current_round']}] {followup_text}")
+            current_moderator_question = followup_text
 
         # 다음 루프를 위해 상태를 갱신한다.
         state["saturation_count"] = followup_result["saturation_count"]

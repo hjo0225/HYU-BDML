@@ -44,9 +44,9 @@ export default function Phase3Page() {
     setCurrentPhase, resetAfterAgentsChange,
   } = useProject();
 
-  /* 위저드 상태 — 에이전트가 이미 있으면 agents 단계에서 시작 */
+  /* 위저드 상태 — 에이전트+주제 모두 있으면 agents, 주제만 없으면 topic부터 */
   const [setupStep, setSetupStep] = useState<SetupStep>(
-    project.agents.length > 0 ? 'agents' : 'topic',
+    project.agents.length > 0 && project.meetingTopic ? 'agents' : 'topic',
   );
   const [localTopic, setLocalTopic] = useState(project.meetingTopic ?? '');
   const [selectedMode, setSelectedMode] = useState<AgentMode>(

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, Panel, PanelMemory
-from rag.panel_selector import load_panels, filter_by_target, select_representative_panels
+from rag.panel_selector import load_panels, select_representative_panels
 from rag.embedder import embed
 
 # 에이전트 카드 색상 팔레트 (panel_id 인덱스 기반)
@@ -222,21 +222,19 @@ async def build_personas_stream(
         }
         return
 
-    # ── Step 2: 연령 필터 + 클러스터 선정 ──
+    # ── Step 2: 클러스터 다양성 + 주제 관련성 기반 선정 ──
     try:
-        filtered = filter_by_target(panels, target_customer)
-
         # 주제가 있으면 topic 임베딩 + 패널 메모리로 주제 관련성 반영
         topic_embedding = None
         panel_memories = None
         if topic.strip():
             topic_embedding = await asyncio.to_thread(embed, topic)
             async with AsyncSessionLocal() as session:
-                candidate_ids = [p["panel_id"] for p in filtered]
+                candidate_ids = [p["panel_id"] for p in panels]
                 panel_memories = await load_panel_memories_bulk(session, candidate_ids)
 
         selected_ids = select_representative_panels(
-            filtered, n_agents,
+            panels, n_agents,
             topic_embedding=topic_embedding,
             panel_memories=panel_memories,
         )

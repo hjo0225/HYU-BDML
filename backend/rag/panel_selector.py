@@ -1,14 +1,12 @@
 """
 panel_selector.py
-DB에서 패널 데이터를 조회하여 클러스터 다양성 기반 N명 선정.
-주제(topic) 임베딩이 주어지면 패널 기억과의 코사인 유사도를 반영해
-주제 관련성이 높은 패널을 우선 선정한다.
+DB에서 전체 패널을 조회하여 클러스터 다양성 + 주제 관련성 기반 N명 선정.
+연령 필터링 없이 전체 패널 풀에서 주제 임베딩 유사도로 적합한 패널을 선정한다.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 
 import numpy as np
@@ -50,48 +48,6 @@ def _panel_to_dict(p: Panel) -> dict:
         "dim_entertainment": p.dim_entertainment,
         "dim_weekend_oriented": p.dim_weekend_oriented,
     }
-
-
-def filter_by_target(panels: list[dict], target_customer: str) -> list[dict]:
-    """
-    target_customer 문자열에서 연령대를 파싱해 패널을 필터링한다.
-    파싱 불가 시 전체 반환.
-    """
-    if not target_customer:
-        return panels
-
-    # "2030대", "20-30대", "2030" 형태 파싱
-    multi = re.search(r'([1-9][0-9])(?:대)?\s*[-~]\s*([1-9][0-9])(?:대)?', target_customer)
-    century = re.search(r'([1-9]0)([1-9]0)(?:대)?', target_customer)
-    single = re.search(r'([1-9][0-9])(?:대)', target_customer)
-
-    min_age, max_age = None, None
-
-    if multi:
-        try:
-            a, b = int(multi.group(1)), int(multi.group(2))
-            min_age, max_age = min(a, b), max(a, b) + 9
-        except ValueError:
-            pass
-    elif century:
-        try:
-            a, b = int(century.group(1)), int(century.group(2))
-            min_age, max_age = min(a, b), max(a, b) + 9
-        except ValueError:
-            pass
-    elif single:
-        try:
-            a = int(single.group(1))
-            min_age, max_age = a, a + 9
-        except ValueError:
-            pass
-
-    if min_age is None:
-        return panels
-
-    filtered = [p for p in panels if p.get("age") and min_age <= p["age"] <= max_age]
-    # 필터 결과가 너무 적으면 전체 반환
-    return filtered if len(filtered) >= max(5, len(panels) // 10) else panels
 
 
 def score_panels_by_topic(

@@ -81,20 +81,6 @@ export default function Phase4Page() {
     };
   }, []);
 
-  // 에이전트별 발언 횟수
-  const speakCounts: Record<string, number> = {};
-  for (const m of project.messages) {
-    if (m.role === 'agent' && m.agent_id) {
-      speakCounts[m.agent_id] = (speakCounts[m.agent_id] || 0) + 1;
-    }
-  }
-
-  // 전체 활성화된 메모리 수
-  const totalMemoryActivations = project.messages.reduce(
-    (sum, m) => sum + (m.retrieved_memory_count ?? 0),
-    0,
-  );
-
   // 라운드 계산
   const agentCount = project.agents.length;
   const maxRounds = agentCount <= 3 ? 4 : agentCount <= 5 ? 3 : 2;
@@ -303,9 +289,6 @@ export default function Phase4Page() {
                 const showRoundDivider = msg.role === 'moderator';
                 const roundNum = modCount + 1;
                 if (msg.role === 'moderator') modCount++;
-                const memCount = msg.retrieved_memory_count ?? 0;
-                const hasMemories = msg.role === 'agent' && memCount > 0;
-
                 return (
                   <div key={i}>
                     {showRoundDivider && (
@@ -328,27 +311,6 @@ export default function Phase4Page() {
                           {msg.agent_name}
                         </div>
                         <div className="chat-msg-text">{msg.content}</div>
-
-                        {/* 활성화된 메모리 카운트 배지 (에이전트 발화에만 표시) */}
-                        {hasMemories && (
-                          <div style={{ marginTop: 5 }}>
-                            <span
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                fontSize: 10,
-                                color: '#1B4B8C',
-                                background: '#E8F0FA',
-                                borderRadius: 8,
-                                padding: '2px 8px',
-                                fontWeight: 600,
-                              }}
-                            >
-                              🧠 메모리 {memCount}개 활성화
-                            </span>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -394,55 +356,11 @@ export default function Phase4Page() {
           </div>
         </div>
 
-        {/* ── 오른쪽: 회의 정보 + 아젠다 ── */}
+        {/* ── 오른쪽: 회의 아젠다 ── */}
         <div className="insight-panel">
-          <div className="insight-title">회의 정보</div>
-
-          <div className="insight-item">
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>형식</div>
-            <div style={{ fontSize: 12, fontWeight: 500 }}>FGI (포커스 그룹 인터뷰)</div>
-          </div>
-          <div className="insight-item">
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>참여자</div>
-            <div style={{ fontSize: 12, fontWeight: 500 }}>{project.agents.length}명</div>
-          </div>
-          <div className="insight-item">
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>라운드</div>
-            <div style={{ fontSize: 12, fontWeight: 500 }}>{currentRound} / {maxRounds}</div>
-          </div>
-          <div className="insight-item">
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>경과 시간</div>
-            <div style={{ fontSize: 12, fontWeight: 500 }}>{formatElapsed(elapsed)}</div>
-          </div>
-
-          {/* 메모리 활성화 집계 (데이터 기반 에이전트일 때만 표시) */}
-          {totalMemoryActivations > 0 && (
-            <div className="insight-item">
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>활성화된 메모리</div>
-              <div style={{ fontSize: 12, fontWeight: 500, color: '#1B4B8C' }}>🧠 {totalMemoryActivations}회</div>
-            </div>
-          )}
-
-          {/* 발언 횟수 */}
-          {Object.keys(speakCounts).length > 0 && (
+          {meetingDesign ? (
             <>
-              <div className="insight-title" style={{ marginTop: 16 }}>발언 횟수</div>
-              {project.agents.map((agent) => (
-                <div key={agent.id} className="insight-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: agent.color, display: 'inline-block' }} />
-                    {agent.name}
-                  </div>
-                  <div style={{ fontSize: 11, fontWeight: 600 }}>{speakCounts[agent.id] || 0}회</div>
-                </div>
-              ))}
-            </>
-          )}
-
-          {/* 회의 설계안 */}
-          {meetingDesign && (
-            <>
-              <div className="insight-title" style={{ marginTop: 16 }}>회의 아젠다</div>
+              <div className="insight-title">회의 아젠다</div>
 
               {meetingDesign.session_objective && (
                 <div className="insight-item">
@@ -493,6 +411,8 @@ export default function Phase4Page() {
                 </div>
               )}
             </>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>회의가 시작되면 아젠다가 표시됩니다.</div>
           )}
         </div>
       </div>
