@@ -285,8 +285,11 @@ export default function Phase4Page() {
           <div className="chat-messages">
             {(() => {
               let modCount = 0;
+              const totalModMsgs = project.messages.filter((m: MeetingMessage) => m.role === 'moderator').length;
               return project.messages.map((msg: MeetingMessage, i: number) => {
-                const showRoundDivider = msg.role === 'moderator';
+                const isLastMod = msg.role === 'moderator' && modCount === totalModMsgs - 1;
+                // 마지막 모더레이터 발언(closing)에는 라운드 디바이더 표시 안 함
+                const showRoundDivider = msg.role === 'moderator' && !isLastMod;
                 const roundNum = modCount + 1;
                 if (msg.role === 'moderator') modCount++;
                 return (
