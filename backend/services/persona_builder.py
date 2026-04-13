@@ -22,6 +22,24 @@ from prompts.panel_query import PANEL_QUERY_PROMPT
 
 _llm_fast = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
+# 메모리 카테고리 → 사용자에게 보여줄 한글 라벨
+_CATEGORY_LABELS = {
+    "appliances": "가전·기기",
+    "transportation": "교통·통근",
+    "health": "건강",
+    "shopping_preferences": "쇼핑",
+    "food_lifestyle": "식생활",
+    "leisure": "여가",
+    "media": "미디어",
+    "finance": "금융·투자",
+    "pay_pattern": "결제패턴",
+    "pay_favorites": "단골소비",
+    "lbs_pattern": "활동장소",
+    "app_pattern": "앱사용",
+    "recent_purchases": "최근구매",
+    "pets": "반려동물",
+}
+
 # 에이전트 카드 색상 팔레트 (panel_id 인덱스 기반)
 _COLORS = [
     "#1B4B8C", "#2E6DB4", "#3A7BC8", "#1565C0", "#0277BD",
@@ -88,7 +106,7 @@ def persona_to_agent_schema(
 ) -> dict:
     """
     완성된 persona dict → AgentSchema-compatible dict.
-    scratch에서 demographics 추출, memory_count 계산.
+    scratch에서 demographics 추출, 보유 데이터 카테고리 목록 생성.
     """
     scratch = persona.get("scratch", {})
     age = scratch.get("age")
@@ -103,7 +121,12 @@ def persona_to_agent_schema(
         "region": region,
     }
 
-    memory_count = persona.get("n_memories", len(persona.get("memories", [])))
+    # 보유 데이터 카테고리 라벨 추출
+    memories = persona.get("memories", [])
+    categories = list(dict.fromkeys(
+        _CATEGORY_LABELS.get(m["category"], m["category"])
+        for m in memories if m.get("category")
+    ))
 
     return {
         "id": agent_id,
@@ -116,7 +139,8 @@ def persona_to_agent_schema(
         "color": color,
         "panel_id": persona["panel_id"],
         "demographics": demographics,
-        "memory_count": memory_count,
+        "memory_count": len(memories),
+        "data_categories": categories,
     }
 
 
@@ -258,6 +282,31 @@ async def build_personas_stream(
             panels, n_agents,
             query_embedding=query_embedding,
         )
+
+        # 관련성 임계값 체크: 선정된 패널의 avg_embedding 유사도가 너무 낮으면 LLM 권장
+        RELEVANCE_THRESHOLD = 0.38
+        if query_embedding and selected_ids:
+            from rag.retriever import cos_sim
+            selected_panels = [p for p in panels if p["panel_id"] in selected_ids]
+            top_sims = [
+                cos_sim(query_embedding, p["avg_embedding"])
+                for p in selected_panels
+                if p.get("avg_embedding") and len(p["avg_embedding"]) > 100
+            ]
+            avg_sim = sum(top_sims) / len(top_sims) if top_sims else 0.0
+
+            if avg_sim < RELEVANCE_THRESHOLD:
+                yield {
+                    "type": "build_progress",
+                    "step": "low_relevance",
+                    "current": 0,
+                    "total": total,
+                    "panel_id": None,
+                    "message": f"이 주제에 적합한 패널 데이터가 부족합니다 (관련도: {avg_sim:.2f}). LLM 모드를 권장합니다.",
+                    "relevance_score": round(avg_sim, 4),
+                }
+                return
+
     except Exception as e:
         yield {
             "type": "build_progress",
@@ -296,7 +345,10 @@ async def build_personas_stream(
                     }
                     continue
 
-                mem_count = persona.get("n_memories", 0)
+                mem_categories = list(dict.fromkeys(
+                    _CATEGORY_LABELS.get(m["category"], m["category"])
+                    for m in persona.get("memories", []) if m.get("category")
+                ))
 
                 yield {
                     "type": "build_progress",
@@ -304,7 +356,7 @@ async def build_personas_stream(
                     "current": idx + 1,
                     "total": total,
                     "panel_id": panel_id,
-                    "message": f"메모리 로드 완료 ({mem_count}개)",
+                    "message": f"데이터 로드 완료 ({', '.join(mem_categories[:5])})",
                 }
 
                 # AgentSchema dict 변환
