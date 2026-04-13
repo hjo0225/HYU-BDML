@@ -27,6 +27,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from dotenv import load_dotenv
 load_dotenv(BACKEND_DIR / ".env")
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
@@ -117,6 +118,10 @@ async def seed(
                     print(f"    [경고] 임베딩 실패 ({mem['category']}): {e}")
                     mem["_embedding"] = [0.0] * 10
 
+        # avg_embedding 계산 (유효한 임베딩만)
+        valid_embs = [m["_embedding"] for m in memories if len(m["_embedding"]) > 100]
+        avg_emb = np.mean(valid_embs, axis=0).tolist() if valid_embs else None
+
         # DB 적재 (1명 단위 commit)
         async with AsyncSessionLocal() as session:
             panel = Panel(
@@ -135,6 +140,7 @@ async def seed(
                 dim_entertainment=row.get("dim_entertainment"),
                 dim_weekend_oriented=row.get("dim_weekend_oriented"),
                 scratch=json.dumps(scratch, ensure_ascii=False) if isinstance(scratch, dict) else scratch,
+                avg_embedding=json.dumps(avg_emb) if avg_emb else None,
             )
             session.add(panel)
 

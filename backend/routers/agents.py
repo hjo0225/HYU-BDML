@@ -79,12 +79,24 @@ async def recommend_agents_stream_v2(
     """Phase 3 (새 플로우): 주제 인식 에이전트 선정 — mode에 따라 RAG/LLM 분기."""
 
     if req.mode == "rag":
+        # 브리프 텍스트 합성
+        brief_text = f"{req.brief.background} {req.brief.objective} 대상: {req.brief.target_customer}"
+        # 시장조사 핵심 요약 (각 섹션의 content 앞부분)
+        report_parts = []
+        for section_name in ["market_overview", "target_analysis", "trends", "implications"]:
+            section = getattr(req.report, section_name, None)
+            if section and section.content:
+                report_parts.append(section.content[:200])
+        report_summary = " ".join(report_parts)
+
         async def rag_stream():
             try:
                 async for event in build_personas_stream(
                     target_customer=req.brief.target_customer,
                     n_agents=5,
                     topic=req.topic,
+                    brief_text=brief_text,
+                    report_summary=report_summary,
                 ):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except Exception as e:

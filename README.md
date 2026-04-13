@@ -2,7 +2,7 @@
 
 > **한 줄 요약:** 연구 브리프 입력 하나로 시장조사 → 가상 참여자 구성 → FGI 시뮬레이션 → 회의록 생성까지 자동 수행하는 멀티 에이전트 리서치 워크플로우
 
-[![Deploy to GCP](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml/badge.svg?style=for-the-badge)](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml)
+[![Deploy to GCP](https://img.shields.io/github/actions/workflow/status/hjo0225/interactive-multiagent/deploy.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=Deploy%20to%20GCP)](https://github.com/hjo0225/interactive-multiagent/actions/workflows/deploy.yml)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)

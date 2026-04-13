@@ -73,6 +73,7 @@ bigmarlab/
 │   │   ├── agent_recommend.py
 │   │   ├── moderator.py              # 사회자 + 발언 선택 + 포화도 판단
 │   │   ├── rag_utterance.py          # RAG 기반 발언 생성 프롬프트
+│   │   ├── panel_query.py            # 리서치 컨텍스트 → 이상적 참여자 프로필 합성
 │   │   └── minutes.py
 │   ├── rag/                          # RAG 파이프라인 (패널 기반)
 │   │   ├── __init__.py
@@ -83,7 +84,8 @@ bigmarlab/
 │   │   ├── panel_selector.py         # 클러스터 다양성 + 주제 관련성 기반 패널 선택
 │   │   └── retriever.py              # 코사인 유사도 RAG 검색
 │   ├── scripts/
-│   │   └── seed_panels.py            # CSV→DB 패널 데이터 적재
+│   │   ├── seed_panels.py            # CSV→DB 패널 데이터 적재 (avg_embedding 포함)
+│   │   └── compute_avg_embeddings.py # 기존 패널 avg_embedding 1회성 계산
 │   ├── models/
 │   │   └── schemas.py                # Pydantic v2 스키마
 │   ├── requirements.txt
@@ -123,7 +125,7 @@ bigmarlab/
 - **Project** — 연구 세션 (brief/refined/market_report/agents/meeting_topic/meeting_messages/minutes 각 JSONB/Text)
 - **ProjectEdit** — 수정 이력 감사 로그 (field, old_value, new_value)
 - **ActivityLog** — 토큰 사용량 추적 (action, model, input_tokens, output_tokens, cost_usd)
-- **Panel** — FGI 패널 500명 (인구통계 + 8개 행동 차원 + scratch JSONB)
+- **Panel** — FGI 패널 500명 (인구통계 + 8개 행동 차원 + scratch JSONB + avg_embedding 1536차원)
 - **PanelMemory** — 패널별 14개 카테고리 자전적 기억 + 1536차원 임베딩 (~7,000건)
 
 ## 패널 데이터 파이프라인
@@ -181,10 +183,11 @@ Phase 1: 연구 정보 입력 → Phase 2: 시장조사
 
 Phase 3 에이전트 선정 (RAG 모드):
 
-1. `panel_selector.py` — DB에서 전체 패널 조회 → 클러스터 다양성 + 주제 관련성 복합 스코어로 N명 선택 (연령 필터 없음)
-   - `score_panels_by_topic()`: 각 패널 메모리와 topic 임베딩 간 평균 코사인 유사도
-   - 복합 스코어: `(1-w)*cluster_centrality + w*topic_relevance` (w=0.3)
-2. `persona_builder.py` — `load_panel_memories_bulk()` 벌크 조회 → Panel + PanelMemory → AgentSchema 변환
+1. `persona_builder.py` — brief + report + topic → LLM 합성 쿼리(`prompts/panel_query.py`) → 임베딩 생성
+2. `panel_selector.py` — 500명 `panels.avg_embedding`(사전 계산된 메모리 평균 벡터)과 합성 쿼리 임베딩을 코사인 유사도로 비교 → 클러스터 다양성(0.7) + 주제 관련성(0.3) 복합 스코어로 N명 선택
+   - `score_panels_by_query()`: avg_embedding 기반 (메모리 벌크 로드 없음)
+   - `load_panel_memories_bulk`는 선정 단계에서 호출하지 않음 (Phase 4에서 선정된 N명만 개별 로드)
+3. `routers/agents.py` — `AgentStreamRequest`의 brief/report에서 텍스트 추출 → `build_personas_stream`에 전달
 
 Phase 4 회의 시뮬레이션:
 
@@ -198,29 +201,29 @@ Phase 4 회의 시뮬레이션:
 
 ## API 엔드포인트
 
-| Method | Endpoint | 설명 | Auth | 스트리밍 |
-|--------|----------|------|------|----------|
-| POST | `/api/auth/register` | 회원가입 | - | - |
-| POST | `/api/auth/login` | 로그인 | - | - |
-| POST | `/api/auth/refresh` | 토큰 갱신 | - | - |
-| POST | `/api/auth/logout` | 로그아웃 | O | - |
-| GET | `/api/auth/me` | 현재 사용자 | O | - |
-| GET | `/api/projects` | 프로젝트 목록 | O | - |
-| POST | `/api/projects` | 프로젝트 생성 | O | - |
-| GET | `/api/projects/{id}` | 프로젝트 조회 | O | - |
-| PATCH | `/api/projects/{id}` | 프로젝트 업데이트 | O | - |
-| DELETE | `/api/projects/{id}` | 프로젝트 삭제 | O | - |
-| POST | `/api/research/refine` | 브리프 정제 | O | - |
-| POST | `/api/research` | 시장조사 | O | NDJSON |
-| POST | `/api/agents` | 에이전트 추천 (LLM) | O | - |
-| POST | `/api/agents/stream` | RAG 에이전트 선택 | O | SSE |
-| POST | `/api/agents/stream/v2` | 주제 인식 에이전트 (모드 분기) | O | SSE |
-| POST | `/api/meeting` | 회의 시뮬레이션 | O | SSE |
-| POST | `/api/minutes` | 회의록 생성 | O | - |
-| GET | `/api/usage` | 토큰 사용량 | O | - |
-| GET | `/api/usage/history` | 활동 로그 | Admin | - |
-| GET | `/api/usage/stats` | 사용 통계 | Admin | - |
-| GET | `/api/health` | 헬스체크 | - | - |
+| Method | Endpoint                | 설명                           | Auth  | 스트리밍 |
+| ------ | ----------------------- | ------------------------------ | ----- | -------- |
+| POST   | `/api/auth/register`    | 회원가입                       | -     | -        |
+| POST   | `/api/auth/login`       | 로그인                         | -     | -        |
+| POST   | `/api/auth/refresh`     | 토큰 갱신                      | -     | -        |
+| POST   | `/api/auth/logout`      | 로그아웃                       | O     | -        |
+| GET    | `/api/auth/me`          | 현재 사용자                    | O     | -        |
+| GET    | `/api/projects`         | 프로젝트 목록                  | O     | -        |
+| POST   | `/api/projects`         | 프로젝트 생성                  | O     | -        |
+| GET    | `/api/projects/{id}`    | 프로젝트 조회                  | O     | -        |
+| PATCH  | `/api/projects/{id}`    | 프로젝트 업데이트              | O     | -        |
+| DELETE | `/api/projects/{id}`    | 프로젝트 삭제                  | O     | -        |
+| POST   | `/api/research/refine`  | 브리프 정제                    | O     | -        |
+| POST   | `/api/research`         | 시장조사                       | O     | NDJSON   |
+| POST   | `/api/agents`           | 에이전트 추천 (LLM)            | O     | -        |
+| POST   | `/api/agents/stream`    | RAG 에이전트 선택              | O     | SSE      |
+| POST   | `/api/agents/stream/v2` | 주제 인식 에이전트 (모드 분기) | O     | SSE      |
+| POST   | `/api/meeting`          | 회의 시뮬레이션                | O     | SSE      |
+| POST   | `/api/minutes`          | 회의록 생성                    | O     | -        |
+| GET    | `/api/usage`            | 토큰 사용량                    | O     | -        |
+| GET    | `/api/usage/history`    | 활동 로그                      | Admin | -        |
+| GET    | `/api/usage/stats`      | 사용 통계                      | Admin | -        |
+| GET    | `/api/health`           | 헬스체크                       | -     | -        |
 
 ## 통신 규칙
 
@@ -278,19 +281,5 @@ cd backend && python -m scripts.seed_panels
 - **패널 데이터 적재 완료 상태**: Cloud SQL에 500명 패널 + 5,373개 메모리(1536차원 임베딩) 적재 완료. `seed_panels.py`는 재적재용으로 유지하되 CSV 원본(별도 백업 보관)이 필요함
 - **RAG 패널 선정**: 연령 필터링 없이 전체 500명 풀에서 클러스터 다양성 + 주제 관련성만으로 선정. 패널 연령 분포가 30~40대에 편중되어 있어 연령 필터 시 20대 대상 서비스에서 패널 부족 문제 발생하므로 의도적으로 제거함.
 - **이전 프로젝트 하위호환**: agent-setup 진입 시 에이전트는 있지만 meetingTopic이 없으면 topic 단계부터 시작. 기존 에이전트 데이터 삭제 불필요.
-
-## 프로젝트 정보
-
-- 프로젝트명: Interactive Multiagent
-- Notion 경로: Projects/BML_Multiagent
-
-## Notion 문서화
-
-- 문서화 요청 시 Notion에 아래 표준 구조로 정리
-- Overview: 프로젝트 목적, 대상 사용자, 핵심 기능, 기술스택
-- DB Schema: 테이블명, 컬럼, 타입, PK/FK, 인덱스, 관계도
-- API Spec: 엔드포인트, HTTP 메서드, 경로 파라미터, 요청/응답 스키마, 인증
-- Frontend Structure: 라우팅 구조, 주요 컴포넌트 트리, 상태관리
-- README: 설치법, 실행법, 환경변수, 디렉토리 구조
-- Changelog: 날짜별 주요 변경사항
-- Tech Stack & Config: 프레임워크, 라이브러리, 배포 환경
+- **RAG 패널 선정 성능 주의**: 연령 필터 제거 후 500명 전원의 메모리(5,373건 × 30KB JSONB)를 `load_panel_memories_bulk`로 한 번에 로드하면 ~160MB 전송 + json.loads 5,373회로 타임아웃 발생. **절대 전체 패널 메모리를 벌크 로드하지 말 것.** panels.avg_embedding(패널당 평균 임베딩 1개)으로 1차 스코어링하고, 선정된 N명의 메모리만 개별 로드해야 함.
+- **embedding_cache.json 동시 접근 금지**: seed_panels 등 임베딩 생성 스크립트가 돌고 있을 때 다른 프로세스가 같은 캐시 파일을 읽으면 JSON 파싱 에러 발생. 동시 실행 시 캐시를 우회(OpenAI 직접 호출)하거나 스크립트 종료 후 실행할 것.

@@ -167,6 +167,9 @@ class Panel(Base):
     # 사전 계산된 scratch (전체 인구통계 dict)
     scratch         = _jsonb_col(nullable=False)
 
+    # 메모리 임베딩 평균 벡터 (1536차원, 패널 선정 스코어링용)
+    avg_embedding   = _jsonb_col(nullable=True)
+
 
 class PanelMemory(Base):
     """패널별 카테고리 메모리 — 임베딩 포함."""

@@ -12,9 +12,15 @@ from typing import AsyncGenerator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+
 from database import AsyncSessionLocal, Panel, PanelMemory
 from rag.panel_selector import load_panels, select_representative_panels
 from rag.embedder import embed
+from prompts.panel_query import PANEL_QUERY_PROMPT
+
+_llm_fast = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
 # 에이전트 카드 색상 팔레트 (panel_id 인덱스 기반)
 _COLORS = [
@@ -174,15 +180,30 @@ async def load_panel_memories_bulk(
     return out
 
 
+async def _synthesize_panel_query(brief: str, report_summary: str, topic: str) -> str:
+    """브리프 + 시장조사 요약 + 회의 주제 → 이상적 참여자 프로필 합성."""
+    response = await _llm_fast.ainvoke([
+        SystemMessage(content=PANEL_QUERY_PROMPT.format(
+            brief=brief,
+            report_summary=report_summary,
+            topic=topic,
+        )),
+        HumanMessage(content="이 FGI에 적합한 참여자의 경험·관심사·생활패턴을 정리해주세요."),
+    ])
+    return response.content
+
+
 async def build_personas_stream(
     target_customer: str = "",
     n_agents: int = 5,
     topic: str = "",
+    brief_text: str = "",
+    report_summary: str = "",
 ) -> AsyncGenerator[dict, None]:
     """
     DB에서 패널 선정 → persona 조회 → 진행 이벤트 yield.
-    각 이벤트는 AgentBuildProgressEvent 형태의 dict.
-    topic이 주어지면 주제 관련성을 반영해 패널을 선정한다.
+    brief_text + report_summary + topic으로 합성 쿼리를 생성하고,
+    panels.avg_embedding과 비교하여 패널을 선정한다 (메모리 벌크 로드 없음).
     """
     total = n_agents
 
@@ -193,7 +214,7 @@ async def build_personas_stream(
         "current": 0,
         "total": total,
         "panel_id": None,
-        "message": "클러스터 다양성 기반 패널 선정 중..."
+        "message": "리서치 맥락 분석 + 패널 선정 중..."
             + (f" (주제: {topic[:30]}...)" if len(topic) > 30 else f" (주제: {topic})" if topic else ""),
     }
 
@@ -222,21 +243,20 @@ async def build_personas_stream(
         }
         return
 
-    # ── Step 2: 클러스터 다양성 + 주제 관련성 기반 선정 ──
+    # ── Step 2: 합성 쿼리 생성 → avg_embedding 기반 선정 ──
     try:
-        # 주제가 있으면 topic 임베딩 + 패널 메모리로 주제 관련성 반영
-        topic_embedding = None
-        panel_memories = None
+        query_embedding = None
         if topic.strip():
-            topic_embedding = await asyncio.to_thread(embed, topic)
-            async with AsyncSessionLocal() as session:
-                candidate_ids = [p["panel_id"] for p in panels]
-                panel_memories = await load_panel_memories_bulk(session, candidate_ids)
+            # 브리프/보고서가 있으면 LLM으로 합성 쿼리 생성, 없으면 topic만 사용
+            if brief_text.strip() or report_summary.strip():
+                synthesized = await _synthesize_panel_query(brief_text, report_summary, topic)
+                query_embedding = await asyncio.to_thread(embed, synthesized)
+            else:
+                query_embedding = await asyncio.to_thread(embed, topic)
 
         selected_ids = select_representative_panels(
             panels, n_agents,
-            topic_embedding=topic_embedding,
-            panel_memories=panel_memories,
+            query_embedding=query_embedding,
         )
     except Exception as e:
         yield {
