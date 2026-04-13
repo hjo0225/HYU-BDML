@@ -47,10 +47,7 @@ export default function Sidebar() {
     >
       {/* 로고 */}
       <div className="px-5 py-4 border-b border-border">
-        <img src="/logo.png" alt="BDML" style={{ height: 28, width: 'auto' }} />
-        <div className="text-[10px] text-text-muted mt-1.5">
-          AI 정성조사 시뮬레이션
-        </div>
+        <img src="/logo.png" alt="BDML" style={{ height: 32, width: 'auto' }} />
       </div>
 
       {/* Phase 그룹 */}

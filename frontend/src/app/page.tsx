@@ -86,7 +86,6 @@ export default function ProjectListPage() {
             <span className="project-list-header__logo">
               <img src="/logo.png" alt="BDML" />
             </span>
-            <h1 className="project-list-header__title">AI 정성조사 시뮬레이션</h1>
           </div>
           <div className="project-list-header__user">
             <span className="project-list-header__email">{user?.email}</span>

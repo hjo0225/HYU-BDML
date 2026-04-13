@@ -509,7 +509,7 @@ export default function Phase3Page() {
             {agents.map((agent) => {
               const hasDemographics = !!agent.demographics;
               const hasPersona = !!agent.persona_profile;
-              const memCount = agent.memory_count ?? agent.memories?.length ?? 0;
+              const dataCategories = (agent as any).data_categories as string[] | undefined;
 
               return (
                 <div key={agent.id} className="agent-card" style={{ borderTop: `3px solid ${agent.color}`, paddingTop: 14 }}>
@@ -549,11 +549,13 @@ export default function Phase3Page() {
                           </>
                         )}
                       </div>
-                      {memCount > 0 && (
-                        <div style={{ marginTop: 8 }}>
-                          <span style={{ fontSize: 10, background: '#E8F0FA', color: '#1B4B8C', padding: '3px 8px', borderRadius: 10, fontWeight: 600 }}>
-                            🧠 {memCount}개 메모리
-                          </span>
+                      {dataCategories && dataCategories.length > 0 && (
+                        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {dataCategories.map((cat, ci) => (
+                            <span key={ci} style={{ fontSize: 9, background: '#E8F0FA', color: '#1B4B8C', padding: '2px 6px', borderRadius: 4, fontWeight: 500 }}>
+                              {cat}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </div>

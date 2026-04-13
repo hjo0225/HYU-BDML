@@ -54,7 +54,6 @@ export default function RegisterPage() {
           <div className="auth-card__logo">
             <img src="/logo.png" alt="BDML" />
           </div>
-          <h1 className="auth-card__title">계정 만들기</h1>
           <p className="auth-card__subtitle">한양대학교 이메일로 시작하세요</p>
         </div>
 

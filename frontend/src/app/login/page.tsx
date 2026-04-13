@@ -38,7 +38,6 @@ export default function LoginPage() {
           <div className="auth-card__logo">
             <img src="/logo.png" alt="BDML" />
           </div>
-          <h1 className="auth-card__title">AI 정성조사 시뮬레이션</h1>
           <p className="auth-card__subtitle">한양대학교 계정으로 로그인하세요</p>
         </div>
 
