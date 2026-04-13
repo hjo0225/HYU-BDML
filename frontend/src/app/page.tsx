@@ -137,6 +137,7 @@ export default function ProjectListPage() {
                 key={project.id}
                 id={`project-card-${project.id}`}
                 className="project-card"
+                title={`ID: ${project.id}`}
                 onClick={() => handleOpenProject(project)}
                 role="button"
                 tabIndex={0}
