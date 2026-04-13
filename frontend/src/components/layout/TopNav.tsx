@@ -22,7 +22,7 @@ export default function TopNav() {
     <nav className="topnav">
       <div className="topnav-left">
         <button className="topnav-logo" onClick={handleHome} title="프로젝트 목록으로">
-          빅데이터마케팅랩
+          <img src="/logo.png" alt="BDML" />
         </button>
       </div>
 

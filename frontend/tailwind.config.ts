@@ -14,6 +14,8 @@ const config: Config = {
         'text-muted': 'var(--text-muted)',
         accent: 'var(--accent)',
         'accent-light': 'var(--accent-light)',
+        cyan: 'var(--cyan)',
+        'cyan-light': 'var(--cyan-light)',
         placeholder: 'var(--placeholder)',
         'tag-bg': 'var(--tag-bg)',
         'phase-active': 'var(--phase-active)',

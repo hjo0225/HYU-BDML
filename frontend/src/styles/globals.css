@@ -15,23 +15,28 @@
   --border-light: #dde9f5;
 
   /* ── Text ── */
-  --text-primary: #0f2d5e;
-  --text-secondary: #4a6a8a;
+  --text-primary: #0d2748;
+  --text-secondary: #3d5a80;
   --text-muted: #8aa0ba;
 
-  /* ── Brand (한양 블루) ── */
-  --accent: #1b4b8c;
-  --accent-hover: #0d2b5e;
-  --accent-light: #ebf2ff;
-  --accent-subtle: #f5f8ff;
-  --accent-border: #a3c4e8;
-  --light-border: #c8daf0;
+  /* ── Brand Navy (BDML 로고 기본) ── */
+  --accent: #0d2748;
+  --accent-hover: #091c38;
+  --accent-light: #e8eef6;
+  --accent-subtle: #f2f5fa;
+  --accent-border: #8fa8c8;
+  --light-border: #c0d0e4;
+
+  /* ── Brand Cyan (BDML 로고 포인트) ── */
+  --cyan: #38b6e8;
+  --cyan-hover: #2a9fd0;
+  --cyan-light: #e5f4fb;
 
   /* ── Misc ── */
   --placeholder: #e0eaf5;
-  --tag-bg: #ebf2ff;
-  --phase-active: #1b4b8c;
-  --phase-done: #2e6db4;
+  --tag-bg: #e5f4fb;
+  --phase-active: #38b6e8;
+  --phase-done: #0d2748;
   --phase-upcoming: #b8cce2;
 
   /* ── Status ── */
@@ -79,21 +84,23 @@ body {
 }
 
 .topnav-logo {
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.5px;
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-primary);
   padding: 0;
-  font-family: inherit;
-  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+  transition: opacity 0.15s;
+}
+
+.topnav-logo img {
+  height: 24px;
+  width: auto;
+  display: block;
 }
 
 .topnav-logo:hover {
-  color: var(--accent);
+  opacity: 0.8;
 }
 
 .topnav-right {
@@ -1301,7 +1308,7 @@ details[open] .minutes-appendix-summary::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0d2b5e 0%, #1b4b8c 60%, #2e6db4 100%);
+  background: linear-gradient(135deg, #091c38 0%, #0d2748 50%, #1a6b8a 100%);
   padding: 24px;
 }
 
@@ -1321,22 +1328,14 @@ details[open] .minutes-appendix-summary::before {
 }
 
 .auth-card__logo {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  background: var(--accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-block;
   margin-bottom: 16px;
 }
 
-.auth-card__logo-mark {
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 700;
-  font-size: 18px;
-  color: #fff;
-  letter-spacing: -0.5px;
+.auth-card__logo img {
+  height: 48px;
+  width: auto;
+  display: block;
 }
 
 .auth-card__title {
@@ -1512,18 +1511,15 @@ details[open] .minutes-appendix-summary::before {
 }
 
 .project-list-header__logo {
-  width: 32px;
-  height: 32px;
-  background: var(--accent);
-  border-radius: 8px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 700;
-  font-size: 11px;
-  color: #fff;
   flex-shrink: 0;
+}
+
+.project-list-header__logo img {
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .project-list-header__title {
@@ -1651,7 +1647,7 @@ details[open] .minutes-appendix-summary::before {
 
 .project-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 4px 16px rgba(27, 75, 140, 0.1);
+  box-shadow: 0 4px 16px rgba(13, 39, 72, 0.1);
   transform: translateY(-2px);
 }
 

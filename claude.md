@@ -97,6 +97,41 @@ bigmarlab/
 └── README.md
 ```
 
+## 디자인 시스템 (BDML 로고 기반)
+
+### 로고
+
+- 파일: `frontend/public/logo.png` (원본: `docs/RAG/image.png`)
+- 구성: "BDML" 타이포 + 데이터 차트 그래픽 + "Big Data Marketing Lab" 서브텍스트
+- 사용 위치: 로그인/회원가입 카드 헤더, 대시보드 헤더, TopNav, Sidebar
+
+### 컬러 팔레트
+
+로고의 두 가지 핵심 컬러를 기반으로 전체 UI 컬러 시스템을 구성한다.
+
+| 역할 | 변수 | 값 | 용도 |
+|---|---|---|---|
+| **Navy (기본)** | `--accent` | `#0d2748` | 버튼, 링크, 완료 상태, 텍스트 |
+| Navy hover | `--accent-hover` | `#091c38` | 버튼 hover |
+| Navy light | `--accent-light` | `#e8eef6` | 선택/활성 배경 |
+| **Cyan (포인트)** | `--cyan` | `#38b6e8` | 활성 인디케이터, 진행 상태, 하이라이트 |
+| Cyan hover | `--cyan-hover` | `#2a9fd0` | Cyan 요소 hover |
+| Cyan light | `--cyan-light` | `#e5f4fb` | 태그/배지 배경 |
+| Text primary | `--text-primary` | `#0d2748` | 본문 텍스트 (= Navy) |
+| Text secondary | `--text-secondary` | `#3d5a80` | 보조 텍스트 |
+| Text muted | `--text-muted` | `#8aa0ba` | 비활성 텍스트 |
+
+### 컬러 사용 규칙
+
+- **Navy (`--accent`)**: 주요 CTA 버튼 배경, 완료된 Phase 표시, 텍스트 링크
+- **Cyan (`--cyan`)**: 현재 활성 Phase 표시, 진행률 인디케이터, 강조 배지
+- **Auth 페이지 그라데이션**: `linear-gradient(135deg, #091c38 0%, #0d2748 50%, #1a6b8a 100%)` — Navy → Teal 전환
+- 새 컬러 추가 시 Navy/Cyan 계열 내에서 확장할 것
+
+### Tailwind 커스텀 토큰
+
+`tailwind.config.ts`에 CSS 변수 기반 컬러 토큰 정의. `cyan`, `cyan-light` 등 Tailwind 클래스로 사용 가능.
+
 ## 기술 스택
 
 ### Frontend (`frontend/`)
