@@ -82,6 +82,7 @@ yarn-error.log*
 .claude/*
 .claude.md
 .docs/*
+docs/
 
 # ── 패널 데이터 (개인정보) ───────────────────────────────────────────────────
 backend/raw/
