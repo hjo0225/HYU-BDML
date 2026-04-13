@@ -511,10 +511,10 @@ async def _stream_rag_turn(
                 retrieved = await asyncio.to_thread(retrieve, persona, focal, n_retrieve)
                 retrieved_count = len(retrieved)
                 memories_text = _format_memories(retrieved)
-                # 활성화된 카테고리 추출 (중복 제거, 순서 유지)
+                # 상위 5개 메모리의 카테고리만 추출 (검색 점수순, 중복 제거)
                 activated_categories = list(dict.fromkeys(
                     _CATEGORY_LABELS.get(m.get("category", ""), m.get("category", ""))
-                    for m in retrieved if m.get("category")
+                    for m in retrieved[:5] if m.get("category")
                 ))
             except Exception:
                 memories_text = _format_memories(memories[:10])
