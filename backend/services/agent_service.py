@@ -9,7 +9,7 @@ from models.schemas import (
 )
 from prompts.agent_recommend import AGENT_RECOMMEND_PROMPT, CUSTOMER_REGEN_PROMPT
 
-# import 시점에 `.env`를 로드해 OpenAI SDK와 Agents SDK가 같은 키를 사용하게 한다.
+# 시스템 환경변수에서 OpenAI 키를 읽어 SDK/Agents SDK가 동일한 키를 사용하게 한다.
 import services.openai_client  # noqa: F401
 from services.usage_tracker import tracker
 

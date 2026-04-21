@@ -6,8 +6,13 @@ import { ProjectProvider } from "@/contexts/ProjectContext";
 import AppShell from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
-  title: "AI 정성조사 시뮬레이션",
+  title: "Big Data Marketing Lab",
   description: "AI 에이전트 기반 정성조사 시뮬레이션 웹앱",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

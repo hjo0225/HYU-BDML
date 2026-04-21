@@ -19,8 +19,7 @@ import numpy as np
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-from dotenv import load_dotenv
-load_dotenv(BACKEND_DIR / ".env")
+# 환경변수는 시스템 환경변수에서만 읽는다 (OPENAI_API_KEY, DATABASE_URL 등).
 
 from sqlalchemy import text
 from database import engine, AsyncSessionLocal, Base

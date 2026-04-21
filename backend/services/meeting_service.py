@@ -29,7 +29,7 @@ from rag.retriever import retrieve
 from services.persona_builder import load_persona_from_db, _CATEGORY_LABELS
 from database import AsyncSessionLocal
 
-# import 시점에 `.env`를 로드해 LangChain/OpenAI 호출이 같은 환경 변수를 사용하게 한다.
+# 시스템 환경변수에서 OpenAI 키를 읽어 LangChain/OpenAI 호출이 동일한 환경변수를 사용하게 한다.
 import services.openai_client  # noqa: F401
 from services.naver_search_service import SearchResultItem
 from services.openai_web_search_service import OpenAIWebSearchService

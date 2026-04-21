@@ -1,14 +1,9 @@
 """애플리케이션 진입점.
 
 라우터를 등록하고, 프론트엔드와 통신하기 위한 CORS 정책을 구성한다.
+환경변수는 운영체제의 시스템 환경변수에서만 읽는다 (로컬/Cloud Run 공통).
 """
 import os
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # 로컬 개발용 .env 로드 (Cloud Run은 환경변수 직접 주입)
-except ImportError:
-    pass
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
