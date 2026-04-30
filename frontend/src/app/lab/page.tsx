@@ -56,12 +56,8 @@ export default function LabMenuPage() {
         <div className="lab-experiment-grid">
           {EXPERIMENTS.map((exp) => {
             const isAvailable = exp.status === 'available';
-            const Card = isAvailable ? Link : 'div';
-            const cardProps = isAvailable
-              ? { href: exp.href, className: 'lab-experiment-card' }
-              : { className: 'lab-experiment-card lab-experiment-card--disabled' };
-            return (
-              <Card key={exp.id} {...(cardProps as Record<string, unknown>)}>
+            const inner = (
+              <>
                 <div className="lab-experiment-card__head">
                   <span
                     className={`lab-experiment-card__badge lab-experiment-card__badge--${exp.status}`}
@@ -77,7 +73,16 @@ export default function LabMenuPage() {
                     {isAvailable ? '체험 시작 →' : '준비 중'}
                   </span>
                 </div>
-              </Card>
+              </>
+            );
+            return isAvailable ? (
+              <Link key={exp.id} href={exp.href} className="lab-experiment-card">
+                {inner}
+              </Link>
+            ) : (
+              <div key={exp.id} className="lab-experiment-card lab-experiment-card--disabled">
+                {inner}
+              </div>
             );
           })}
         </div>
