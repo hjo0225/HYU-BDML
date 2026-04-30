@@ -10,7 +10,7 @@ export default function TopNav() {
   const { user, logout } = useAuth();
 
   const handleHome = () => {
-    router.push("/");
+    router.push("/dashboard");
   };
 
   const handleReset = () => {

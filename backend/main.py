@@ -1,15 +1,23 @@
 """애플리케이션 진입점.
 
 라우터를 등록하고, 프론트엔드와 통신하기 위한 CORS 정책을 구성한다.
-환경변수는 운영체제의 시스템 환경변수에서만 읽는다 (로컬/Cloud Run 공통).
+로컬 개발에서는 `.env`를 먼저 로드하고, Cloud Run에서는 시스템 환경변수가 우선한다.
 """
 import os
+
+# database / openai 모듈 import 전에 .env 로드 (DATABASE_URL, OPENAI_API_KEY 등).
+# Cloud Run은 .env가 없어 load_dotenv가 no-op이 되고 시스템 환경변수만 적용된다.
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except ImportError:
+    pass
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import research, agents, meeting, minutes, usage
-from routers import auth, projects
+from routers import auth, projects, lab
 from database import init_db
 
 
@@ -50,6 +58,7 @@ app.include_router(minutes.router)
 app.include_router(usage.router)
 app.include_router(auth.router)
 app.include_router(projects.router)
+app.include_router(lab.router)
 
 
 @app.get("/api/health")

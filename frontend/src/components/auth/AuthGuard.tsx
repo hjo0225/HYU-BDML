@@ -5,7 +5,15 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 // 인증 없이 접근 가능한 경로
-const PUBLIC_PATHS = ['/login', '/register'];
+// - '/' (랜딩), '/login', '/register'는 정확 매치
+// - '/lab'은 prefix 매치 (/lab, /lab/chat/{id} 등 전체 공개)
+const PUBLIC_EXACT = ['/', '/login', '/register'];
+const PUBLIC_PREFIX = ['/lab'];
+
+function isPublicPath(pathname: string): boolean {
+  if (PUBLIC_EXACT.includes(pathname)) return true;
+  return PUBLIC_PREFIX.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
 
 export function AuthGuard({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -15,9 +23,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isLoading) return;
 
-    const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-
-    if (!user && !isPublic) {
+    if (!user && !isPublicPath(pathname)) {
       // 로그인 후 원래 페이지로 돌아올 수 있도록 redirect 파라미터 추가
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
@@ -31,8 +37,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     );
   }
 
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-  if (!user && !isPublic) return null; // 리다이렉트 대기 중 빈 화면
+  if (!user && !isPublicPath(pathname)) return null; // 리다이렉트 대기 중 빈 화면
 
   return <>{children}</>;
 }

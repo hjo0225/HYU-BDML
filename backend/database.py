@@ -142,11 +142,13 @@ class ActivityLog(Base):
 # ── 패널 데이터 (RAG) ─────────────────────────────────────────────────────
 
 class Panel(Base):
-    """500명 FGI 패널 — 사전 적재된 인구통계 + 행동 차원."""
+    """패널 풀 — FGI 500명(`source='fgi500'`) + Lab Twin-2K-500(`source='twin2k500'`)."""
     __tablename__ = "panels"
 
     panel_id        = Column(String(20), primary_key=True)
-    cluster         = Column(Integer, nullable=False)
+    # 데이터 출처 — 본 서비스(fgi500)와 Lab(twin2k500) 분리용. 모든 쿼리에 필터 필수.
+    source          = Column(String(20), nullable=False, default="fgi500", index=True)
+    cluster         = Column(Integer, nullable=True)  # twin2k500은 클러스터 없음
 
     # 인구통계 (디코딩 완료된 값)
     age             = Column(Integer, nullable=True)
@@ -154,7 +156,7 @@ class Panel(Base):
     occupation      = Column(String(50), nullable=True)
     region          = Column(String(50), nullable=True)
 
-    # 행동 차원 (0-1 비율, 클러스터링/필터링용)
+    # 행동 차원 (0-1 비율, 클러스터링/필터링용) — FGI 전용
     dim_night_owl       = Column(Float, nullable=True)
     dim_gamer           = Column(Float, nullable=True)
     dim_social_diner    = Column(Float, nullable=True)
@@ -170,6 +172,10 @@ class Panel(Base):
     # 메모리 임베딩 평균 벡터 (1536차원, 패널 선정 스코어링용)
     avg_embedding   = _jsonb_col(nullable=True)
 
+    # Twin-2K-500 풀-프롬프트(Toubia) 원본 persona_json — Lab 채팅에서 통째로 주입.
+    # FGI는 NULL. 영문 ~170k chars/명.
+    persona_full    = Column(Text, nullable=True)
+
 
 class PanelMemory(Base):
     """패널별 카테고리 메모리 — 임베딩 포함."""
@@ -178,6 +184,8 @@ class PanelMemory(Base):
     id          = Column(BigInteger, primary_key=True, autoincrement=True)
     panel_id    = Column(String(20), ForeignKey("panels.panel_id", ondelete="CASCADE"),
                          nullable=False, index=True)
+    # source 필터 누락 방어용 보조 컬럼 (panels.source와 동일 값을 적재 시 복사)
+    source      = Column(String(20), nullable=False, default="fgi500", index=True)
     category    = Column(String(50), nullable=False)
     text        = Column(Text, nullable=False)
     importance  = Column(Integer, nullable=False, default=50)

@@ -81,14 +81,15 @@ yarn-error.log*
 .claude/
 .claude/*
 .claude.md
-.docs/*
-docs/
 
 # ── 패널 데이터 (개인정보) ───────────────────────────────────────────────────
 backend/raw/
 backend/personas/
 backend/rag/embedding_cache.json
-docs/RAG/raw/
+backend/.cache/                 # Twin-2K-500 샘플 파일 등 임시 캐시
+docs/RAG/                       # RAG 원본 자료 (이미지·CSV 사본) — 명세 문서는 추적
 
 # ── 테스트 출력 ──────────────────────────────────────────────────────────────
 backend/rag_test_results.json
+RAG/*
+script/*

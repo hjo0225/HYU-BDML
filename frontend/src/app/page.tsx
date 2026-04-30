@@ -1,178 +1,147 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { useProject } from '@/contexts/ProjectContext';
-import { listProjects, deleteProject, type ProjectSummary } from '@/lib/api';
 
-const PHASE_LABELS: Record<number, string> = {
-  1: '브리프 입력',
-  2: '시장조사',
-  3: '에이전트 설정',
-  4: '회의 진행',
-  5: '회의록 완료',
-};
-
-const PHASE_PATHS: Record<number, string> = {
-  1: '/research-input',
-  2: '/market-research',
-  3: '/agent-setup',
-  4: '/meeting',
-  5: '/minutes',
-};
-
-export default function ProjectListPage() {
-  const { user, logout } = useAuth();
-  const { resetProject, loadProjectFromBackend } = useProject();
+export default function LandingPage() {
+  const { user, isLoading } = useAuth();
   const router = useRouter();
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const data = await listProjects();
-      setProjects(data);
-    } catch {
-      // 인증 오류 시 AuthGuard가 처리
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
+  // 인증 사용자는 대시보드로 자동 이동
   useEffect(() => {
-    if (user) loadProjects();
-  }, [user, loadProjects]);
-
-  const handleNewProject = () => {
-    // 새 프로젝트: 상태 초기화 후 브리프 입력으로
-    resetProject();
-    router.push('/research-input');
-  };
-
-  const handleOpenProject = async (project: ProjectSummary) => {
-    // 백엔드에서 프로젝트 전체 데이터 로드 → ProjectContext에 복원
-    await loadProjectFromBackend(project.id);
-    const path = PHASE_PATHS[project.current_phase] ?? '/research-input';
-    router.push(path);
-  };
-
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (!confirm('이 프로젝트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) return;
-    setDeletingId(id);
-    try {
-      await deleteProject(id);
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-    } catch {
-      alert('삭제에 실패했습니다.');
-    } finally {
-      setDeletingId(null);
+    if (!isLoading && user) {
+      router.replace('/dashboard');
     }
-  };
+  }, [user, isLoading, router]);
 
-  const formatDate = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  if (isLoading || user) {
+    return (
+      <div className="landing-loading">
+        <div className="auth-loading__spinner" />
+      </div>
+    );
+  }
 
   return (
-    <div className="project-list-page">
-      {/* 헤더 */}
-      <header className="project-list-header">
-        <div className="project-list-header__inner">
-          <div className="project-list-header__brand">
-            <span className="project-list-header__logo">
-              <img src="/logo.png" alt="BDML" />
-            </span>
+    <div className="landing-page">
+      {/* 상단 네비 */}
+      <header className="landing-header">
+        <div className="landing-header__inner">
+          <div className="landing-header__brand">
+            <img src="/logo.png" alt="BDML" />
           </div>
-          <div className="project-list-header__user">
-            <span className="project-list-header__email">{user?.email}</span>
-            <button
-              id="logout-btn"
-              className="project-list-header__logout"
-              onClick={logout}
-            >
-              로그아웃
-            </button>
-          </div>
+          <nav className="landing-header__nav">
+            <Link href="/lab" className="landing-header__nav-link">
+              실험실
+            </Link>
+            <Link href="/login" className="landing-header__nav-link landing-header__nav-link--cta">
+              로그인
+            </Link>
+          </nav>
         </div>
       </header>
 
-      <main className="project-list-main">
-        <div className="project-list-toolbar">
-          <div>
-            <h2 className="project-list-toolbar__heading">내 연구 프로젝트</h2>
-            <p className="project-list-toolbar__sub">
-              {isLoading ? '불러오는 중...' : `총 ${projects.length}개의 프로젝트`}
+      {/* 히어로 */}
+      <section className="landing-hero">
+        <div className="landing-hero__inner">
+          <span className="landing-hero__eyebrow">Big Data Marketing Lab</span>
+          <h1 className="landing-hero__title">
+            AI 에이전트로
+            <br />
+            <span className="landing-hero__title-accent">정성조사를 자동화</span>합니다
+          </h1>
+          <p className="landing-hero__subtitle">
+            연구 정보를 입력하면 AI가 시장조사 → 패널 구성 → FGI 회의 시뮬레이션 → 회의록까지
+            자동으로 수행합니다.
+          </p>
+          <div className="landing-hero__cta">
+            <Link href="/login" className="landing-cta landing-cta--primary">
+              로그인하고 시작하기
+            </Link>
+            <Link href="/lab" className="landing-cta landing-cta--secondary">
+              실험실 체험 →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* 기능 소개 */}
+      <section className="landing-features">
+        <div className="landing-features__inner">
+          <h2 className="landing-section-title">5단계 자동화 흐름</h2>
+          <div className="landing-features__grid">
+            <div className="landing-feature">
+              <div className="landing-feature__num">1</div>
+              <h3 className="landing-feature__title">연구 정보 입력</h3>
+              <p className="landing-feature__desc">
+                연구 주제·타깃·핵심 질문을 자연어로 입력하면 AI가 브리프를 정제합니다.
+              </p>
+            </div>
+            <div className="landing-feature">
+              <div className="landing-feature__num">2</div>
+              <h3 className="landing-feature__title">시장조사 자동화</h3>
+              <p className="landing-feature__desc">
+                Naver·OpenAI 검색을 결합해 시장 동향 보고서를 자동으로 합성합니다.
+              </p>
+            </div>
+            <div className="landing-feature">
+              <div className="landing-feature__num">3</div>
+              <h3 className="landing-feature__title">패널 구성</h3>
+              <p className="landing-feature__desc">
+                실제 설문 패널 500명 풀에서 RAG 임베딩으로 주제 관련 N명을 선정합니다.
+              </p>
+            </div>
+            <div className="landing-feature">
+              <div className="landing-feature__num">4</div>
+              <h3 className="landing-feature__title">FGI 시뮬레이션</h3>
+              <p className="landing-feature__desc">
+                LangGraph 상태머신과 RAG 메모리로 실시간 발언을 스트리밍합니다.
+              </p>
+            </div>
+            <div className="landing-feature">
+              <div className="landing-feature__num">5</div>
+              <h3 className="landing-feature__title">회의록 생성</h3>
+              <p className="landing-feature__desc">
+                전체 발언을 구조화된 마크다운 회의록으로 자동 정리해 내보냅니다.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 실험실 카드 */}
+      <section className="landing-lab-banner">
+        <div className="landing-lab-banner__inner">
+          <div className="landing-lab-banner__text">
+            <span className="landing-lab-banner__tag">EXPERIMENT</span>
+            <h2 className="landing-lab-banner__title">
+              Twin-2K-500 디지털 트윈과 1:1 대화
+            </h2>
+            <p className="landing-lab-banner__desc">
+              Toubia et al. (2025)의 Twin-2K-500 데이터셋 기반 디지털 트윈 페르소나와
+              메신저 형태로 대화해 보세요. 로그인 없이 바로 체험할 수 있습니다.
             </p>
           </div>
-          <button
-            id="new-project-btn"
-            className="project-list-toolbar__new-btn"
-            onClick={handleNewProject}
-          >
-            + 새 연구 시작
-          </button>
+          <Link href="/lab" className="landing-lab-banner__cta">
+            실험실로 이동 →
+          </Link>
         </div>
+      </section>
 
-        {/* 프로젝트 목록 */}
-        {isLoading ? (
-          <div className="project-list-empty">
-            <div className="project-list-empty__spinner" />
+      {/* 푸터 */}
+      <footer className="landing-footer">
+        <div className="landing-footer__inner">
+          <div className="landing-footer__brand">
+            <strong>Big Data Marketing Lab</strong>
+            <span>한양대학교 경영대학</span>
           </div>
-        ) : projects.length === 0 ? (
-          <div className="project-list-empty">
-            <div className="project-list-empty__icon">📋</div>
-            <p className="project-list-empty__text">아직 진행한 연구가 없습니다</p>
-            <button className="project-list-toolbar__new-btn" onClick={handleNewProject}>
-              첫 번째 연구 시작하기
-            </button>
+          <div className="landing-footer__meta">
+            © {new Date().getFullYear()} BDML. AI 기반 정성조사 시뮬레이션 연구.
           </div>
-        ) : (
-          <div className="project-list-grid">
-            {projects.map((project) => (
-              <div
-                key={project.id}
-                id={`project-card-${project.id}`}
-                className="project-card"
-                title={`ID: ${project.id}`}
-                onClick={() => handleOpenProject(project)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && handleOpenProject(project)}
-              >
-                <div className="project-card__header">
-                  <span className="project-card__icon">📋</span>
-                  <div
-                    className={`project-card__badge project-card__badge--phase${project.current_phase}`}
-                  >
-                    {project.status === 'completed' ? '완료' : PHASE_LABELS[project.current_phase]}
-                  </div>
-                </div>
-                <h3 className="project-card__title">{project.title || '제목 없음'}</h3>
-                {project.brief_summary && (
-                  <p className="project-card__summary">{project.brief_summary}</p>
-                )}
-                <div className="project-card__footer">
-                  <span className="project-card__date">
-                    {formatDate(project.updated_at)}
-                  </span>
-                  <button
-                    className="project-card__delete"
-                    onClick={(e) => handleDelete(e, project.id)}
-                    disabled={deletingId === project.id}
-                    aria-label="프로젝트 삭제"
-                  >
-                    {deletingId === project.id ? '삭제 중...' : '삭제'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </main>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -166,3 +166,56 @@ class MinutesRequest(BaseModel):
     messages: list[MeetingMessage]
     brief: ResearchBrief
     agents: list[AgentSchema]
+
+
+# ── 실험실 (Lab) — Twin-2K-500 1:1 메신저 ──
+
+class LabTwinBig5(BaseModel):
+    """Big5 성격 5차원 — 0~100 percentile."""
+    openness: int | None = None
+    conscientiousness: int | None = None
+    extraversion: int | None = None
+    agreeableness: int | None = None
+    neuroticism: int | None = None
+
+class LabTwin(BaseModel):
+    """Lab 페이지에 노출되는 Twin 페르소나 카드 / 모달."""
+    twin_id: str
+    name: str        # 익명화된 표시 이름 (예: "Olivia")
+    emoji: str
+    age: int | None = None
+    age_range: str | None = None  # "30-49" 등
+    gender: str | None = None
+    occupation: str | None = None
+    region: str | None = None
+    intro: str       # 1~2문장 짧은 한국어 소개
+
+    # 모달 상세 정보 (Twin-2K-500 persona_summary에서 추출)
+    race: str | None = None
+    education: str | None = None
+    marital_status: str | None = None
+    religion: str | None = None
+    income: str | None = None
+    household_size: str | None = None  # "1", "2", ..., "More than 4" — Twin-2K-500 원본값 유지
+    political_views: str | None = None      # Conservative/Liberal/Moderate
+    political_affiliation: str | None = None  # Republican/Democrat/Independent
+    big5: LabTwinBig5 | None = None
+    traits: list[str] = Field(default_factory=list)  # ["high extraversion", ...]
+    tags: list[str] = Field(default_factory=list)    # 카드 미리보기용 한국어 키워드 ["외향적", "보수", "기혼", ...]
+    aspire: str | None = None  # 이상적 자아 (영어 원문)
+    aspire_ko: str | None = None  # 이상적 자아 (한국어 번역)
+    actual: str | None = None  # 실제 자아 (영어 원문)
+    actual_ko: str | None = None  # 실제 자아 (한국어 번역)
+
+class LabTwinsResponse(BaseModel):
+    twins: list[LabTwin]
+
+class LabChatTurn(BaseModel):
+    """클라이언트가 보내는 직전 채팅 히스토리 한 턴."""
+    role: Literal["me", "twin"]
+    content: str
+
+class LabChatRequest(BaseModel):
+    twin_id: str
+    history: list[LabChatTurn] = Field(default_factory=list)
+    message: str

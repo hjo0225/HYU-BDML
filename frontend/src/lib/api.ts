@@ -14,6 +14,10 @@ import type {
   ReportSection,
   EvidenceItem,
   ThinkingEvent,
+  LabTwin,
+  LabTwinsResponse,
+  LabChatRequest,
+  LabChatStartEvent,
 } from './types';
 
 // 개발 환경에서는 긴 스트림이 Next.js dev 프록시 제한에 걸릴 수 있어 백엔드를 직접 호출한다.
@@ -617,6 +621,101 @@ export async function fetchMinutes(data: MinutesRequest): Promise<string> {
   } catch (error) {
     if (error instanceof Error) throw error;
     throw new Error('회의록 생성 중 네트워크 오류가 발생했습니다.');
+  }
+}
+
+// ── 실험실 (Lab) — Twin-2K-500 1:1 메신저 ──
+// 인증 없이 누구나 호출. apiFetch 대신 plain fetch 사용 (토큰 헤더 미첨부).
+
+export async function fetchLabTwins(): Promise<LabTwin[]> {
+  const res = await fetch(`${API_BASE}/lab/twins`);
+  if (!res.ok) throw new Error(`Twin 목록 조회 실패: ${res.status}`);
+  const data = (await res.json()) as LabTwinsResponse;
+  return data.twins;
+}
+
+export interface LabChatCallbacks {
+  onStart: (meta: LabChatStartEvent) => void;
+  onDelta: (delta: string) => void;
+  onEnd: (content: string) => void;
+  onError?: (reason: string, retryAfterSeconds?: number) => void;
+}
+
+/**
+ * Lab 1:1 채팅 SSE 호출. start/delta/end/error 이벤트를 콜백으로 분배한다.
+ */
+export async function fetchLabChat(
+  data: LabChatRequest,
+  callbacks: LabChatCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${SSE_BASE}/lab/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    callbacks.onError?.('network');
+    return;
+  }
+
+  if (res.status === 429) {
+    const body = await res.json().catch(() => null) as
+      | { detail?: { reason?: string; remaining_seconds?: number } }
+      | null;
+    callbacks.onError?.('rate_limit', body?.detail?.remaining_seconds);
+    return;
+  }
+  if (!res.ok || !res.body) {
+    callbacks.onError?.(`http_${res.status}`);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    let done: boolean;
+    let value: Uint8Array | undefined;
+    try {
+      ({ done, value } = await reader.read());
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      throw error;
+    }
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(6));
+        switch (parsed.type) {
+          case 'start':
+            callbacks.onStart(parsed as LabChatStartEvent);
+            break;
+          case 'delta':
+            callbacks.onDelta(parsed.delta as string);
+            break;
+          case 'end':
+            callbacks.onEnd(parsed.content as string);
+            break;
+          case 'error':
+            callbacks.onError?.(parsed.reason || 'internal');
+            return;
+        }
+      } catch {
+        // 파싱 실패 라인은 무시
+      }
+    }
   }
 }
 

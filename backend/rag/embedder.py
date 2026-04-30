@@ -20,8 +20,12 @@ def _load_cache() -> dict:
 
 
 def _save_cache(cache: dict) -> None:
-    with open(CACHE_PATH, "w", encoding="utf-8") as f:
+    # Atomic write: 같은 디렉토리의 임시 파일에 쓰고 os.replace로 교체.
+    # 프로세스가 dump 도중 죽어도 캐시 본체는 손상되지 않는다.
+    tmp = CACHE_PATH.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False)
+    os.replace(tmp, CACHE_PATH)
 
 
 def embed(text: str) -> list[float]:

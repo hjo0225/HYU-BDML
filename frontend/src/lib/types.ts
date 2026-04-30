@@ -159,6 +159,65 @@ export interface MinutesRequest {
   topic?: string;
 }
 
+// ── 실험실 (Lab) — Twin-2K-500 1:1 메신저 ──
+export interface LabTwinBig5 {
+  openness: number | null;
+  conscientiousness: number | null;
+  extraversion: number | null;
+  agreeableness: number | null;
+  neuroticism: number | null;
+}
+
+export interface LabTwin {
+  twin_id: string;
+  name: string;
+  emoji: string;
+  age: number | null;
+  age_range: string | null;
+  gender: string | null;
+  occupation: string | null;
+  region: string | null;
+  intro: string;
+  race: string | null;
+  education: string | null;
+  marital_status: string | null;
+  religion: string | null;
+  income: string | null;
+  household_size: string | null;
+  political_views: string | null;
+  political_affiliation: string | null;
+  big5: LabTwinBig5 | null;
+  traits: string[];
+  tags: string[];
+  aspire: string | null;
+  aspire_ko: string | null;
+  actual: string | null;
+  actual_ko: string | null;
+}
+
+export interface LabTwinsResponse {
+  twins: LabTwin[];
+}
+
+export type LabChatRole = 'me' | 'twin';
+
+export interface LabChatTurn {
+  role: LabChatRole;
+  content: string;
+}
+
+export interface LabChatRequest {
+  twin_id: string;
+  history: LabChatTurn[];
+  message: string;
+}
+
+export interface LabChatStartEvent {
+  type: 'start';
+  twin_id: string;
+  name: string;
+}
+
 // ── 프로젝트 전체 상태 ──
 export interface ProjectData {
   brief: ResearchBrief | null;

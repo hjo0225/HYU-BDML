@@ -21,7 +21,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       await login(email, password);
-      const redirect = searchParams.get('redirect') || '/';
+      const redirect = searchParams.get('redirect') || '/dashboard';
       router.replace(redirect);
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인에 실패했습니다.');
