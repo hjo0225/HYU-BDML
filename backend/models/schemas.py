@@ -178,6 +178,22 @@ class LabTwinBig5(BaseModel):
     agreeableness: int | None = None
     neuroticism: int | None = None
 
+class LabFaithfulness(BaseModel):
+    """트윈별 사전 계산된 충실도 점수 (eval_lab_faithfulness 결과)."""
+    overall: float                              # 0.0 ~ 1.0
+    by_category: dict[str, float] = Field(default_factory=dict)
+    n_eval: int = 0
+    evaluated_at: str | None = None             # ISO8601 UTC
+
+class LabProbeQuestion(BaseModel):
+    """설문 카테고리 기반 한국어 probe 질문 (사이드바 클릭용).
+
+    `seed_lab_probe_questions.py`가 카테고리당 1문항씩 생성해
+    `Panel.scratch["probe_questions"]`에 캐시한 값.
+    """
+    category: str            # 예: "social_trust", "personality_big5"
+    question: str            # 예: "요즘 처음 만난 사람한테 어디까지 마음 여세요?"
+
 class LabTwin(BaseModel):
     """Lab 페이지에 노출되는 Twin 페르소나 카드 / 모달."""
     twin_id: str
@@ -206,6 +222,8 @@ class LabTwin(BaseModel):
     aspire_ko: str | None = None  # 이상적 자아 (한국어 번역)
     actual: str | None = None  # 실제 자아 (영어 원문)
     actual_ko: str | None = None  # 실제 자아 (한국어 번역)
+    faithfulness: LabFaithfulness | None = None  # 사전 계산된 충실도 (Lab L1 카드)
+    probe_questions: list[LabProbeQuestion] = Field(default_factory=list)  # 설문 기반 질문 사이드바
 
 class LabTwinsResponse(BaseModel):
     twins: list[LabTwin]
@@ -219,3 +237,26 @@ class LabChatRequest(BaseModel):
     twin_id: str
     history: list[LabChatTurn] = Field(default_factory=list)
     message: str
+
+# ── 인용 / 검증 / 평가 ──────────────────────────────────────────────────
+LabConfidence = Literal["direct", "inferred", "guess", "unknown"]
+LabVerdict = Literal["consistent", "partial", "contradicts", "evasive"]
+
+class MemoryCitation(BaseModel):
+    """답변 근거가 된 PanelMemory 청크 (A+B 하이브리드 결과)."""
+    category: str            # 예: "values_environment"
+    snippet_en: str          # 영어 원문(최대 ~400 chars 트리밍)
+    snippet_ko: str | None = None  # 한국어 의역(없을 수 있음)
+    score: float             # 코사인 유사도 (0~1)
+    via: Literal["llm_self_cite", "embedding", "both"] = "embedding"
+
+class LabJudgeRequest(BaseModel):
+    twin_id: str
+    question: str
+    answer: str
+
+class LabJudgeResponse(BaseModel):
+    verdict: LabVerdict
+    reason: str
+    matched_categories: list[str] = Field(default_factory=list)
+    contradicted_categories: list[str] = Field(default_factory=list)

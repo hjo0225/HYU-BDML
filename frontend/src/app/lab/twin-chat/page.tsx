@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { fetchLabTwins } from '@/lib/api';
 import type { LabTwin, LabTwinBig5 } from '@/lib/types';
+import { FaithfulnessBadge, FaithfulnessBars } from '@/components/lab/FaithfulnessBar';
 
 // Big5 차원 표기
 const BIG5_LABELS: Array<{ key: keyof LabTwinBig5; ko: string; lowKo: string; highKo: string }> = [
@@ -117,6 +118,18 @@ function TwinDetailModal({
                 <span>→ {big5Entries[0].highKo}</span>
               </li>
             </ul>
+          </section>
+        )}
+
+        {twin.faithfulness && (
+          <section className="lab-modal__section">
+            <div className="lab-modal__section-label">
+              데이터 충실도{' '}
+              <span className="lab-modal__section-hint">
+                (LLM-as-judge 평가, 카테고리당 1문항)
+              </span>
+            </div>
+            <FaithfulnessBars faithfulness={twin.faithfulness} />
           </section>
         )}
 
@@ -256,8 +269,16 @@ export default function LabTwinChatListPage() {
               >
                 <div className="lab-twin-card__head">
                   <div className="lab-twin-card__avatar">{t.emoji || '🧑'}</div>
-                  <div>
-                    <div className="lab-twin-card__name">{t.name}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      className="lab-twin-card__name"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+                    >
+                      <span>{t.name}</span>
+                      {t.faithfulness && (
+                        <FaithfulnessBadge faithfulness={t.faithfulness} compact />
+                      )}
+                    </div>
                     <div className="lab-twin-card__meta">
                       {[t.age ? `${t.age}세` : null, t.gender, t.region]
                         .filter(Boolean)

@@ -21,12 +21,55 @@ from sqlalchemy import select
 
 import services.openai_client  # noqa: F401  (환경변수 로드)
 from database import AsyncSessionLocal, Panel
-from prompts.twin_utterance import TWIN_UTTERANCE_PROMPT, format_chat_history
+from prompts.twin_utterance import (
+    TWIN_UTTERANCE_PROMPT,
+    format_chat_history,
+    parse_citation_marker,
+)
+from services.lab_citation_service import verify_llm_citations
 from services.usage_tracker import tracker
 
 
 _LLM_MODEL = os.getenv("LAB_LLM_MODEL", "gpt-4o-mini")
 _llm = ChatOpenAI(model=_LLM_MODEL, temperature=0.7)
+
+# 사이드바 probe 질문 표시 순서 — 의미 그룹별 정렬 (CitationToggle CATEGORY_KO와 동일 그룹핑).
+# 정의되지 않은 카테고리는 이 리스트 뒤에 알파벳순으로 붙는다.
+_PROBE_CATEGORY_ORDER = [
+    "demographics",
+    "personality_big5",
+    "values_environment",
+    "values_minimalism",
+    "values_agency",
+    "values_individualism",
+    "values_uniqueness",
+    "values_regulatory",
+    "decision_risk",
+    "decision_loss",
+    "decision_maximization",
+    "emotion_anxiety",
+    "emotion_depression",
+    "emotion_empathy",
+    "social_trust",
+    "social_ultimatum",
+    "social_dictator",
+    "social_desirability",
+    "cognition_general",
+    "cognition_reflection",
+    "cognition_intelligence",
+    "cognition_logic",
+    "cognition_numeracy",
+    "cognition_closure",
+    "finance_mental",
+    "finance_literacy",
+    "finance_time_pref",
+    "finance_tightwad",
+    "self_aspire",
+    "self_ought",
+    "self_actual",
+    "self_clarity",
+    "self_monitoring",
+]
 
 # in-memory 페르소나 캐시 — 같은 트윈 반복 채팅 시 DB 재조회 방지.
 # value 구조: {"twin_id", "scratch", "persona_full"}
@@ -111,6 +154,9 @@ async def stream_chat(
     full_text = ""
     input_tokens = 0
     output_tokens = 0
+    # 마커 파서가 마지막 [[CITE: ...]] 블록만 잘라내므로, delta는 모델이 흘려보내는
+    # 그대로 사용자에게 전송한다. 마커가 도착하면 사용자 화면에 잠깐 보일 수 있으나
+    # 보통 마지막 줄에 한 번만 나타나고 곧 end 이벤트로 정리된 본문이 덮어쓴다.
     try:
         async for chunk in _llm.astream([
             SystemMessage(content=system_prompt),
@@ -129,6 +175,24 @@ async def stream_chat(
         yield _sse({"type": "error", "reason": "internal"})
         return
 
+    # 자가 인용 마커 분리
+    clean_text, llm_categories, raw_confidence = parse_citation_marker(full_text)
+
+    # 임베딩 매칭으로 자가 인용 검증 + confidence 보정 (실패해도 채팅은 그대로 진행)
+    citations: list[dict] = []
+    confidence: str = raw_confidence
+    try:
+        verified, adjusted = await verify_llm_citations(
+            twin_id=twin_id,
+            llm_cited_categories=llm_categories,
+            answer_text=clean_text,
+            confidence=raw_confidence,  # type: ignore[arg-type]
+        )
+        citations = [c.model_dump() for c in verified]
+        confidence = adjusted
+    except Exception as exc:  # noqa: BLE001
+        print(f"[lab] citation 검증 실패: {exc}")
+
     # usage_metadata가 누락된 경우 길이 기반 근사치
     if not input_tokens and not output_tokens:
         input_tokens = len(system_prompt + human_prompt) // 3
@@ -142,7 +206,9 @@ async def stream_chat(
 
     yield _sse({
         "type": "end",
-        "content": full_text.strip(),
+        "content": clean_text,
+        "citations": citations,
+        "confidence": confidence,
     })
 
 
@@ -264,6 +330,31 @@ async def list_twins(limit: int = 50) -> list[dict]:
             if isinstance(entry, dict) and entry.get("percentile") is not None:
                 big5[dim] = int(entry["percentile"])
 
+        # 사전 계산된 충실도 (eval_lab_faithfulness 결과). scratch.faithfulness는
+        # {overall, by_category, n_eval, evaluated_at} 형태. 누락이면 None.
+        faithfulness = scratch.get("faithfulness")
+        if not (
+            isinstance(faithfulness, dict)
+            and "overall" in faithfulness
+            and isinstance(faithfulness.get("by_category"), dict)
+        ):
+            faithfulness = None
+
+        # seed_lab_probe_questions.py가 채워둔 카테고리별 한국어 질문 캐시.
+        # dict → 안정 순서 list로 변환. 알 수 없는 카테고리는 뒤에 알파벳순.
+        probe_raw = scratch.get("probe_questions") or {}
+        probe_questions: list[dict] = []
+        if isinstance(probe_raw, dict) and probe_raw:
+            order_index = {cat: i for i, cat in enumerate(_PROBE_CATEGORY_ORDER)}
+            sorted_cats = sorted(
+                probe_raw.keys(),
+                key=lambda c: (order_index.get(c, len(order_index)), c),
+            )
+            for cat in sorted_cats:
+                q = probe_raw.get(cat)
+                if isinstance(q, str) and q.strip():
+                    probe_questions.append({"category": cat, "question": q.strip()})
+
         twins.append({
             "twin_id": panel.panel_id,
             "name": scratch.get("display_name") or panel.panel_id,
@@ -291,5 +382,7 @@ async def list_twins(limit: int = 50) -> list[dict]:
             "aspire_ko": scratch.get("aspire_ko"),
             "actual": scratch.get("actual"),
             "actual_ko": scratch.get("actual_ko"),
+            "faithfulness": faithfulness,
+            "probe_questions": probe_questions,
         })
     return twins

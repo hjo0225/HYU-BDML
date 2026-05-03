@@ -14,7 +14,14 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from models.schemas import LabChatRequest, LabTwin, LabTwinsResponse
+from models.schemas import (
+    LabChatRequest,
+    LabJudgeRequest,
+    LabJudgeResponse,
+    LabTwin,
+    LabTwinsResponse,
+)
+from services.lab_judge_service import judge_response
 from services.lab_service import list_twins, stream_chat
 
 
@@ -99,3 +106,59 @@ async def post_chat(req: LabChatRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── 엄격 검증 (L3) ─────────────────────────────────────────────────────────
+
+# {ip: {answer_hash: timestamp}} — 같은 답변 중복 채점 dedup (1시간)
+_judge_dedup: dict[str, dict[str, float]] = defaultdict(dict)
+_JUDGE_DEDUP_WINDOW_SEC = 3600
+# IP별 일일 judge 호출 한도 (채팅 30회와 별도, 같은 메시지 1회까지)
+_JUDGE_DAILY_LIMIT = 60
+
+
+def _check_judge_quota(ip: str, answer: str) -> tuple[bool, str]:
+    """judge dedup + 일일 한도 체크. (ok, reason)."""
+    now = time.time()
+    cutoff = now - _JUDGE_DEDUP_WINDOW_SEC
+
+    bucket = _judge_dedup[ip]
+    # 만료 항목 청소
+    for key in list(bucket.keys()):
+        if bucket[key] < cutoff:
+            del bucket[key]
+
+    answer_hash = str(hash(answer.strip()))
+    if answer_hash in bucket:
+        return False, "duplicate"
+
+    if len(bucket) >= _JUDGE_DAILY_LIMIT:
+        return False, "rate_limit"
+
+    bucket[answer_hash] = now
+    return True, "ok"
+
+
+@router.post("/judge", response_model=LabJudgeResponse)
+async def post_judge(req: LabJudgeRequest, request: Request) -> LabJudgeResponse:
+    """단일 (질문, 답변) 쌍을 LLM-as-judge로 채점. 사용자가 메시지에서 트리거."""
+    if not req.answer.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="answer는 비어 있을 수 없습니다",
+        )
+
+    ip = _client_ip(request)
+    ok, reason = _check_judge_quota(ip, req.answer)
+    if not ok:
+        if reason == "duplicate":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"reason": "duplicate", "message": "이미 검증한 답변입니다."},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"reason": "rate_limit", "limit_per_day": _JUDGE_DAILY_LIMIT},
+        )
+
+    return await judge_response(req.twin_id, req.question, req.answer)

@@ -35,6 +35,7 @@ Backend FastAPI 엔드포인트 명세. Frontend는 `frontend/src/lib/api.ts`를
 | GET    | `/api/usage/stats`      | 사용 통계                      | Admin | -        |
 | GET    | `/api/lab/twins`        | Lab Twin 페르소나 목록         | -     | -        |
 | POST   | `/api/lab/chat`         | Lab 1:1 메신저 채팅            | -     | SSE      |
+| POST   | `/api/lab/judge`        | Lab L3 — 단일 답변 엄격 검증    | -     | -        |
 | GET    | `/api/health`           | 헬스체크                       | -     | -        |
 
 ## 주요 페이로드
@@ -63,23 +64,32 @@ type AgentStreamRequest = {
 
 Lab 실험실용 Twin-2K-500 페르소나 목록. **인증 불필요** (게스트 오픈).
 
-응답:
+응답: `LabTwin`은 인구통계·Big5·자기인식·태그 등 카드/모달용 필드 + ADR-0006의 사전 계산 충실도(`faithfulness`) + 카테고리별 한국어 probe 질문 캐시(`probe_questions`)를 포함한다. 전체 필드는 `models/schemas.py`의 `LabTwin` / `frontend/src/lib/types.ts`의 `LabTwin` 참조.
 
 ```ts
+type LabFaithfulness = {
+  overall: number;                     // 0~1
+  by_category: Record<string, number>; // 예: { "values_environment": 0.8, ... }
+  n_eval: number;
+  evaluated_at?: string | null;        // ISO8601 UTC
+};
+type LabProbeQuestion = {
+  category: string;        // 예: "social_trust"
+  question: string;        // 한국어 메신저 질문
+};
 type LabTwin = {
   twin_id: string;
-  name: string;          // 익명화된 표시 이름
-  emoji: string;
-  age: number;
-  gender: string;
-  occupation: string;
-  region: string;
-  intro: string;         // 1~2문장 짧은 소개 (한국어)
+  name: string;
+  /* ... 인구통계, Big5, 자기인식, 태그 ... */
+  faithfulness?: LabFaithfulness | null;  // ADR-0006: 사전 계산된 데이터 충실도
+  probe_questions: LabProbeQuestion[];     // 채팅 사이드바용 카테고리별 한국어 질문
 };
 type LabTwinsResponse = { twins: LabTwin[] };
 ```
 
 - 시범 단계: `Panel.source='twin2k500'`인 50명만 반환.
+- `faithfulness`는 `eval_lab_faithfulness` 스크립트 결과가 `Panel.scratch.faithfulness`에 저장된 트윈만 채워진다.
+- `probe_questions`는 `seed_lab_probe_questions.py`가 채워둔 `Panel.scratch.probe_questions` (카테고리당 1문항) 캐시를 의미 그룹 순으로 정렬해 반환. 시드되지 않은 트윈은 `[]`.
 
 ### `POST /api/lab/chat`
 
@@ -99,10 +109,53 @@ SSE 이벤트:
 
 - `{ type: "start", twin_id, name }`
 - `{ type: "delta", delta: "..." }`
-- `{ type: "end", content: "<full response>" }`
+- `{ type: "end", content, citations, confidence }` — ADR-0006: A+B 하이브리드 인용·신뢰도 첨부.
 - `{ type: "error", reason: "rate_limit" | "twin_not_found" | "internal" }`
 
+`end` 페이로드 상세:
+
+```ts
+type MemoryCitation = {
+  category: string;          // 예: "values_environment"
+  snippet_en: string;        // 영어 원문(트리밍 ~360자)
+  snippet_ko: string | null; // 향후 확장 — 현재 null
+  score: number;             // 코사인 유사도 0~1
+  via: "llm_self_cite" | "embedding" | "both";
+};
+type LabChatEnd = {
+  type: "end";
+  content: string;                          // 자가인용 마커가 제거된 본문
+  citations: MemoryCitation[];              // 최대 3개
+  confidence: "direct" | "inferred" | "guess" | "unknown";
+};
+```
+
+내부 동작: 시스템 프롬프트가 답변 끝에 `[[CITE: cat1, cat2 | CONF: <level>]]` 마커를 출력하도록 지시. 백엔드가 이 마커를 본문에서 분리한 뒤 답변 임베딩 vs `PanelMemory.embedding` 코사인 top-K로 검증. 매칭 없는 자가인용은 drop된다.
+
 Rate limit 초과 시 HTTP `429 Too Many Requests` + `{ type: "error", reason: "rate_limit", remaining_seconds: <int> }`.
+
+### `POST /api/lab/judge`
+
+ADR-0006 L3 — 단일 (질문, 답변) 쌍을 LLM-as-judge(gpt-4o, temp=0)로 채점. 사용자가 임의 메시지에서 트리거한다. **인증 불필요**, IP 단위 일일 60회 + 같은 답변 1시간 dedup.
+
+```ts
+type LabJudgeRequest = {
+  twin_id: string;
+  question: string;
+  answer: string;
+};
+type LabJudgeResponse = {
+  verdict: "consistent" | "partial" | "contradicts" | "evasive";
+  reason: string;                      // 한국어 2~3줄 설명
+  matched_categories: string[];
+  contradicted_categories: string[];
+};
+```
+
+오류:
+
+- HTTP `409 Conflict` + `{ detail: { reason: "duplicate" } }` — 같은 답변 중복 검증
+- HTTP `429 Too Many Requests` + `{ detail: { reason: "rate_limit" } }` — 일일 한도
 
 ## 스트리밍 규약
 

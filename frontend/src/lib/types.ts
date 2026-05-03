@@ -168,6 +168,20 @@ export interface LabTwinBig5 {
   neuroticism: number | null;
 }
 
+/** 사전 계산된 트윈 충실도 (eval_lab_faithfulness 결과) */
+export interface LabFaithfulness {
+  overall: number;                       // 0~1
+  by_category: Record<string, number>;
+  n_eval: number;
+  evaluated_at?: string | null;
+}
+
+/** 설문 카테고리 기반 한국어 probe 질문 (사이드바 클릭용) */
+export interface LabProbeQuestion {
+  category: string;
+  question: string;
+}
+
 export interface LabTwin {
   twin_id: string;
   name: string;
@@ -193,6 +207,8 @@ export interface LabTwin {
   aspire_ko: string | null;
   actual: string | null;
   actual_ko: string | null;
+  faithfulness?: LabFaithfulness | null;
+  probe_questions?: LabProbeQuestion[];
 }
 
 export interface LabTwinsResponse {
@@ -216,6 +232,39 @@ export interface LabChatStartEvent {
   type: 'start';
   twin_id: string;
   name: string;
+}
+
+export type LabConfidence = 'direct' | 'inferred' | 'guess' | 'unknown';
+export type LabVerdict = 'consistent' | 'partial' | 'contradicts' | 'evasive';
+export type LabCitationVia = 'llm_self_cite' | 'embedding' | 'both';
+
+/** 답변 한 턴의 인용 근거 (A+B 하이브리드 결과) */
+export interface MemoryCitation {
+  category: string;
+  snippet_en: string;
+  snippet_ko: string | null;
+  score: number;
+  via: LabCitationVia;
+}
+
+/** SSE end 페이로드 — 본문 + 인용 + 신뢰도 */
+export interface LabChatEndPayload {
+  content: string;
+  citations: MemoryCitation[];
+  confidence: LabConfidence;
+}
+
+export interface LabJudgeRequest {
+  twin_id: string;
+  question: string;
+  answer: string;
+}
+
+export interface LabJudgeResponse {
+  verdict: LabVerdict;
+  reason: string;
+  matched_categories: string[];
+  contradicted_categories: string[];
 }
 
 // ── 프로젝트 전체 상태 ──

@@ -3,14 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { fetchLabChat, fetchLabTwins } from '@/lib/api';
-import type { LabChatTurn, LabTwin } from '@/lib/types';
+import { fetchLabChat, fetchLabJudge, fetchLabTwins } from '@/lib/api';
+import type {
+  LabChatTurn,
+  LabConfidence,
+  LabJudgeResponse,
+  LabTwin,
+  MemoryCitation,
+} from '@/lib/types';
+import CitationToggle from '@/components/lab/CitationToggle';
+import JudgeVerdictCard from '@/components/lab/JudgeVerdictCard';
+import { FaithfulnessBadge } from '@/components/lab/FaithfulnessBar';
+import SurveyQuestionsPanel from '@/components/lab/SurveyQuestionsPanel';
 
 const STORAGE_PREFIX = 'lab-chat-';
 
 interface DisplayTurn extends LabChatTurn {
   id: number;
   streaming?: boolean;
+  citations?: MemoryCitation[];
+  confidence?: LabConfidence;
+  question?: string;          // twin 턴이 응답한 사용자 질문 (judge 호출용)
+  judging?: boolean;
+  verdict?: LabJudgeResponse;
+  judgeError?: string;
 }
 
 export default function LabTwinChatPage() {
@@ -22,7 +38,13 @@ export default function LabTwinChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const turnIdRef = useRef(1);
+
+  const handleProbeSelect = useCallback((question: string) => {
+    setInput(question);
+    textareaRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +85,9 @@ export default function LabTwinChatPage() {
       window.sessionStorage.removeItem(STORAGE_PREFIX + twinId);
       return;
     }
-    window.sessionStorage.setItem(STORAGE_PREFIX + twinId, JSON.stringify(persistable));
+    // judging 같은 휘발성 플래그는 저장하지 않음
+    const cleaned = persistable.map(({ judging, ...rest }) => rest);
+    window.sessionStorage.setItem(STORAGE_PREFIX + twinId, JSON.stringify(cleaned));
   }, [history, twinId]);
 
   useEffect(() => {
@@ -79,6 +103,34 @@ export default function LabTwinChatPage() {
     }
   };
 
+  const handleJudge = useCallback(
+    async (turnId: number) => {
+      const turn = history.find((t) => t.id === turnId);
+      if (!turn || turn.role !== 'twin' || !turn.content || !turn.question) return;
+      if (turn.judging) return;
+
+      setHistory((prev) =>
+        prev.map((t) => (t.id === turnId ? { ...t, judging: true, judgeError: undefined } : t)),
+      );
+      try {
+        const verdict = await fetchLabJudge({
+          twin_id: twinId,
+          question: turn.question,
+          answer: turn.content,
+        });
+        setHistory((prev) =>
+          prev.map((t) => (t.id === turnId ? { ...t, verdict, judging: false } : t)),
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '검증 실패';
+        setHistory((prev) =>
+          prev.map((t) => (t.id === turnId ? { ...t, judgeError: msg, judging: false } : t)),
+        );
+      }
+    },
+    [history, twinId],
+  );
+
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || sending) return;
@@ -92,6 +144,7 @@ export default function LabTwinChatPage() {
       role: 'twin',
       content: '',
       streaming: true,
+      question: trimmed,
     };
     setHistory((prev) => [...prev, myTurn, twinPlaceholder]);
     setInput('');
@@ -114,11 +167,17 @@ export default function LabTwinChatPage() {
               ),
             );
           },
-          onEnd: (content) => {
+          onEnd: ({ content, citations, confidence }) => {
             setHistory((prev) =>
               prev.map((t) =>
                 t.id === twinPlaceholder.id
-                  ? { ...t, content, streaming: false }
+                  ? {
+                      ...t,
+                      content,
+                      citations,
+                      confidence,
+                      streaming: false,
+                    }
                   : t,
               ),
             );
@@ -149,14 +208,22 @@ export default function LabTwinChatPage() {
   };
 
   return (
-    <div className="lab-chat">
-      <div className="lab-chat__topbar">
+    <div className="lab-chat-shell">
+      <div className="lab-chat">
+        <div className="lab-chat__topbar">
         <Link href="/lab/twin-chat" className="lab-chat__back">
           ← 목록
         </Link>
         <div className="lab-chat__avatar">{twin?.emoji || '🧑'}</div>
         <div className="lab-chat__title">
-          <div className="lab-chat__name">{twin?.name || twinId}</div>
+          <div className="lab-chat__name">
+            {twin?.name || twinId}
+            {twin?.faithfulness && (
+              <span style={{ marginLeft: 8 }}>
+                <FaithfulnessBadge faithfulness={twin.faithfulness} compact />
+              </span>
+            )}
+          </div>
           <div className="lab-chat__sub">
             {twin
               ? [twin.age ? `${twin.age}세` : null, twin.gender, twin.occupation]
@@ -183,9 +250,27 @@ export default function LabTwinChatPage() {
             <div className="lab-chat__msg-avatar">
               {turn.role === 'me' ? '나' : twin?.emoji || '🧑'}
             </div>
-            <div className="lab-chat__bubble">
-              {turn.content || (turn.streaming ? '...' : '')}
-              {turn.streaming && turn.content && <span className="streaming-cursor" />}
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <div className="lab-chat__bubble">
+                {turn.content || (turn.streaming ? '...' : '')}
+                {turn.streaming && turn.content && <span className="streaming-cursor" />}
+              </div>
+              {turn.role === 'twin' && !turn.streaming && (turn.confidence || (turn.citations && turn.citations.length > 0)) && (
+                <CitationToggle
+                  citations={turn.citations || []}
+                  confidence={turn.confidence || 'unknown'}
+                  onJudgeClick={turn.question ? () => handleJudge(turn.id) : undefined}
+                  judging={turn.judging}
+                />
+              )}
+              {turn.role === 'twin' && turn.judgeError && (
+                <div className="lab-chat__error" style={{ marginTop: 6 }}>
+                  {turn.judgeError}
+                </div>
+              )}
+              {turn.role === 'twin' && turn.verdict && (
+                <JudgeVerdictCard verdict={turn.verdict} />
+              )}
             </div>
           </div>
         ))}
@@ -194,6 +279,7 @@ export default function LabTwinChatPage() {
 
       <div className="lab-chat__inputbar">
         <textarea
+          ref={textareaRef}
           className="lab-chat__textarea"
           placeholder="메시지 입력 (Enter: 전송, Shift+Enter: 줄바꿈)"
           value={input}
@@ -209,6 +295,12 @@ export default function LabTwinChatPage() {
           {sending ? '응답 중...' : '전송'}
         </button>
       </div>
+      </div>
+      <SurveyQuestionsPanel
+        probeQuestions={twin?.probe_questions ?? []}
+        onSelect={handleProbeSelect}
+        disabled={sending}
+      />
     </div>
   );
 }

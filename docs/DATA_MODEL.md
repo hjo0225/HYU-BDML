@@ -89,7 +89,7 @@ JWT 리프레시 토큰. 무효화를 위해 해시 저장.
 | cluster | INT (NOT NULL) | FGI: K-means 라벨 0~24 / Twin: 100~104 (오프셋 100, K=5) — 두 source의 클러스터 공간 완전 분리 |
 | 인구통계(age, gender, occupation, region 등) | various | |
 | 8개 행동 차원 | various | FGI 전용 (Twin은 NULL) |
-| scratch | JSONB | `{age, gender, occupation, region, traits, life_events, ...}` |
+| scratch | JSONB | `{age, gender, occupation, region, traits, life_events, ...}` — Lab(twin2k500)은 ADR-0006의 `probe_questions: {category: question_ko}`와 `faithfulness: {overall, by_category, n_eval, evaluated_at}`도 같은 JSONB에 키로 추가됨 (스키마 변경 없음) |
 | avg_embedding | vector(1536) | 패널 메모리 평균 벡터 — FGI 1차 스코어링용. Twin은 다양성 K-means에 사용 |
 | persona_full | TEXT | Twin 전용 — Toubia 풀-프롬프트 채팅용 persona_json 원본 (~170k chars). FGI는 NULL |
 
