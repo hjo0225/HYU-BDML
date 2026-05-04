@@ -15,6 +15,7 @@ import type {
   EvidenceItem,
   ThinkingEvent,
   LabTwin,
+  LabTwinDetail,
   LabTwinsResponse,
   LabChatRequest,
   LabChatStartEvent,
@@ -635,6 +636,12 @@ export async function fetchLabTwins(): Promise<LabTwin[]> {
   if (!res.ok) throw new Error(`Twin 목록 조회 실패: ${res.status}`);
   const data = (await res.json()) as LabTwinsResponse;
   return data.twins;
+}
+
+export async function fetchLabTwinDetail(twinId: string): Promise<LabTwinDetail> {
+  const res = await fetch(`${API_BASE}/lab/twins/${encodeURIComponent(twinId)}`);
+  if (!res.ok) throw new Error(`Twin 상세 조회 실패: ${res.status}`);
+  return (await res.json()) as LabTwinDetail;
 }
 
 export interface LabChatCallbacks {

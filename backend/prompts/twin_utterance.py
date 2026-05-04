@@ -46,7 +46,7 @@ You must answer the user's questions as if you were that person.
 # ── 마커 파싱 ────────────────────────────────────────────────────────────
 
 # [[CITE: a, b | CONF: direct]] 형태. 줄 끝(라인 단위)이거나 텍스트 끝일 수 있음.
-_MARKER_RE = re.compile(
+CITE_MARKER_RE = re.compile(
     r"\[\[\s*CITE\s*:\s*([^|\]]*)\|\s*CONF\s*:\s*([a-zA-Z_]+)\s*\]\]",
     re.IGNORECASE,
 )
@@ -68,7 +68,7 @@ def parse_citation_marker(text: str) -> tuple[str, list[str], str]:
     if not text:
         return "", [], "unknown"
 
-    matches = list(_MARKER_RE.finditer(text))
+    matches = list(CITE_MARKER_RE.finditer(text))
     if not matches:
         return text.strip(), [], "unknown"
 
@@ -85,7 +85,7 @@ def parse_citation_marker(text: str) -> tuple[str, list[str], str]:
         conf = "unknown"
 
     # 텍스트에서 모든 마커 라인 제거 (마지막 한 줄만 일반적이지만 방어적으로)
-    clean = _MARKER_RE.sub("", text).strip()
+    clean = CITE_MARKER_RE.sub("", text).strip()
     return clean, cats, conf
 
 

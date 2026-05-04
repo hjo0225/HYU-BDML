@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import type { LabConfidence, MemoryCitation } from '@/lib/types';
 import { categoryLabel } from './categoryLabels';
 
@@ -23,7 +22,6 @@ export default function CitationToggle({
   citations,
   confidence,
 }: Props) {
-  const [open, setOpen] = useState(false);
   const meta = CONFIDENCE_META[confidence] ?? CONFIDENCE_META.unknown;
   const hasCitations = citations.length > 0;
 
@@ -37,17 +35,10 @@ export default function CitationToggle({
           {meta.dot} {meta.label}
         </span>
         {hasCitations && (
-          <button
-            type="button"
-            className="lab-cite__toggle"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-          >
-            🔍 근거 {citations.length}개 {open ? '▲' : '▼'}
-          </button>
+          <span className="lab-cite__count">🔍 근거 {citations.length}개</span>
         )}
       </div>
-      {open && hasCitations && (
+      {hasCitations && (
         <ul className="lab-cite__list">
           {citations.map((c, idx) => (
             <li key={`${c.category}-${idx}`} className="lab-cite__item">

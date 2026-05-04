@@ -17,9 +17,10 @@ from fastapi.responses import StreamingResponse
 from models.schemas import (
     LabChatRequest,
     LabTwin,
+    LabTwinDetail,
     LabTwinsResponse,
 )
-from services.lab_service import list_twins, stream_chat
+from services.lab_service import get_twin_detail, list_twins, stream_chat
 
 
 router = APIRouter(prefix="/api/lab", tags=["lab"])
@@ -63,6 +64,21 @@ async def get_twins() -> LabTwinsResponse:
     """Lab 페이지에 표시할 Twin 페르소나 목록 (시범 50명)."""
     rows = await list_twins(limit=50)
     return LabTwinsResponse(twins=[LabTwin(**r) for r in rows])
+
+
+@router.get("/twins/{twin_id}", response_model=LabTwinDetail)
+async def get_twin(twin_id: str) -> LabTwinDetail:
+    """단일 Twin 상세 — 카드 정보 + persona_full 원본.
+
+    채팅 페이지 우측 패널이 "에이전트 입력값"을 가시화할 때 호출.
+    """
+    detail = await get_twin_detail(twin_id)
+    if not detail:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"reason": "twin_not_found"},
+        )
+    return LabTwinDetail(**detail)
 
 
 @router.post("/chat")

@@ -215,6 +215,17 @@ export interface LabTwinsResponse {
   twins: LabTwin[];
 }
 
+/**
+ * 단일 Twin 상세 — 카드 + 풀 페르소나 원본(JSON 텍스트).
+ *
+ * `persona_full`은 Toubia 풀-프롬프트로 시스템 프롬프트에 그대로 주입된
+ * persona_json 문자열(~170k chars). 채팅 페이지 우측 "에이전트 입력값"
+ * 패널이 JSON.parse 후 사람이 읽기 좋은 섹션으로 펼쳐 보여준다.
+ */
+export interface LabTwinDetail extends LabTwin {
+  persona_full: string | null;
+}
+
 export type LabChatRole = 'me' | 'twin';
 
 export interface LabChatTurn {

@@ -1,5 +1,5 @@
 // PanelMemory.category 슬러그 → 한국어 라벨.
-// CitationToggle, SurveyQuestionsPanel 등 Lab 컴포넌트가 공유한다.
+// CitationToggle 등 Lab 컴포넌트가 공유한다.
 export const CATEGORY_KO: Record<string, string> = {
   demographics:           '인구통계',
   personality_big5:       'Big5 성격',

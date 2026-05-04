@@ -34,6 +34,7 @@ Backend FastAPI 엔드포인트 명세. Frontend는 `frontend/src/lib/api.ts`를
 | GET    | `/api/usage/history`    | 활동 로그                      | Admin | -        |
 | GET    | `/api/usage/stats`      | 사용 통계                      | Admin | -        |
 | GET    | `/api/lab/twins`        | Lab Twin 페르소나 목록         | -     | -        |
+| GET    | `/api/lab/twins/{id}`   | Lab Twin 단일 상세 + persona_full | -  | -        |
 | POST   | `/api/lab/chat`         | Lab 1:1 메신저 채팅            | -     | SSE      |
 | GET    | `/api/health`           | 헬스체크                       | -     | -        |
 
@@ -90,6 +91,19 @@ type LabTwinsResponse = { twins: LabTwin[] };
 - `faithfulness`는 `eval_lab_faithfulness` 스크립트 결과가 `Panel.scratch.faithfulness`에 저장된 트윈만 채워진다.
 - `probe_questions`는 `seed_lab_probe_questions.py`가 채워둔 `Panel.scratch.probe_questions` (카테고리당 1문항) 캐시를 의미 그룹 순으로 정렬해 반환. 시드되지 않은 트윈은 `[]`.
 
+### `GET /api/lab/twins/{twin_id}`
+
+Lab 채팅 페이지 우측 "에이전트 입력값" 패널이 호출. **인증 불필요**. `LabTwin` 모든 필드 + `persona_full`(Toubia 풀-프롬프트로 시스템 프롬프트에 그대로 주입되는 `persona_json` 텍스트, 영문 ~170k chars)을 함께 반환한다.
+
+```ts
+type LabTwinDetail = LabTwin & {
+  persona_full: string | null;  // panels.persona_full 원본 (없으면 null)
+};
+```
+
+- 트윈이 없거나 `source='twin2k500'`이 아니면 `404 { detail: { reason: "twin_not_found" } }`.
+- 클라이언트는 `persona_full`을 `JSON.parse`한 뒤 최상위 키를 섹션 헤더로 풀어 사람이 읽기 좋게 가시화한다(`PersonaInputPanel`).
+
 ### `POST /api/lab/chat`
 
 Lab 1:1 메신저. **인증 불필요** + **IP 단위 일일 30회 rate limit**. SSE 스트리밍.
@@ -107,9 +121,9 @@ type LabChatRequest = {
 SSE 이벤트:
 
 - `{ type: "start", twin_id, name }`
-- `{ type: "delta", delta: "..." }`
+- `{ type: "delta", delta: "..." }` — 본문 토큰 스트리밍. **`[[CITE: ... | CONF: ...]]` 자가인용 마커는 서버에서 제거된 뒤 클라이언트로 전달된다** (delta에는 절대 포함되지 않음).
 - `{ type: "end", content, citations, confidence }` — ADR-0006: A+B 하이브리드 인용·신뢰도 첨부.
-- `{ type: "error", reason: "rate_limit" | "twin_not_found" | "internal" }`
+- `{ type: "error", reason: "rate_limit" | "twin_not_found" | "persona_missing" | "internal" }`
 
 `end` 페이로드 상세:
 

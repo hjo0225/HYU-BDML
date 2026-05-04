@@ -23,6 +23,7 @@ import services.openai_client  # noqa: F401  (환경변수 로드)
 from database import AsyncSessionLocal, Panel
 from prompts.twin_utterance import (
     TWIN_UTTERANCE_PROMPT,
+    CITE_MARKER_RE,
     format_chat_history,
     parse_citation_marker,
 )
@@ -154,9 +155,33 @@ async def stream_chat(
     full_text = ""
     input_tokens = 0
     output_tokens = 0
-    # 마커 파서가 마지막 [[CITE: ...]] 블록만 잘라내므로, delta는 모델이 흘려보내는
-    # 그대로 사용자에게 전송한다. 마커가 도착하면 사용자 화면에 잠깐 보일 수 있으나
-    # 보통 마지막 줄에 한 번만 나타나고 곧 end 이벤트로 정리된 본문이 덮어쓴다.
+    # delta는 [[CITE: ... | CONF: ...]] 마커를 절대 노출하지 않는다.
+    # buffered에 토큰을 쌓고, 완성된 마커는 즉시 제거하며, 미완 "[[" 이후 꼬리는
+    # 닫힐 때까지 들고 있다가 일반 텍스트로 판명되면 그 시점에 흘려보낸다.
+    buffered = ""
+
+    def _flush_buffered(force_end: bool = False) -> str:
+        nonlocal buffered
+        # 1) 완성된 마커는 모두 제거
+        cleaned = CITE_MARKER_RE.sub("", buffered)
+        # 2) 미완 "[[" 이후 꼬리는 보류 (마커가 닫힐 가능성)
+        open_pos = cleaned.rfind("[[")
+        if open_pos != -1 and "]]" not in cleaned[open_pos:]:
+            tail = cleaned[open_pos:]
+            head = cleaned[:open_pos]
+            if force_end:
+                # 스트림 종료 — 꼬리가 CITE 마커 프리픽스이면 폐기, 아니면 그대로 흘림
+                tail_lc = tail.lower().lstrip("[ ")
+                if tail_lc.startswith("cite") or tail_lc == "":
+                    buffered = ""
+                    return head
+                buffered = ""
+                return cleaned
+            buffered = tail
+            return head
+        buffered = ""
+        return cleaned
+
     try:
         async for chunk in _llm.astream([
             SystemMessage(content=system_prompt),
@@ -165,11 +190,18 @@ async def stream_chat(
             delta = chunk.content
             if delta:
                 full_text += delta
-                yield _sse({"type": "delta", "delta": delta})
+                buffered += delta
+                emit = _flush_buffered()
+                if emit:
+                    yield _sse({"type": "delta", "delta": emit})
             usage = getattr(chunk, "usage_metadata", None)
             if usage:
                 input_tokens = usage.get("input_tokens", 0)
                 output_tokens = usage.get("output_tokens", 0)
+        # 스트림 끝 — 잔여 보류분 정리 후 한 번 더 흘림
+        tail_emit = _flush_buffered(force_end=True)
+        if tail_emit:
+            yield _sse({"type": "delta", "delta": tail_emit})
     except Exception as exc:  # noqa: BLE001
         print(f"[lab] LLM 스트리밍 실패: {exc}")
         yield _sse({"type": "error", "reason": "internal"})
@@ -302,6 +334,91 @@ def _build_tags(scratch: dict) -> list[str]:
     return tags[:5]
 
 
+def _twin_card(panel: Panel) -> dict:
+    """Panel ORM 1건 → 카드/모달용 dict (list_twins / get_twin_detail 공통)."""
+    scratch = panel.scratch
+    if isinstance(scratch, str):
+        scratch = json.loads(scratch)
+    scratch = scratch or {}
+
+    big5_raw = scratch.get("big5") or {}
+    big5: dict[str, int] = {}
+    for dim in ("openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"):
+        entry = big5_raw.get(dim)
+        if isinstance(entry, dict) and entry.get("percentile") is not None:
+            big5[dim] = int(entry["percentile"])
+
+    faithfulness = scratch.get("faithfulness")
+    if not (
+        isinstance(faithfulness, dict)
+        and "overall" in faithfulness
+        and isinstance(faithfulness.get("by_category"), dict)
+    ):
+        faithfulness = None
+
+    probe_raw = scratch.get("probe_questions") or {}
+    probe_questions: list[dict] = []
+    if isinstance(probe_raw, dict) and probe_raw:
+        order_index = {cat: i for i, cat in enumerate(_PROBE_CATEGORY_ORDER)}
+        sorted_cats = sorted(
+            probe_raw.keys(),
+            key=lambda c: (order_index.get(c, len(order_index)), c),
+        )
+        for cat in sorted_cats:
+            q = probe_raw.get(cat)
+            if isinstance(q, str) and q.strip():
+                probe_questions.append({"category": cat, "question": q.strip()})
+
+    return {
+        "twin_id": panel.panel_id,
+        "name": scratch.get("display_name") or panel.panel_id,
+        "emoji": scratch.get("emoji") or "🧑",
+        "age": panel.age or scratch.get("age"),
+        "age_range": scratch.get("age_range"),
+        "gender": panel.gender or scratch.get("gender"),
+        "occupation": panel.occupation or scratch.get("occupation"),
+        "region": panel.region or scratch.get("region"),
+        "intro": scratch.get("intro_ko") or "(소개 정보 없음)",
+        "race": scratch.get("race"),
+        "education": scratch.get("education"),
+        "marital_status": scratch.get("marital_status"),
+        "religion": scratch.get("religion"),
+        "income": scratch.get("income"),
+        "household_size": (
+            str(scratch["household_size"]) if scratch.get("household_size") not in (None, "") else None
+        ),
+        "political_views": scratch.get("political_views"),
+        "political_affiliation": scratch.get("political_affiliation"),
+        "big5": big5 or None,
+        "traits": scratch.get("traits") or [],
+        "tags": _build_tags(scratch),
+        "aspire": scratch.get("aspire"),
+        "aspire_ko": scratch.get("aspire_ko"),
+        "actual": scratch.get("actual"),
+        "actual_ko": scratch.get("actual_ko"),
+        "faithfulness": faithfulness,
+        "probe_questions": probe_questions,
+    }
+
+
+async def get_twin_detail(twin_id: str) -> dict | None:
+    """단일 Twin 상세 (카드 정보 + persona_full 원본)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Panel).where(
+                Panel.panel_id == twin_id,
+                Panel.source == "twin2k500",
+            )
+        )
+        panel = result.scalar_one_or_none()
+        if not panel:
+            return None
+
+    card = _twin_card(panel)
+    card["persona_full"] = panel.persona_full or None
+    return card
+
+
 async def list_twins(limit: int = 50) -> list[dict]:
     """Lab 카드용 Twin 목록.
 
@@ -315,74 +432,4 @@ async def list_twins(limit: int = 50) -> list[dict]:
         )
         rows = result.scalars().all()
 
-    twins: list[dict] = []
-    for panel in rows:
-        scratch = panel.scratch
-        if isinstance(scratch, str):
-            scratch = json.loads(scratch)
-        scratch = scratch or {}
-
-        # Big5는 {dim: {value, percentile}} 구조 — percentile만 추출하여 0~100 정수로 평탄화
-        big5_raw = scratch.get("big5") or {}
-        big5: dict[str, int] = {}
-        for dim in ("openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"):
-            entry = big5_raw.get(dim)
-            if isinstance(entry, dict) and entry.get("percentile") is not None:
-                big5[dim] = int(entry["percentile"])
-
-        # 사전 계산된 충실도 (eval_lab_faithfulness 결과). scratch.faithfulness는
-        # {overall, by_category, n_eval, evaluated_at} 형태. 누락이면 None.
-        faithfulness = scratch.get("faithfulness")
-        if not (
-            isinstance(faithfulness, dict)
-            and "overall" in faithfulness
-            and isinstance(faithfulness.get("by_category"), dict)
-        ):
-            faithfulness = None
-
-        # seed_lab_probe_questions.py가 채워둔 카테고리별 한국어 질문 캐시.
-        # dict → 안정 순서 list로 변환. 알 수 없는 카테고리는 뒤에 알파벳순.
-        probe_raw = scratch.get("probe_questions") or {}
-        probe_questions: list[dict] = []
-        if isinstance(probe_raw, dict) and probe_raw:
-            order_index = {cat: i for i, cat in enumerate(_PROBE_CATEGORY_ORDER)}
-            sorted_cats = sorted(
-                probe_raw.keys(),
-                key=lambda c: (order_index.get(c, len(order_index)), c),
-            )
-            for cat in sorted_cats:
-                q = probe_raw.get(cat)
-                if isinstance(q, str) and q.strip():
-                    probe_questions.append({"category": cat, "question": q.strip()})
-
-        twins.append({
-            "twin_id": panel.panel_id,
-            "name": scratch.get("display_name") or panel.panel_id,
-            "emoji": scratch.get("emoji") or "🧑",
-            "age": panel.age or scratch.get("age"),
-            "age_range": scratch.get("age_range"),
-            "gender": panel.gender or scratch.get("gender"),
-            "occupation": panel.occupation or scratch.get("occupation"),
-            "region": panel.region or scratch.get("region"),
-            "intro": scratch.get("intro_ko") or "(소개 정보 없음)",
-            "race": scratch.get("race"),
-            "education": scratch.get("education"),
-            "marital_status": scratch.get("marital_status"),
-            "religion": scratch.get("religion"),
-            "income": scratch.get("income"),
-            "household_size": (
-                str(scratch["household_size"]) if scratch.get("household_size") not in (None, "") else None
-            ),
-            "political_views": scratch.get("political_views"),
-            "political_affiliation": scratch.get("political_affiliation"),
-            "big5": big5 or None,
-            "traits": scratch.get("traits") or [],
-            "tags": _build_tags(scratch),
-            "aspire": scratch.get("aspire"),
-            "aspire_ko": scratch.get("aspire_ko"),
-            "actual": scratch.get("actual"),
-            "actual_ko": scratch.get("actual_ko"),
-            "faithfulness": faithfulness,
-            "probe_questions": probe_questions,
-        })
-    return twins
+    return [_twin_card(p) for p in rows]

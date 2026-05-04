@@ -12,7 +12,7 @@ import type {
 } from '@/lib/types';
 import CitationToggle from '@/components/lab/CitationToggle';
 import { FaithfulnessBadge } from '@/components/lab/FaithfulnessBar';
-import SurveyQuestionsPanel from '@/components/lab/SurveyQuestionsPanel';
+import PersonaInputPanel from '@/components/lab/PersonaInputPanel';
 
 const STORAGE_PREFIX = 'lab-chat-';
 
@@ -34,11 +34,6 @@ export default function LabTwinChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const turnIdRef = useRef(1);
-
-  const handleProbeSelect = useCallback((question: string) => {
-    setInput(question);
-    textareaRef.current?.focus();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -249,11 +244,7 @@ export default function LabTwinChatPage() {
         </button>
       </div>
       </div>
-      <SurveyQuestionsPanel
-        probeQuestions={twin?.probe_questions ?? []}
-        onSelect={handleProbeSelect}
-        disabled={sending}
-      />
+      <PersonaInputPanel twinId={twinId} />
     </div>
   );
 }

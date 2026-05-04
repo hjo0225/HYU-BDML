@@ -228,6 +228,14 @@ class LabTwin(BaseModel):
 class LabTwinsResponse(BaseModel):
     twins: list[LabTwin]
 
+class LabTwinDetail(LabTwin):
+    """단일 Twin 상세 — 카드 정보 + 풀 페르소나 원본(JSON 텍스트).
+
+    풀 페르소나는 Toubia 풀-프롬프트로 시스템 프롬프트에 주입된 그대로의 텍스트
+    (~170k chars). Lab 채팅 페이지 우측 패널에서 "에이전트 입력값" 가시화에 사용.
+    """
+    persona_full: str | None = None
+
 class LabChatTurn(BaseModel):
     """클라이언트가 보내는 직전 채팅 히스토리 한 턴."""
     role: Literal["me", "twin"]
