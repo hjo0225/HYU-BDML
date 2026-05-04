@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { fetchLabChat, fetchLabTwins } from '@/lib/api';
@@ -165,6 +165,17 @@ export default function LabTwinChatPage() {
     }
   };
 
+  // 가장 최근 완료된 트윈 응답의 인용 — 우측 입력값 패널 하이라이트용.
+  const latestCitations = useMemo<MemoryCitation[]>(() => {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const t = history[i];
+      if (t.role === 'twin' && !t.streaming && t.citations && t.citations.length > 0) {
+        return t.citations;
+      }
+    }
+    return [];
+  }, [history]);
+
   return (
     <div className="lab-chat-shell">
       <div className="lab-chat">
@@ -244,7 +255,7 @@ export default function LabTwinChatPage() {
         </button>
       </div>
       </div>
-      <PersonaInputPanel twinId={twinId} />
+      <PersonaInputPanel twinId={twinId} citations={latestCitations} />
     </div>
   );
 }

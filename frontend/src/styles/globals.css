@@ -2732,9 +2732,9 @@ details[open] .minutes-appendix-summary::before {
 /* Lab 채팅 페이지 */
 .lab-chat-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
-  max-width: 1200px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+  gap: 20px;
+  max-width: 1480px;
   margin: 0 auto;
   padding: 0 20px;
   align-items: stretch;
@@ -2805,6 +2805,36 @@ details[open] .minutes-appendix-summary::before {
   border-radius: 8px;
   background: var(--surface);
   overflow: hidden;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.lab-input__section--cited {
+  border-color: #2fa86b;
+  background: #eafbf2;
+  box-shadow: 0 0 0 2px rgba(47, 168, 107, 0.18);
+  animation: lab-input-cited-pulse 1.6s ease-out 1;
+}
+
+.lab-input__section--cited .lab-input__section-header {
+  color: #0f5132;
+}
+
+.lab-input__cited-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #0f5132;
+  background: #cdf0dc;
+  border: 1px solid #2fa86b;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+@keyframes lab-input-cited-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(47, 168, 107, 0.55); }
+  60%  { box-shadow: 0 0 0 8px rgba(47, 168, 107, 0); }
+  100% { box-shadow: 0 0 0 2px rgba(47, 168, 107, 0.18); }
 }
 
 .lab-input__section-header {
@@ -2856,8 +2886,8 @@ details[open] .minutes-appendix-summary::before {
 
 .lab-input__kv-row {
   display: grid;
-  grid-template-columns: minmax(80px, 0.4fr) 1fr;
-  gap: 8px;
+  grid-template-columns: minmax(110px, 0.45fr) 1fr;
+  gap: 10px;
   align-items: start;
 }
 
@@ -2927,7 +2957,7 @@ details[open] .minutes-appendix-summary::before {
   margin: 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1080px) {
   .lab-chat-shell {
     grid-template-columns: 1fr;
   }
