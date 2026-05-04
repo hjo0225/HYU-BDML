@@ -20,8 +20,6 @@ import type {
   LabChatStartEvent,
   LabChatEndPayload,
   LabConfidence,
-  LabJudgeRequest,
-  LabJudgeResponse,
   MemoryCitation,
 } from './types';
 
@@ -731,30 +729,6 @@ export async function fetchLabChat(
       }
     }
   }
-}
-
-/**
- * Lab L3 — 단일 (질문, 답변) 쌍을 LLM-as-judge로 채점.
- * 인증 없이 호출. 같은 답변을 1시간 내 중복 채점하면 409로 거절됨.
- */
-export async function fetchLabJudge(
-  data: LabJudgeRequest,
-): Promise<LabJudgeResponse> {
-  const res = await fetch(`${API_BASE}/lab/judge`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (res.status === 429) {
-    throw new Error('일일 검증 한도에 도달했습니다. 내일 다시 시도해 주세요.');
-  }
-  if (res.status === 409) {
-    throw new Error('이미 검증한 답변입니다.');
-  }
-  if (!res.ok) {
-    throw new Error(`검증 실패: ${res.status}`);
-  }
-  return (await res.json()) as LabJudgeResponse;
 }
 
 export async function synthesizePrompt(

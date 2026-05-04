@@ -3,16 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { fetchLabChat, fetchLabJudge, fetchLabTwins } from '@/lib/api';
+import { fetchLabChat, fetchLabTwins } from '@/lib/api';
 import type {
   LabChatTurn,
   LabConfidence,
-  LabJudgeResponse,
   LabTwin,
   MemoryCitation,
 } from '@/lib/types';
 import CitationToggle from '@/components/lab/CitationToggle';
-import JudgeVerdictCard from '@/components/lab/JudgeVerdictCard';
 import { FaithfulnessBadge } from '@/components/lab/FaithfulnessBar';
 import SurveyQuestionsPanel from '@/components/lab/SurveyQuestionsPanel';
 
@@ -23,10 +21,6 @@ interface DisplayTurn extends LabChatTurn {
   streaming?: boolean;
   citations?: MemoryCitation[];
   confidence?: LabConfidence;
-  question?: string;          // twin 턴이 응답한 사용자 질문 (judge 호출용)
-  judging?: boolean;
-  verdict?: LabJudgeResponse;
-  judgeError?: string;
 }
 
 export default function LabTwinChatPage() {
@@ -85,9 +79,7 @@ export default function LabTwinChatPage() {
       window.sessionStorage.removeItem(STORAGE_PREFIX + twinId);
       return;
     }
-    // judging 같은 휘발성 플래그는 저장하지 않음
-    const cleaned = persistable.map(({ judging, ...rest }) => rest);
-    window.sessionStorage.setItem(STORAGE_PREFIX + twinId, JSON.stringify(cleaned));
+    window.sessionStorage.setItem(STORAGE_PREFIX + twinId, JSON.stringify(persistable));
   }, [history, twinId]);
 
   useEffect(() => {
@@ -103,34 +95,6 @@ export default function LabTwinChatPage() {
     }
   };
 
-  const handleJudge = useCallback(
-    async (turnId: number) => {
-      const turn = history.find((t) => t.id === turnId);
-      if (!turn || turn.role !== 'twin' || !turn.content || !turn.question) return;
-      if (turn.judging) return;
-
-      setHistory((prev) =>
-        prev.map((t) => (t.id === turnId ? { ...t, judging: true, judgeError: undefined } : t)),
-      );
-      try {
-        const verdict = await fetchLabJudge({
-          twin_id: twinId,
-          question: turn.question,
-          answer: turn.content,
-        });
-        setHistory((prev) =>
-          prev.map((t) => (t.id === turnId ? { ...t, verdict, judging: false } : t)),
-        );
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '검증 실패';
-        setHistory((prev) =>
-          prev.map((t) => (t.id === turnId ? { ...t, judgeError: msg, judging: false } : t)),
-        );
-      }
-    },
-    [history, twinId],
-  );
-
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || sending) return;
@@ -144,7 +108,6 @@ export default function LabTwinChatPage() {
       role: 'twin',
       content: '',
       streaming: true,
-      question: trimmed,
     };
     setHistory((prev) => [...prev, myTurn, twinPlaceholder]);
     setInput('');
@@ -259,17 +222,7 @@ export default function LabTwinChatPage() {
                 <CitationToggle
                   citations={turn.citations || []}
                   confidence={turn.confidence || 'unknown'}
-                  onJudgeClick={turn.question ? () => handleJudge(turn.id) : undefined}
-                  judging={turn.judging}
                 />
-              )}
-              {turn.role === 'twin' && turn.judgeError && (
-                <div className="lab-chat__error" style={{ marginTop: 6 }}>
-                  {turn.judgeError}
-                </div>
-              )}
-              {turn.role === 'twin' && turn.verdict && (
-                <JudgeVerdictCard verdict={turn.verdict} />
               )}
             </div>
           </div>

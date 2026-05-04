@@ -250,11 +250,6 @@ class MemoryCitation(BaseModel):
     score: float             # 코사인 유사도 (0~1)
     via: Literal["llm_self_cite", "embedding", "both"] = "embedding"
 
-class LabJudgeRequest(BaseModel):
-    twin_id: str
-    question: str
-    answer: str
-
 class LabJudgeResponse(BaseModel):
     verdict: LabVerdict
     reason: str

@@ -35,7 +35,6 @@ Backend FastAPI 엔드포인트 명세. Frontend는 `frontend/src/lib/api.ts`를
 | GET    | `/api/usage/stats`      | 사용 통계                      | Admin | -        |
 | GET    | `/api/lab/twins`        | Lab Twin 페르소나 목록         | -     | -        |
 | POST   | `/api/lab/chat`         | Lab 1:1 메신저 채팅            | -     | SSE      |
-| POST   | `/api/lab/judge`        | Lab L3 — 단일 답변 엄격 검증    | -     | -        |
 | GET    | `/api/health`           | 헬스체크                       | -     | -        |
 
 ## 주요 페이로드
@@ -133,29 +132,6 @@ type LabChatEnd = {
 내부 동작: 시스템 프롬프트가 답변 끝에 `[[CITE: cat1, cat2 | CONF: <level>]]` 마커를 출력하도록 지시. 백엔드가 이 마커를 본문에서 분리한 뒤 답변 임베딩 vs `PanelMemory.embedding` 코사인 top-K로 검증. 매칭 없는 자가인용은 drop된다.
 
 Rate limit 초과 시 HTTP `429 Too Many Requests` + `{ type: "error", reason: "rate_limit", remaining_seconds: <int> }`.
-
-### `POST /api/lab/judge`
-
-ADR-0006 L3 — 단일 (질문, 답변) 쌍을 LLM-as-judge(gpt-4o, temp=0)로 채점. 사용자가 임의 메시지에서 트리거한다. **인증 불필요**, IP 단위 일일 60회 + 같은 답변 1시간 dedup.
-
-```ts
-type LabJudgeRequest = {
-  twin_id: string;
-  question: string;
-  answer: string;
-};
-type LabJudgeResponse = {
-  verdict: "consistent" | "partial" | "contradicts" | "evasive";
-  reason: string;                      // 한국어 2~3줄 설명
-  matched_categories: string[];
-  contradicted_categories: string[];
-};
-```
-
-오류:
-
-- HTTP `409 Conflict` + `{ detail: { reason: "duplicate" } }` — 같은 답변 중복 검증
-- HTTP `429 Too Many Requests` + `{ detail: { reason: "rate_limit" } }` — 일일 한도
 
 ## 스트리밍 규약
 

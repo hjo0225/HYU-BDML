@@ -235,7 +235,6 @@ export interface LabChatStartEvent {
 }
 
 export type LabConfidence = 'direct' | 'inferred' | 'guess' | 'unknown';
-export type LabVerdict = 'consistent' | 'partial' | 'contradicts' | 'evasive';
 export type LabCitationVia = 'llm_self_cite' | 'embedding' | 'both';
 
 /** 답변 한 턴의 인용 근거 (A+B 하이브리드 결과) */
@@ -252,19 +251,6 @@ export interface LabChatEndPayload {
   content: string;
   citations: MemoryCitation[];
   confidence: LabConfidence;
-}
-
-export interface LabJudgeRequest {
-  twin_id: string;
-  question: string;
-  answer: string;
-}
-
-export interface LabJudgeResponse {
-  verdict: LabVerdict;
-  reason: string;
-  matched_categories: string[];
-  contradicted_categories: string[];
 }
 
 // ── 프로젝트 전체 상태 ──

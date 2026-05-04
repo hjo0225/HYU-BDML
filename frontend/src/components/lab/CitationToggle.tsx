@@ -17,15 +17,11 @@ const CONFIDENCE_META: Record<
 interface Props {
   citations: MemoryCitation[];
   confidence: LabConfidence;
-  onJudgeClick?: () => void;
-  judging?: boolean;
 }
 
 export default function CitationToggle({
   citations,
   confidence,
-  onJudgeClick,
-  judging,
 }: Props) {
   const [open, setOpen] = useState(false);
   const meta = CONFIDENCE_META[confidence] ?? CONFIDENCE_META.unknown;
@@ -48,17 +44,6 @@ export default function CitationToggle({
             aria-expanded={open}
           >
             🔍 근거 {citations.length}개 {open ? '▲' : '▼'}
-          </button>
-        )}
-        {onJudgeClick && (
-          <button
-            type="button"
-            className="lab-cite__judge-btn"
-            onClick={onJudgeClick}
-            disabled={judging}
-            title="이 답변이 페르소나 데이터와 정말 일관되는지 LLM-as-judge로 채점"
-          >
-            {judging ? '검증 중…' : '🧪 엄격 검증'}
           </button>
         )}
       </div>

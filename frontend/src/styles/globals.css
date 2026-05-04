@@ -3082,8 +3082,7 @@ details[open] .minutes-appendix-summary::before {
 .lab-cite__badge--guess    { background: #ffe6cc; border-color: #f3b878; color: #7a3a04; }
 .lab-cite__badge--unknown  { background: #f1f3f6; border-color: #dbe1e8; color: #6a7889; }
 
-.lab-cite__toggle,
-.lab-cite__judge-btn {
+.lab-cite__toggle {
   background: var(--surface);
   border: 1px solid var(--border-light);
   border-radius: 999px;
@@ -3094,15 +3093,10 @@ details[open] .minutes-appendix-summary::before {
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
-.lab-cite__toggle:hover:not(:disabled),
-.lab-cite__judge-btn:hover:not(:disabled) {
+.lab-cite__toggle:hover:not(:disabled) {
   background: var(--accent-light);
   border-color: var(--accent);
   color: var(--accent);
-}
-.lab-cite__judge-btn:disabled {
-  opacity: 0.55;
-  cursor: progress;
 }
 
 .lab-cite__list {
@@ -3156,51 +3150,6 @@ details[open] .minutes-appendix-summary::before {
   color: var(--text-secondary);
   font-style: italic;
 }
-
-/* Verdict 카드 (L3) */
-.lab-verdict {
-  margin-top: 8px;
-  border-radius: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-light);
-  background: var(--surface);
-  font-size: 12px;
-  line-height: 1.55;
-}
-.lab-verdict--consistent  { background: #e7f6ec; border-color: #b9e2c5; }
-.lab-verdict--partial     { background: #fff7d8; border-color: #ecd672; }
-.lab-verdict--contradicts { background: #fde7e7; border-color: #f3b1b1; }
-.lab-verdict--evasive     { background: #f1f3f6; border-color: #dbe1e8; }
-
-.lab-verdict__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.lab-verdict__icon { font-size: 14px; }
-.lab-verdict__label { font-size: 12.5px; color: var(--text-primary); }
-.lab-verdict__reason {
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.lab-verdict__cats { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
-.lab-verdict__cats-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.lab-verdict__cats-label { font-size: 10.5px; color: var(--text-secondary); }
-.lab-verdict__chip {
-  font-size: 10.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border-light);
-  background: var(--surface);
-  color: var(--text-secondary);
-}
-.lab-verdict__chip--match  { background: #e7f6ec; border-color: #b9e2c5; color: #0f5132; }
-.lab-verdict__chip--contra { background: #fde7e7; border-color: #f3b1b1; color: #842029; }
 
 /* L1 — 트윈 카드 충실도 배지 + 모달 막대 */
 .lab-faith-badge {
