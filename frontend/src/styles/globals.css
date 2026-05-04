@@ -2729,12 +2729,12 @@ details[open] .minutes-appendix-summary::before {
   background: var(--accent-hover);
 }
 
-/* Lab 채팅 페이지 */
+/* Lab 채팅 페이지 — 채팅:입력값 = 2:3 (입력값 패널이 더 넓음) */
 .lab-chat-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+  grid-template-columns: minmax(0, 2fr) minmax(420px, 3fr);
   gap: 20px;
-  max-width: 1480px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 0 20px;
   align-items: stretch;
