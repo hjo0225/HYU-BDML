@@ -1,0 +1,83 @@
+/* Pretendard 가변폰트 CDN */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Ditto 디자인 토큰 (DESIGN.md 기반) ──────────────────────────────── */
+:root {
+  /* 배경 / 서피스 */
+  --bg:       #f5f7ff;
+  --surface:  #ffffff;
+  --border:   #e0e4f0;
+
+  /* Indigo (기본 강조) */
+  --indigo:       #4F46E5;
+  --indigo-hover: #4338CA;
+  --indigo-light: #eef2ff;
+
+  /* Violet (포인트) */
+  --violet:       #8B5CF6;
+  --violet-hover: #7C3AED;
+  --violet-light: #f5f3ff;
+
+  /* 텍스트 */
+  --text-primary:   #1e1b4b;
+  --text-secondary: #4338ca;
+  --text-muted:     #9ca3af;
+
+  /* 상태 */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error:   #ef4444;
+
+  /* 레이아웃 */
+  --sidebar-width: 240px;
+  --topnav-height: 56px;
+}
+
+/* ── 기본 리셋 ───────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: "Pretendard Variable", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  background-color: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── 유틸리티 ────────────────────────────────────────────────────────── */
+.btn-primary {
+  @apply bg-indigo text-white rounded-lg px-4 py-2 font-medium
+         hover:bg-indigo-hover transition-colors duration-150
+         disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-secondary {
+  @apply bg-surface text-indigo border border-indigo rounded-lg px-4 py-2 font-medium
+         hover:bg-indigo-light transition-colors duration-150;
+}
+
+.card {
+  @apply bg-surface rounded-xl border border-border shadow-sm p-6;
+}
+
+.input-field {
+  @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm
+         text-text-primary placeholder:text-text-muted
+         focus:outline-none focus:ring-2 focus:ring-indigo focus:border-transparent
+         transition-shadow duration-150;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }

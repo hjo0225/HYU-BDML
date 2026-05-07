@@ -390,12 +390,41 @@ flowchart TB
 
 ## 8. 검증 기준 (Phase 2 종료)
 
-- [ ] [docs/6-LENS_MAPPING.md](docs/6-LENS_MAPPING.md) 의 모든 28 척도 행이 채워짐 + 입력 스키마 예시 검증.
-- [ ] `alembic upgrade head` 가 SQLite + PostgreSQL 양쪽에서 통과.
-- [ ] `pytest backend/tests/` 전 케이스 통과.
-- [ ] `python -m scripts.seed_agent --input backend/tests/_fixtures/sample_response_kr_001.json --dry-run` 출력에 9 그룹 모두의 수치 가이드가 포함됨.
-- [ ] mock 1명 적재 후 SQLite `agents` 1 row + `agent_memories` ≥9 rows.
-- [ ] persona_full_prompt 평균 토큰 < 8000 (8k 한계 + 안전 마진).
+- [x] [docs/6-LENS_MAPPING.md](docs/6-LENS_MAPPING.md) 의 모든 28 척도 행이 채워짐 + 입력 스키마 예시 검증.
+- [x] `alembic upgrade head` 가 SQLite + PostgreSQL 양쪽에서 통과.
+- [x] `pytest backend/tests/` 전 케이스 통과.
+- [x] `python -m scripts.seed_agent --input backend/tests/_fixtures/sample_response_kr_001.json --dry-run` 출력에 9 그룹 모두의 수치 가이드가 포함됨.
+- [x] mock 1명 적재 후 SQLite `agents` 1 row + `agent_memories` ≥9 rows.
+- [x] persona_full_prompt 평균 토큰 < 8000 (8k 한계 + 안전 마진).
+- [x] `npm run dev` Next.js 로컬 기동 + 로그인 페이지 렌더링 (M8 완료).
+- [x] `.github/workflows/deploy.yml` NAVER 시크릿 제거 + ANTHROPIC_API_KEY 추가 (M9 완료).
+
+## M8 — Frontend 셸 (추가 마일스톤)
+
+Next.js 14 + TypeScript + Tailwind + Pretendard + Recharts 기반. DESIGN.md 토큰(Indigo/Violet) 적용.
+
+완료 항목:
+- `frontend/` — `create-next-app@14` 부트스트랩, `recharts` 설치
+- `frontend/tailwind.config.ts` — Indigo(`#4F46E5`)/Violet(`#8B5CF6`) CSS 변수 토큰
+- `frontend/src/styles/globals.css` — Pretendard CDN, CSS 변수 정의, `.btn-primary`, `.card`, `.input-field`
+- `frontend/src/lib/types.ts` — Ditto 타입 (ResearchProject, Agent, AgentMemory, EvaluationSnapshot)
+- `frontend/src/lib/api.ts` — SSE/NDJSON 헬퍼, auth 엔드포인트 클라이언트
+- `frontend/src/contexts/AuthContext.tsx` — JWT 세션 관리
+- `frontend/src/components/auth/AuthGuard.tsx` — 인증 보호 라우트
+- `frontend/src/components/layout/AppShell.tsx` — Ditto 사이드바 네비게이션
+- `frontend/src/app/layout.tsx` — AuthProvider 래핑, Ditto 메타데이터
+- `frontend/src/app/page.tsx` — 공개 랜딩 페이지 (인증 시 /dashboard 리다이렉트)
+- `frontend/src/app/login/page.tsx` — Indigo 그라데이션 로그인 카드
+- `frontend/src/app/register/page.tsx` — 회원가입 폼
+- `frontend/src/app/dashboard/page.tsx` — 대시보드 플레이스홀더
+- `frontend/Dockerfile` — Node 20 Alpine 멀티스테이지
+- `frontend/.env.local.example`
+
+## M9 — 배포 파이프라인 업데이트 (추가 마일스톤)
+
+`.github/workflows/deploy.yml` 수정:
+- `--set-secrets` 에서 `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 제거
+- `ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest` 추가
 
 ## 9. PR 체크리스트
 
