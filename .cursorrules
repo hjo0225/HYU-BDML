@@ -36,6 +36,10 @@
 
 ## Workflow (Plan-First, 6단계)
 1. **Plan** — `docs/plans/active/<slug>.md` 생성 (없으면 코드 변경 차단)
+   - 모든 plan 은 **두 곳에 동기화**한다:
+     1. `docs/plans/active/<NNNN>-<slug>.md` — git 추적 SSOT (필수)
+     2. Cursor 내부 `.cursor/plans/...plan.md` — Cursor plan UI 트래킹 (선택)
+   - 내용이 갈라질 수 없으므로 한쪽 갱신 시 다른 쪽도 즉시 동기화. SSOT 는 (1).
 2. **Branch** — `feat/`, `fix/`, `chore/`, `refactor/`, `hotfix/` prefix. master 직접 커밋 금지
 3. **Implement** — plan 범위 내에서만. 범위 바뀌면 plan 먼저 갱신
    - **UI 변경 포함 시**: `DESIGN.md` 의 토큰만 사용. 하드코딩된 색상/폰트/간격 금지

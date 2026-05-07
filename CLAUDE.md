@@ -119,6 +119,7 @@ User → ResearchProject
 ## Workflow Rules
 
 - **Plan-First:** 코드 변경 전 `docs/plans/active/<slug>.md` 가 있어야 한다. 없으면 plan 부터 작성.
+- **Plan 동기화:** 모든 plan 은 두 곳에 동기화한다. (1) `docs/plans/active/<NNNN>-<slug>.md` — git 추적 SSOT (필수). (2) Cursor 내부 `.cursor/plans/...plan.md` — Cursor plan UI 트래킹 (선택). 내용이 갈라질 수 없으므로 한쪽 갱신 시 다른 쪽도 즉시 동기화. SSOT 는 (1).
 - **명세 우선 갱신:** 코드 변경이 명세서와 어긋나면, 반드시 `docs/` 안 해당 문서를 먼저 갱신한 뒤 코드를 수정한다.
 - **API 시그니처 변경 시:** `docs/api-spec.md` + `frontend/src/lib/types.ts`(Pydantic ↔ TypeScript) 를 같은 PR 에서 갱신. SSE/NDJSON 페이로드도 동일.
 - **평가 지표 변경 시:** `docs/EVAL_SPEC.md` 갱신 후 `backend/evaluation/` + `frontend/components/dashboard/` 수정.
