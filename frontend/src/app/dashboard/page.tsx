@@ -45,7 +45,7 @@ export default function DashboardPage() {
               ].map(({ step, title, desc, done }) => (
                 <div key={step} className="flex items-start gap-3 p-3 rounded-lg bg-bg border border-border">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 ${
-                    done ? 'bg-success text-white' : 'bg-indigo-light text-indigo'
+                    done ? 'bg-success text-white' : 'bg-ditto-indigo-light text-ditto-indigo'
                   }`}>
                     {done ? '✓' : step}
                   </div>

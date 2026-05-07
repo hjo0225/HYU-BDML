@@ -14,17 +14,17 @@ const config: Config = {
       },
       colors: {
         // Ditto 기본 토큰 (DESIGN.md 기반)
+        // 주의: Tailwind 기본 indigo/violet 스케일(text-indigo-200 등)을 쓰려면
+        // 브랜드 색은 ditto- 접두로만 등록한다 (단색 덮어쓰기 금지).
         bg:       "var(--bg)",
         surface:  "var(--surface)",
         border:   "var(--border)",
-        // Indigo (기본 강조)
-        indigo:   "var(--indigo)",
-        "indigo-hover": "var(--indigo-hover)",
-        "indigo-light": "var(--indigo-light)",
-        // Violet (포인트)
-        violet:   "var(--violet)",
-        "violet-hover": "var(--violet-hover)",
-        "violet-light": "var(--violet-light)",
+        "ditto-indigo":       "var(--indigo)",
+        "ditto-indigo-hover": "var(--indigo-hover)",
+        "ditto-indigo-light": "var(--indigo-light)",
+        "ditto-violet":       "var(--violet)",
+        "ditto-violet-hover": "var(--violet-hover)",
+        "ditto-violet-light": "var(--violet-light)",
         // Text
         "text-primary":   "var(--text-primary)",
         "text-secondary": "var(--text-secondary)",

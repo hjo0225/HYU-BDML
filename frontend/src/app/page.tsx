@@ -18,8 +18,7 @@ export default function LandingPage() {
   if (isLoading) return null;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4"
-         style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4F46E5 100%)' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 auth-page-bg">
       <div className="max-w-2xl w-full text-center text-white">
         <div className="mb-6">
           <span className="text-5xl font-bold tracking-tight">Ditto</span>
@@ -50,15 +49,15 @@ export default function LandingPage() {
         <div className="flex items-center justify-center gap-4">
           <Link
             href="/login"
-            className="px-6 py-3 bg-white text-indigo font-semibold rounded-lg
+            className="px-6 py-3 bg-white text-ditto-indigo font-semibold rounded-lg
                        hover:bg-indigo-50 transition-colors"
           >
             로그인
           </Link>
           <Link
             href="/register"
-            className="px-6 py-3 bg-violet text-white font-semibold rounded-lg
-                       hover:bg-violet-hover transition-colors"
+            className="px-6 py-3 bg-ditto-violet text-white font-semibold rounded-lg
+                       hover:bg-ditto-violet-hover transition-colors"
           >
             회원가입
           </Link>

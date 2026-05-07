@@ -38,8 +38,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4"
-         style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4F46E5 100%)' }}>
+    <div className="min-h-screen flex items-center justify-center px-4 auth-page-bg">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white">Ditto</h1>
@@ -105,7 +104,7 @@ export default function RegisterPage() {
 
           <p className="text-center text-sm text-text-muted mt-5">
             이미 계정이 있으신가요?{' '}
-            <Link href="/login" className="text-indigo font-medium hover:underline">
+            <Link href="/login" className="text-ditto-indigo font-medium hover:underline">
               로그인
             </Link>
           </p>

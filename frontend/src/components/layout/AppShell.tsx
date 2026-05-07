@@ -33,8 +33,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="w-[var(--sidebar-width)] flex flex-col bg-surface border-r border-border shrink-0">
         {/* 로고 */}
         <div className="h-[var(--topnav-height)] flex items-center px-5 border-b border-border">
-          <span className="text-lg font-bold text-indigo tracking-tight">Ditto</span>
-          <span className="ml-1 text-xs text-violet font-medium">Research</span>
+          <span className="text-lg font-bold text-ditto-indigo tracking-tight">Ditto</span>
+          <span className="ml-1 text-xs text-ditto-violet font-medium">Research</span>
         </div>
 
         {/* 네비게이션 */}
@@ -52,8 +52,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href={href}
                     className={`flex items-center gap-2.5 px-5 py-2 text-sm transition-colors duration-100 ${
                       active
-                        ? 'bg-indigo-light text-indigo font-medium border-r-2 border-indigo'
-                        : 'text-text-secondary hover:bg-indigo-light/50 hover:text-indigo'
+                        ? 'bg-ditto-indigo-light text-ditto-indigo font-medium border-r-2 border-ditto-indigo'
+                        : 'text-text-secondary hover:bg-ditto-indigo-light/50 hover:text-ditto-indigo'
                     }`}
                   >
                     <span className="text-base leading-none">{icon}</span>
@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* 유저 정보 */}
         <div className="border-t border-border p-4">
           <div className="flex items-center gap-2 mb-2">
-            <div className="w-7 h-7 rounded-full bg-indigo-light flex items-center justify-center text-indigo text-xs font-bold">
+            <div className="w-7 h-7 rounded-full bg-ditto-indigo-light flex items-center justify-center text-ditto-indigo text-xs font-bold">
               {user?.email?.[0]?.toUpperCase() ?? 'U'}
             </div>
             <div className="flex-1 min-w-0">

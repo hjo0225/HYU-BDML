@@ -35,6 +35,14 @@
   /* 레이아웃 */
   --sidebar-width: 240px;
   --topnav-height: 56px;
+
+  /* 인증/랜딩 히어로 배경 (토큰 연동) */
+  --auth-gradient: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, var(--indigo) 100%);
+}
+
+/* 로그인·회원가입·랜딩 공용 그라데이션 배경 */
+.auth-page-bg {
+  background: var(--auth-gradient);
 }
 
 /* ── 기본 리셋 ───────────────────────────────────────────────────────── */
@@ -56,14 +64,14 @@ html, body {
 
 /* ── 유틸리티 ────────────────────────────────────────────────────────── */
 .btn-primary {
-  @apply bg-indigo text-white rounded-lg px-4 py-2 font-medium
-         hover:bg-indigo-hover transition-colors duration-150
+  @apply bg-ditto-indigo text-white rounded-lg px-4 py-2 font-medium
+         hover:bg-ditto-indigo-hover transition-colors duration-150
          disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-secondary {
-  @apply bg-surface text-indigo border border-indigo rounded-lg px-4 py-2 font-medium
-         hover:bg-indigo-light transition-colors duration-150;
+  @apply bg-surface text-ditto-indigo border border-ditto-indigo rounded-lg px-4 py-2 font-medium
+         hover:bg-ditto-indigo-light transition-colors duration-150;
 }
 
 .card {
@@ -73,7 +81,7 @@ html, body {
 .input-field {
   @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm
          text-text-primary placeholder:text-text-muted
-         focus:outline-none focus:ring-2 focus:ring-indigo focus:border-transparent
+         focus:outline-none focus:ring-2 focus:ring-ditto-indigo focus:border-transparent
          transition-shadow duration-150;
 }
 

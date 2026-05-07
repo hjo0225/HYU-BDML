@@ -28,8 +28,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4"
-         style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4F46E5 100%)' }}>
+    <div className="min-h-screen flex items-center justify-center px-4 auth-page-bg">
       <div className="w-full max-w-sm">
         {/* 헤더 */}
         <div className="text-center mb-8">
@@ -76,7 +75,7 @@ export default function LoginPage() {
 
           <p className="text-center text-sm text-text-muted mt-5">
             계정이 없으신가요?{' '}
-            <Link href="/register" className="text-indigo font-medium hover:underline">
+            <Link href="/register" className="text-ditto-indigo font-medium hover:underline">
               회원가입
             </Link>
           </p>
