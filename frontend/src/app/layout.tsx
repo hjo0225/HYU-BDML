@@ -1,34 +1,18 @@
-import type { Metadata } from "next";
-import "@/styles/globals.css";
-import { AuthProvider } from "@/contexts/AuthContext";
-import { AuthGuard } from "@/components/auth/AuthGuard";
-import { ProjectProvider } from "@/contexts/ProjectContext";
-import AppShell from "@/components/layout/AppShell";
+import type { Metadata } from 'next';
+import '@/styles/globals.css';
+import { AuthProvider } from '@/contexts/AuthContext';
 
 export const metadata: Metadata = {
-  title: "Big Data Marketing Lab",
-  description: "AI 에이전트 기반 정성조사 시뮬레이션 웹앱",
-  icons: {
-    icon: "/logo.png",
-    shortcut: "/logo.png",
-    apple: "/logo.png",
-  },
+  title: 'Ditto — AI Agent Research Platform',
+  description: 'Twin-2K-500 기반 AI 에이전트 생성·성장·평가 플랫폼',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
       <body>
         <AuthProvider>
-          <AuthGuard>
-            <ProjectProvider>
-              <AppShell>{children}</AppShell>
-            </ProjectProvider>
-          </AuthGuard>
+          {children}
         </AuthProvider>
       </body>
     </html>

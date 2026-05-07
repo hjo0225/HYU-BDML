@@ -1,19 +1,38 @@
-# Data Model
+# Data Model — Ditto
 
-DB 스키마, 패널 데이터 적재 파이프라인, 마이그레이션 규칙.
+DB 스키마, 도메인 모델, 데이터 적재 파이프라인, 마이그레이션 규칙.
 
 ## DB 엔진
 
-- **운영**: Cloud SQL PostgreSQL (asia-northeast3:bigmarlab-db).
-- **로컬 개발**: SQLite (aiosqlite). 마이그레이션 변경 시 양쪽 호환을 항상 확인.
-- **ORM**: SQLAlchemy 2.0+ (async).
-- **마이그레이션**: Alembic.
+- **운영:** Cloud SQL PostgreSQL (`asia-northeast3:bigmarlab-db` 재사용 vs 신규 인스턴스 미결정 — Phase 6 결정).
+- **로컬 개발:** SQLite (aiosqlite). 마이그레이션 변경 시 양쪽 호환을 항상 확인.
+- **ORM:** SQLAlchemy 2.0+ (async).
+- **마이그레이션:** Alembic.
+
+## 도메인 모델 (개요)
+
+```
+Workspace (v1.1)
+  └─ User
+       └─ ResearchProject
+              ├─ Survey (질문 + 응답, v1.0 Phase 6)
+              │     └─ SurveyResponse
+              ├─ Agent (Twin 또는 Survey 응답 기반)
+              │     ├─ persona_params (수치 JSONB)
+              │     ├─ persona_full_prompt (시스템 프롬프트 텍스트)
+              │     └─ AgentMemory[] (base / conversation / fgi)
+              │     └─ EvaluationSnapshot[] (V1~V5 시계열)
+              ├─ Conversation
+              │     └─ Turn[] (사용자 + 에이전트)
+              └─ FGISession
+                    └─ Turn[] (모더레이터 + 에이전트 + 사용자 개입)
+```
 
 ## 테이블 스키마
 
 ### `users`
 
-사용자 계정.
+(archive 에서 이식, 변경 없음.)
 
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
@@ -26,243 +45,221 @@ DB 스키마, 패널 데이터 적재 파이프라인, 마이그레이션 규칙
 
 ### `refresh_tokens`
 
-JWT 리프레시 토큰. 무효화를 위해 해시 저장.
+(archive 에서 이식, 변경 없음.)
 
-| 컬럼 | 타입 | 비고 |
-|---|---|---|
-| id | UUID | PK |
-| user_id | UUID | FK → users.id |
-| token_hash | string | SHA-256 |
-| expires_at | datetime | |
-| is_revoked | bool | |
+### `activity_logs`
 
-### `projects`
+토큰 사용량 추적. 평가 비용 (`action='evaluation_v1' | 'evaluation_v2' | ...`) 도 같이 기록.
 
-연구 세션. Phase 1~5의 모든 산출물을 단일 행에 보관 (JSONB/Text).
+### `research_projects`
+
+리서치 프로젝트 단위. archive 의 `projects` 와는 **별개 테이블** (archive `projects` 는 Alembic 으로 `projects_v1_bdml` 로 rename).
 
 | 컬럼 | 타입 | 의미 |
 |---|---|---|
 | id | UUID | PK |
-| user_id | UUID | FK |
-| title | string | 자동 생성 가능 (`project_service`) |
-| brief | JSONB | Phase 1 입력 |
-| refined | JSONB | Phase 1 정제 결과 |
-| market_report | Text | Phase 2 보고서 |
-| agents | JSONB | Phase 3 선정 에이전트 |
-| meeting_topic | Text | Phase 3 Step 1 주제 |
-| meeting_messages | JSONB | Phase 4 발언 로그 |
-| minutes | Text | Phase 5 회의록 (Markdown) |
+| user_id | UUID | FK → users.id |
+| title | string | 사용자 입력 또는 자동 생성 |
+| description | Text | 자유 입력 |
+| status | string | `draft` / `active` / `archived` |
+| created_at, updated_at | datetime | |
 
-### `project_edits`
+### `agents`
 
-수정 이력 감사 로그.
-
-| 컬럼 | 타입 |
-|---|---|
-| project_id | UUID FK |
-| field | string |
-| old_value | Text |
-| new_value | Text |
-| changed_at | datetime |
-
-### `activity_logs`
-
-토큰 사용량 추적. 관리자 조회 (`/api/usage/*`).
-
-| 컬럼 | 타입 |
-|---|---|
-| user_id | UUID |
-| action | string (예: `meeting_turn`, `research`) |
-| model | string |
-| input_tokens | int |
-| output_tokens | int |
-| cost_usd | float |
-
-### `panels`
-
-패널 풀 (FGI 500명 + Lab Twin-2K-500 50명). 인구통계 + 행동 차원 + 사전 계산된 평균 임베딩.
+에이전트 단위. Twin-2K-500 또는 Survey 응답에서 생성.
 
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
 | id | UUID | PK |
-| source | VARCHAR(20) | `'fgi500'` (기본) / `'twin2k500'` (Lab) |
-| cluster | INT (NOT NULL) | FGI: K-means 라벨 0~24 / Twin: 100~104 (오프셋 100, K=5) — 두 source의 클러스터 공간 완전 분리 |
-| 인구통계(age, gender, occupation, region 등) | various | |
-| 8개 행동 차원 | various | FGI 전용 (Twin은 NULL) |
-| scratch | JSONB | `{age, gender, occupation, region, traits, life_events, ...}` — Lab(twin2k500)은 ADR-0006의 `probe_questions: {category: question_ko}`와 `faithfulness: {overall, by_category, n_eval, evaluated_at}`도 같은 JSONB에 키로 추가됨 (스키마 변경 없음) |
-| avg_embedding | vector(1536) | 패널 메모리 평균 벡터 — FGI 1차 스코어링용. Twin은 다양성 K-means에 사용 |
-| persona_full | TEXT | Twin 전용 — Toubia 풀-프롬프트 채팅용 persona_json 원본 (~170k chars). FGI는 NULL |
+| project_id | UUID FK | `research_projects.id` |
+| source_type | string | `twin` (Twin-2K-500 v2) / `survey` (사용자 자체 Survey) |
+| source_ref | string | Twin pid 또는 SurveyResponse id |
+| display_name | string | UI 표기 (예: "직장인 30대 여성 A") |
+| emoji | string | 카드 표시용 이모지 |
+| intro_ko | Text | 짧은 한국어 소개 |
+| persona_params | JSONB | 6-Lens 정량 지표 (`{l1: {...}, l2: {...}, ...}`) |
+| persona_full_prompt | Text | 시스템 프롬프트 합성 결과 (≤ 8k tokens) |
+| scratch | JSONB | 인구통계 + 정성 원문 (self_actual/aspire/ought 등) |
+| avg_embedding | vector(1536) | 메모리 평균 벡터 — 다양성 클러스터링·1차 스코어링 |
+| cluster | INT | 다양성 K-means 라벨 (적재 후 채워짐, NULL 허용) |
+| created_at, updated_at | datetime | |
 
-**source 필터링 규칙:**
+### `agent_memories`
 
-- 본 서비스(Phase 3 RAG 패널 선정)는 `source='fgi500'`로 필터.
-- Lab(`/api/lab/*`)은 `source='twin2k500'`로 필터.
-- 두 도메인이 섞이지 않도록 모든 쿼리에 `source` 조건 필수.
-
-**cluster 공간 분리:**
-
-- FGI(500명): K-means 25 클러스터 → 라벨 `0~24`. CSV 적재 시 사전 계산.
-- Twin(50명): 적재 후 `seed_twin.py`가 K-means(K=5) 재실행 → 라벨 `100~104`. 오프셋 100으로 FGI와 ID 충돌 방지. K는 `SEED_TWIN_K` 환경변수로 조정 가능.
-- 다양성 샘플링(`panel_selector`)은 source 필터 후 자체 `cluster` 라벨 안에서 동작하므로, 두 도메인이 같은 selector 코드를 재사용해도 클러스터가 섞이지 않음.
-
-### `panel_memories`
-
-패널별 자전적 기억 + 임베딩. FGI는 14개 카테고리 약 5,373건, Twin은 6~10개 카테고리 (영어 원본).
+에이전트별 자전적 기억 + 임베딩.
 
 | 컬럼 | 타입 | 비고 |
 |---|---|---|
-| panel_id | UUID FK | `panels.id` |
-| source | VARCHAR(20) | `'fgi500'` / `'twin2k500'` (조회 인덱스용 — 빠진 source 필터를 방어) |
-| category | string | FGI: ps_A, ps_B, ps_D, pay_*, lbs_*, app_* 등 / Twin: lifestyle, work, family, technology, finance, health, media, opinions 등 |
-| text | Text | 자연어 압축 (FGI: 한국어, Twin: 영어) |
-| importance | float | |
+| id | UUID | PK |
+| agent_id | UUID FK | `agents.id` |
+| source | string | `base` (Twin/Survey 원본) / `conversation` (1:1 대화 누적) / `fgi` (FGI 누적) |
+| category | string | L1~L6 + qualitative + 후속 카테고리 (자유 string) |
+| text | Text | 자연어 (한국어) |
+| importance | float | 0~1, retrieval 가중치 |
 | embedding | vector(1536) | OpenAI text-embedding-3-small |
+| metadata | JSONB | source 별 부가 정보 (FGI session_id, conversation_id 등) |
+| created_at | datetime | |
 
-## 패널 데이터 파이프라인
+**검색 인덱스:** `(agent_id, source)` + pgvector ivfflat.
 
-CSV 설문 원본(510컬럼 × 500명)을 가공하여 Cloud SQL에 적재한다. **적재 완료 후 로컬 CSV는 삭제됨 (백업은 별도 보관).** DB에 원본은 저장하지 않는다.
+### `evaluation_snapshots`
 
-```
-CSV 510컬럼 (설문 원본, 로컬에만 존재)
-│
-├─ scratch_builder.py → 핵심 인구통계 추출
-│   출력: {"age":50, "gender":"여성", "occupation":"사무직", "region":"서울",
-│          "strong_traits":["쇼핑 활동"], "recent_life_events":["이직"], ...}
-│   → panels 테이블의 scratch(JSONB) 컬럼에 저장
-│
-└─ memory_builder.py → 14개 주제로 자연어 압축
-    ps_A (가전 45컬럼)    → "집에 보유한 가전: TV, 에어컨, 로봇청소기"
-    ps_B (식생활 12컬럼)  → "배달앱 이용, 혼밥 즐김, 커피전문점 자주 방문"
-    ps_D (건강 50컬럼)    → "비흡연, 오메가3 복용, 뇌건강 관심"
-    pay_* (결제 데이터)    → "월평균 180만원, 편의점 32%, 심야 34%"
-    lbs_* (위치 데이터)    → "활동반경 400km, 카페 3449회"
-    app_* (앱 데이터)      → "소셜 1110시간, 자주쓰는 앱: YouTube, 토스"
-    ... 등 14개 카테고리
-    │
-    └─ embedder.py → 각 메모리 텍스트를 1536차원 벡터로 변환 (OpenAI text-embedding-3-small)
-       → panel_memories 테이블에 저장 (text + importance + embedding)
-```
+에이전트의 V1~V5 평가 결과 시계열. **에이전트 성장 추적의 핵심.**
 
-### 적재 명령
+| 컬럼 | 타입 | 비고 |
+|---|---|---|
+| id | UUID | PK |
+| agent_id | UUID FK | |
+| version | int | 같은 에이전트의 평가 회차 (1, 2, 3, ...) |
+| identity_stats | JSONB | `{ "sync": 0.88, "stability": 0.82, "distinct": 2.8 }` |
+| logic_stats | JSONB | `{ "humanity": 4.2, "reasoning_delta": 0.15 }` |
+| verdict | string | `verified_s3` / `partial` / `failed` (EVAL_SPEC 임계값 기준 자동 산정) |
+| eval_config | JSONB | 사용한 평가 설정 (모델, CF 자극 세트 버전 등) |
+| evaluated_at | datetime | |
 
-```bash
-cd backend && python -m scripts.seed_panels
-```
+### `conversations`
 
-- **사전 조건:**
-  - Cloud SQL Proxy 실행 (`cloud-sql-proxy bdml-492404:asia-northeast3:bigmarlab-db --port=5432`).
-  - `backend/.env`에 `DATABASE_URL`, `OPENAI_API_KEY` 필요.
-- **동작:** 확인 없이 한 사람씩 즉시 저장. 중단 후 재실행 시 이어서 적재.
-- **소요:** 전체 500명 약 10~20분, OpenAI 임베딩 비용 ~$0.02.
+1:1 대화 세션.
 
-### `compute_avg_embeddings.py`
+| 컬럼 | 타입 | 비고 |
+|---|---|---|
+| id | UUID | PK |
+| project_id | UUID FK | |
+| agent_id | UUID FK | |
+| user_id | UUID FK | |
+| title | string | |
+| started_at, ended_at | datetime | |
 
-기존 패널의 `avg_embedding`을 1회성으로 계산하여 `panels.avg_embedding`에 채워 넣는 스크립트. `seed_panels`는 이제 적재 시 함께 계산하지만, 과거 적재본을 백필할 때 사용.
+### `conversation_turns`
 
-## 적재 완료 상태
-
-- Cloud SQL에 500명 FGI 패널(`source='fgi500'`) + 5,373개 메모리(1536차원 임베딩) 적재 완료.
-- `seed_panels.py`는 재적재용으로 유지하되 CSV 원본(별도 백업 보관) 필요.
-
-## Twin-2K-500 적재 (Lab 전용)
-
-`backend/scripts/seed_twin.py`로 Hugging Face `LLM-Digital-Twin/Twin-2K-500` 데이터셋에서 50명을 샘플링하여 적재.
-
-### 데이터셋 구조 (실측 확인)
-
-`load_dataset("LLM-Digital-Twin/Twin-2K-500", "full_persona", split="data")` 로드 시 각 행:
-
-| 필드 | 설명 |
+| 컬럼 | 타입 |
 |---|---|
-| `pid` | 응답자 ID (총 2,058명) |
-| `persona_text` | 모든 Q/A를 풀어쓴 영어 평문 (~130k chars) |
-| `persona_summary` | 정형화된 인구통계 + 30+ 심리척도 + 정성응답 3개 (영어, ~12-18k chars) |
-| `persona_json` | 동일 정보의 JSON 문자열 (~170k chars) — 본 적재에서 미사용 |
+| id | UUID |
+| conversation_id | UUID FK |
+| role | `user` / `agent` |
+| content | Text |
+| citations | JSONB (V1 인용 마커 검증 결과) |
+| confidence | string (`direct` / `inferred` / `guess` / `unknown`) |
+| created_at | datetime |
 
-본 적재는 **`persona_summary`만 사용**한다 — 매우 정형화되어 카테고리 분할이 정확하고, embedder 입력 단위가 적절하다.
+### `fgi_sessions`
 
-### 적재 파이프라인
+다자 회의 세션.
+
+| 컬럼 | 타입 | 비고 |
+|---|---|---|
+| id | UUID | PK |
+| project_id | UUID FK | |
+| user_id | UUID FK | (호스트) |
+| topic | Text | 회의 주제 |
+| agent_ids | JSONB array | 참여 에이전트 |
+| status | string | `running` / `completed` / `cancelled` |
+| minutes_md | Text | 자동 생성 회의록 (Markdown) |
+| started_at, ended_at | datetime | |
+
+### `fgi_turns`
+
+| 컬럼 | 타입 |
+|---|---|
+| id | UUID |
+| session_id | UUID FK |
+| round | int |
+| role | `moderator` / `agent` / `user` |
+| agent_id | UUID FK NULL (role='agent' 일 때) |
+| content | Text |
+| metadata | JSONB (retrieval 컨텍스트 메모리 ID 등) |
+| created_at | datetime |
+
+### `surveys` (Phase 6)
+
+| 컬럼 | 타입 | 비고 |
+|---|---|---|
+| id | UUID | PK |
+| project_id | UUID FK | |
+| title | string | |
+| questions | JSONB array | 질문 정의 |
+| share_token | string | 배포 링크용 unique 토큰 |
+| status | string | `draft` / `published` / `closed` |
+
+### `survey_responses` (Phase 6)
+
+| 컬럼 | 타입 |
+|---|---|
+| id | UUID |
+| survey_id | UUID FK |
+| respondent_token | string |
+| answers | JSONB |
+| submitted_at | datetime |
+
+## archive 테이블과의 관계
+
+| archive 테이블 | Ditto 처리 |
+|---|---|
+| `panels` (`source='fgi500'` 500명 + `source='twin2k500'` 50명) | **별도 운영, 손대지 않음**. Phase 6 정리 시 통합/삭제 결정 |
+| `panel_memories` | 동일 |
+| `projects`, `project_edits` | Alembic 으로 `projects_v1_bdml`, `project_edits_v1_bdml` 로 rename. 신규 `research_projects` 도입 |
+| `users`, `refresh_tokens`, `activity_logs` | **그대로 재사용** (스키마 호환) |
+
+## Twin-2K-500 v2 적재 파이프라인
 
 ```
-load_dataset(...)["data"]  → pid + persona_summary
+load_dataset("LLM-Digital-Twin/Twin-2K-500", "full_persona", split="data")[0:30]
+   │ + Twin2K500_KR_Localized_v1_1.pdf 한국어 매핑 테이블
    │
-   ├─ rag/twin_scratch_builder.build_scratch(pid, persona_summary)
-   │     "Header: value" 라인 정규식 파싱
-   │     출력: {age (midpoint), age_range, gender, region, occupation,
-   │            education, race, marital_status, religion, income,
-   │            political_affiliation, political_views, household_size,
-   │            traits[Big5/percentile], big5(scores),
-   │            aspire/ought/actual (정성응답 영어 원문),
-   │            display_name, emoji, intro_ko}
-   │     → panels (source='twin2k500')
+   ▼
+backend/lenses/mapping.py
+   ├─ 234문항 → L1~L6 + qualitative 카테고리 분할
+   └─ scratch (인구통계 + 정성 원문 한국어) 추출
    │
-   └─ rag/twin_memory_builder.build_memories(persona_summary)
-         "The person's <X> score(s) are the following:" 헤더 단위 섹션 분할
-         + 정성응답 3개(self_aspire/ought/actual) 별도 메모리화
-         결과: 응답자당 ~32개 메모리 카테고리:
-            demographics, personality_big5,
-            cognition_general · cognition_reflection · cognition_intelligence
-              · cognition_logic · cognition_numeracy · cognition_closure,
-            values_agency · values_minimalism · values_environment
-              · values_individualism · values_regulatory · values_uniqueness,
-            decision_risk · decision_loss · decision_maximization,
-            finance_mental · finance_literacy · finance_time_pref · finance_tightwad,
-            social_ultimatum · social_trust · social_dictator · social_desirability,
-            emotion_empathy · emotion_anxiety · emotion_depression,
-            self_monitoring · self_clarity,
-            self_aspire · self_ought · self_actual
-         │
-         └─ embedder.embed(text)  # 영어 그대로
-            → panel_memories (source='twin2k500', text=영어, embedding=1536d)
-
-   최종 단계 (모든 패널 적재 후):
-   └─ scripts/seed_twin._recluster_twin()
-         sklearn KMeans(K=5)를 panels.avg_embedding 50개에 적용
-         → cluster = 100 + label (라벨 100~104)
-         → UPDATE panels SET cluster=… WHERE source='twin2k500'
+   ▼
+backend/scoring/
+   ├─ reverse_score   (L2 인지 욕구, L6 성실성 등 역방향 변환)
+   ├─ economic        (L1-1 위험 회피 CE, L6-1 할인율 연환산)
+   └─ ability         (C-2 금융 + C-3 수리 합산)
+   │
+   ▼
+backend/persona/builder.py
+   ├─ persona_params 산출 (수치 JSONB)
+   ├─ persona_full_prompt 합성 (≤ 8k tokens, Hybrid: 수치 + 원문)
+   └─ category 별 메모리 텍스트 + 임베딩
+   │
+   ▼
+INSERT INTO agents (source_type='twin', persona_params, persona_full_prompt, scratch, avg_embedding)
+INSERT INTO agent_memories (agent_id, source='base', category, text, embedding) × N
+   │
+   ▼ (모든 적재 후)
+sklearn KMeans(K=5) on agents.avg_embedding → cluster 라벨 업데이트
 ```
 
 ### 적재 명령
 
 ```bash
-# 사전: pip install datasets huggingface_hub
-# 사전: python -m scripts.migrate_add_source  (1회)
-cd backend && python -m scripts.seed_twin
-
+cd backend
+python -m scripts.seed_twin_v2 --limit 30
 # 옵션:
-SEED_TWIN_LIMIT=100 SEED_TWIN_SEED=7 python -m scripts.seed_twin
-SEED_TWIN_STREAM=1 python -m scripts.seed_twin   # 전체 다운로드 대신 스트리밍
+#   --limit N          : 적재 인원 (기본 30)
+#   --resume           : 기존 적재본 건너뛰고 이어서
+#   --refresh-prompt   : 시스템 프롬프트만 재합성
 ```
 
-- 50명 × ~32 메모리 = 약 1,600개 임베딩. 비용 ~$0.005.
-- 재실행 안전: 동일 `panel_id` 존재 시 자동 건너뜀.
-
-### Toubia 풀-프롬프트 백필
-
-Lab 채팅은 RAG가 아닌 풀-프롬프트(persona_json 원본 통째 주입) 방식이므로, seed_twin
-이후 1회 추가 백필이 필요하다.
-
-```bash
-cd backend && python -m scripts.seed_twin_persona_full
-```
-
-- `panels.persona_full TEXT` 컬럼 추가 (멱등) + 기존 50명에 HF persona_json 채워넣기.
-- 응답 발화 시 `prompts/twin_utterance.py`가 `persona_full`을 시스템 프롬프트에 통째로 주입하고
-  "위 영어 응답 데이터 기반으로 한국어 1인칭으로 답하라" 지시.
+- 30명 × ~30 메모리 = 약 900개 임베딩. 비용 ~$0.003.
+- 재실행 안전: 동일 `source_ref` 존재 시 자동 건너뜀.
 
 ## 마이그레이션 규칙
 
 - 모든 스키마 변경은 Alembic 마이그레이션 작성.
-- Cloud SQL(PostgreSQL)과 SQLite(aiosqlite) **양쪽 호환** 확인. JSONB는 SQLite에서 JSON으로, vector 타입은 SQLite에서 BLOB/JSON 폴백.
-- 본 문서를 같은 PR에서 갱신.
+- Cloud SQL(PostgreSQL)과 SQLite(aiosqlite) **양쪽 호환** 확인. JSONB 는 SQLite 에서 JSON 으로, vector 타입은 SQLite 에서 BLOB/JSON 폴백.
+- 스키마 변경 시 본 문서를 같은 PR 에서 갱신.
+- archive 의 테이블에 영향이 가는 마이그레이션은 작성 금지 (격리 원칙).
 
 ## 보안 / git 정책
 
-- 패널 CSV 원본·DB 덤프·`backend/.cache/embedding_cache.json`은 **절대 git 커밋 금지**.
-- 외부 도구·AI 도구에 패널 데이터 업로드 금지.
+- 응답 원본·DB 덤프·`embedding_cache.json` 은 **절대 git 커밋 금지**.
+- 외부 도구·AI 도구에 응답 데이터 업로드 금지.
+- `.env`, 서비스 계정 JSON 도 `.gitignore` 가 강제 (예외 화이트리스트만 허용).
 
 ## 관련 ADR
 
-- [0002 — RAG 패널 연령 필터 제거](./adr/0002-rag-panel-no-age-filter.md)
-- [0003 — `avg_embedding` 1차 스코어링 도입](./adr/0003-avg-embedding-first-pass-scoring.md)
-- [0005 — Lab + Twin-2K-500 통합](./adr/0005-lab-twin-2k-500-integration.md)
+- [ADR-0002 — 6-Lens 카테고리 분할](./adr/0002-six-lens-categorization.md)
+- [ADR-0003 — Hybrid Persona Prompt](./adr/0003-hybrid-persona-prompt.md)
+- [ADR-0004 — V1~V5 평가 채택](./adr/0004-evaluation-v1-to-v5.md)

@@ -1,109 +1,111 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
+import { auth } from '@/lib/api';
+
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+      <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+      <path d="M3.964 10.707A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+      <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+    </svg>
+  );
+}
 
 export default function LoginPage() {
-  const { login } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const { login } = useAuth();
+  const router = useRouter();
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
+    setLoading(true);
     try {
       await login(email, password);
-      const redirect = searchParams.get('redirect') || '/dashboard';
-      router.replace(redirect);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '로그인에 실패했습니다.');
+      router.push('/dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '로그인 실패');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
-        {/* 로고 영역 */}
-        <div className="auth-card__header">
-          <div className="auth-card__logo">
-            <img src="/logo.png" alt="BDML" />
-          </div>
-          <p className="auth-card__subtitle">한양대학교 계정으로 로그인하세요</p>
+    <div className="min-h-screen flex items-center justify-center px-4 auth-page-bg">
+      <div className="w-full max-w-sm">
+        {/* 헤더 */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-white">Ditto</h1>
+          <p className="text-indigo-200 text-sm mt-1">Research Platform</p>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
-          <div className="auth-form__field">
-            <label htmlFor="login-email" className="auth-form__label">
-              이메일
-            </label>
-            <input
-              id="login-email"
-              type="email"
-              className="auth-form__input"
-              placeholder="example@hanyang.ac.kr"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-              disabled={isLoading}
-            />
-          </div>
+        {/* 카드 */}
+        <div className="card">
+          <h2 className="text-lg font-semibold text-text-primary mb-6">로그인</h2>
 
-          <div className="auth-form__field">
-            <label htmlFor="login-password" className="auth-form__label">
-              비밀번호
-            </label>
-            <input
-              id="login-password"
-              type="password"
-              className="auth-form__input"
-              placeholder="비밀번호를 입력하세요"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              disabled={isLoading}
-            />
-          </div>
-
-          {error && (
-            <div className="auth-form__error" role="alert">
-              {error}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1">이메일</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                required
+                className="input-field"
+              />
             </div>
-          )}
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1">비밀번호</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="8자 이상"
+                required
+                className="input-field"
+              />
+            </div>
+
+            {error && (
+              <p className="text-sm text-error bg-red-50 rounded-lg px-3 py-2">{error}</p>
+            )}
+
+            <button type="submit" disabled={loading} className="btn-primary w-full mt-2">
+              {loading ? '로그인 중...' : '로그인'}
+            </button>
+          </form>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-text-muted">또는</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
 
           <button
-            id="login-submit"
-            type="submit"
-            className="auth-form__submit"
-            disabled={isLoading || !email || !password}
+            type="button"
+            onClick={() => auth.googleLogin()}
+            className="w-full flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl border border-border bg-white hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
           >
-            {isLoading ? (
-              <span className="auth-form__submit-loading">
-                <span className="auth-form__spinner" />
-                로그인 중...
-              </span>
-            ) : (
-              '로그인'
-            )}
+            <GoogleIcon />
+            Google로 로그인
           </button>
-        </form>
 
-        <div className="auth-card__footer">
-          계정이 없으신가요?{' '}
-          <Link href="/register" className="auth-card__link">
-            회원가입
-          </Link>
+          <p className="text-center text-sm text-text-muted mt-5">
+            계정이 없으신가요?{' '}
+            <Link href="/register" className="text-ditto-indigo font-medium hover:underline">
+              회원가입
+            </Link>
+          </p>
         </div>
       </div>
     </div>

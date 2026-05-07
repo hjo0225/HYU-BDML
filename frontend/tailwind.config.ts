@@ -1,30 +1,38 @@
-import type { Config } from 'tailwindcss';
+import type { Config } from "tailwindcss";
 
 const config: Config = {
-  content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
   theme: {
     extend: {
-      colors: {
-        bg: 'var(--bg)',
-        surface: 'var(--surface)',
-        border: 'var(--border)',
-        'border-light': 'var(--border-light)',
-        'text-primary': 'var(--text-primary)',
-        'text-secondary': 'var(--text-secondary)',
-        'text-muted': 'var(--text-muted)',
-        accent: 'var(--accent)',
-        'accent-light': 'var(--accent-light)',
-        cyan: 'var(--cyan)',
-        'cyan-light': 'var(--cyan-light)',
-        placeholder: 'var(--placeholder)',
-        'tag-bg': 'var(--tag-bg)',
-        'phase-active': 'var(--phase-active)',
-        'phase-done': 'var(--phase-done)',
-        'phase-upcoming': 'var(--phase-upcoming)',
-      },
       fontFamily: {
-        sans: ['IBM Plex Sans KR', '-apple-system', 'sans-serif'],
-        mono: ['IBM Plex Mono', 'monospace'],
+        sans: ["Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "sans-serif"],
+        mono: ["JetBrains Mono", "Fira Code", "monospace"],
+      },
+      colors: {
+        // Ditto 기본 토큰 (DESIGN.md 기반)
+        // 주의: Tailwind 기본 indigo/violet 스케일(text-indigo-200 등)을 쓰려면
+        // 브랜드 색은 ditto- 접두로만 등록한다 (단색 덮어쓰기 금지).
+        bg:       "var(--bg)",
+        surface:  "var(--surface)",
+        border:   "var(--border)",
+        "ditto-indigo":       "var(--indigo)",
+        "ditto-indigo-hover": "var(--indigo-hover)",
+        "ditto-indigo-light": "var(--indigo-light)",
+        "ditto-violet":       "var(--violet)",
+        "ditto-violet-hover": "var(--violet-hover)",
+        "ditto-violet-light": "var(--violet-light)",
+        // Text
+        "text-primary":   "var(--text-primary)",
+        "text-secondary": "var(--text-secondary)",
+        "text-muted":     "var(--text-muted)",
+        // 상태
+        success:  "var(--success)",
+        warning:  "var(--warning)",
+        error:    "var(--error)",
       },
     },
   },
