@@ -90,6 +90,11 @@ yarn-error.log*
 .claude/*
 .claude.md
 
+# ── 내부 문서 (GitHub 비공개) ────────────────────────────────────────────────
+CLAUDE.md
+.cursorrules
+docs/
+
 # ── 패널 / 페르소나 원본 데이터 (개인정보, 절대 커밋 금지) ─────────────────────
 # 신규 Ditto 경로
 backend/raw/
