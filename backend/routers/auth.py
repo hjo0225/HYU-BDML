@@ -1,9 +1,12 @@
-"""인증 라우터: 회원가입, 로그인, 토큰 갱신, 로그아웃, 내 정보 조회."""
+"""인증 라우터: 회원가입, 로그인, 토큰 갱신, 로그아웃, 내 정보 조회, Google OAuth."""
 import os
+import urllib.parse
 import uuid
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +20,14 @@ from services.auth_service import (
     get_current_user,
     hash_password,
     revoke_refresh_token,
-    verify_email_domain,
     verify_password,
     verify_refresh_token,
 )
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -84,7 +91,7 @@ async def register(req: RegisterRequest, response: Response, db: AsyncSession = 
         raise HTTPException(status_code=422, detail="비밀번호는 8자 이상이어야 합니다.")
 
     role = "admin" if email in ADMIN_EMAILS else "user"
-    user = User(id=str(uuid.uuid4()), email=email, hashed_pw=hash_password(req.password), name=req.name, role=role)
+    user = User(id=str(uuid.uuid4()), email=email, hashed_pw=hash_password(req.password), name=req.name, role=role, oauth_provider=None, oauth_id=None)
     db.add(user)
     await db.flush()
 
@@ -100,7 +107,7 @@ async def login(req: LoginRequest, response: Response, db: AsyncSession = Depend
     email = req.email.lower().strip()
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
-    if not user or not user.is_active or not verify_password(req.password, user.hashed_pw):
+    if not user or not user.is_active or not user.hashed_pw or not verify_password(req.password, user.hashed_pw):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="이메일 또는 비밀번호가 올바르지 않습니다.")
 
     access_token = create_access_token(user.id, user.email, user.role)
@@ -149,3 +156,96 @@ async def logout(
 async def me(current_user: User = Depends(get_current_user)):
     """현재 로그인 유저 정보 반환."""
     return UserOut.model_validate(current_user)
+
+
+# ── Google OAuth ───────────────────────────────────────────────────────────
+
+@router.get("/google")
+async def google_login():
+    """Google OAuth 시작 — Google consent screen으로 redirect."""
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google OAuth 미설정.")
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+
+@router.get("/google/callback")
+async def google_callback(code: str = "", error: str = "", db: AsyncSession = Depends(get_db)):
+    """Google OAuth 콜백 — code 교환 → user 조회/생성 → JWT 발급 → frontend redirect."""
+    if error or not code:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_cancelled")
+
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_res.status_code != 200:
+            return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
+
+        google_access_token = token_res.json().get("access_token")
+        userinfo_res = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {google_access_token}"},
+        )
+        userinfo = userinfo_res.json()
+
+    email = userinfo.get("email", "").lower().strip()
+    google_id = str(userinfo.get("id", ""))
+    name = userinfo.get("name")
+
+    if not email:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=oauth_failed")
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        role = "admin" if email in ADMIN_EMAILS else "user"
+        user = User(
+            id=str(uuid.uuid4()),
+            email=email,
+            hashed_pw=None,
+            name=name,
+            role=role,
+            oauth_provider="google",
+            oauth_id=google_id,
+        )
+        db.add(user)
+        await db.flush()
+    elif not user.oauth_id:
+        # 기존 이메일/비밀번호 계정에 Google 연동
+        user.oauth_provider = "google"
+        user.oauth_id = google_id
+        await db.flush()
+
+    access_token = create_access_token(user.id, user.email, user.role)
+    refresh_token = await create_refresh_token(user.id, db)
+
+    redirect_resp = RedirectResponse(
+        url=f"{FRONTEND_URL}/auth/callback?access_token={access_token}",
+        status_code=302,
+    )
+    redirect_resp.set_cookie(
+        key=_COOKIE_NAME,
+        value=refresh_token,
+        max_age=_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=_IS_PROD,
+        samesite="lax",
+        path="/api/auth",
+    )
+    return redirect_resp

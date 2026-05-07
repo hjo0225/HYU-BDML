@@ -55,13 +55,15 @@ def _now():
 class User(Base):
     __tablename__ = "users"
 
-    id         = Column(String(36), primary_key=True)
-    email      = Column(String(254), unique=True, nullable=False, index=True)
-    hashed_pw  = Column(Text, nullable=False)
-    name       = Column(String(100), nullable=True)
-    role       = Column(String(20), nullable=False, default="user")
-    is_active  = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    id             = Column(String(36), primary_key=True)
+    email          = Column(String(254), unique=True, nullable=False, index=True)
+    hashed_pw      = Column(Text, nullable=True)          # Google OAuth 사용자는 null
+    name           = Column(String(100), nullable=True)
+    role           = Column(String(20), nullable=False, default="user")
+    is_active      = Column(Boolean, nullable=False, default=True)
+    oauth_provider = Column(String(20), nullable=True)    # 'google' | None
+    oauth_id       = Column(String(255), nullable=True)   # Google sub
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 class RefreshToken(Base):

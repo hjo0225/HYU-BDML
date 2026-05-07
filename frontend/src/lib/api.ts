@@ -95,6 +95,10 @@ export const auth = {
 
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
 
+  googleLogin: () => {
+    window.location.href = `${BACKEND_URL}/api/auth/google`;
+  },
+
   me: (token: string) =>
     apiFetch<{ id: string; email: string; name: string | null; role: string }>(
       '/api/auth/me', { token }),

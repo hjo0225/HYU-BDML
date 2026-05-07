@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import AsyncSessionLocal, RefreshToken, User, get_db
 
 # ── 설정 ──────────────────────────────────────────────────────────────────
-ALLOWED_DOMAIN = os.getenv("ALLOWED_EMAIL_DOMAIN", "@hanyang.ac.kr")
 ADMIN_EMAILS = {
     e.strip().lower()
     for e in os.getenv("ADMIN_EMAILS", "").split(",")
@@ -32,14 +31,6 @@ REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def verify_email_domain(email: str) -> None:
-    if ALLOWED_DOMAIN and not email.lower().endswith(ALLOWED_DOMAIN):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"{ALLOWED_DOMAIN} 이메일만 가입 가능합니다.",
-        )
 
 
 def hash_password(plain: str) -> str:
