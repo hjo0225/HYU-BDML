@@ -5,6 +5,9 @@
 .env.production
 backend/.env
 frontend/.env.local
+# (archive 의 하위 프로젝트도 보호)
+archive/**/.env
+archive/**/.env.local
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
@@ -33,9 +36,14 @@ app.db
 
 # ── Node.js / Next.js ─────────────────────────────────────────────────────────
 node_modules/
+.next/
 frontend/.next/
 frontend/out/
 frontend/.vercel/
+archive/**/.next/
+archive/**/node_modules/
+archive/**/out/
+archive/**/.vercel/
 *.tsbuildinfo
 
 # ── 빌드 산출물 ───────────────────────────────────────────────────────────────
@@ -77,19 +85,27 @@ yarn-error.log*
 *.bak
 *_backup.py
 
-# ── 프로젝트 특정 ─────────────────────────────────────────────────────────────
+# ── 에이전트 도구 (사용자 환경) ───────────────────────────────────────────────
 .claude/
 .claude/*
 .claude.md
 
-# ── 패널 데이터 (개인정보) ───────────────────────────────────────────────────
+# ── 패널 / 페르소나 원본 데이터 (개인정보, 절대 커밋 금지) ─────────────────────
+# 신규 Ditto 경로
 backend/raw/
 backend/personas/
+backend/.cache/
 backend/rag/embedding_cache.json
-backend/.cache/                 # Twin-2K-500 샘플 파일 등 임시 캐시
-docs/RAG/                       # RAG 원본 자료 (이미지·CSV 사본) — 명세 문서는 추적
+backend/embedding/embedding_cache.json
+docs/RAG/
+# archive (BDML-FGI) 경로 — 동일 보호 유지
+archive/**/raw/
+archive/**/personas/
+archive/**/.cache/
+archive/**/rag/embedding_cache.json
+archive/**/RAG/*
+archive/**/script/*
 
 # ── 테스트 출력 ──────────────────────────────────────────────────────────────
 backend/rag_test_results.json
-RAG/*
-script/*
+archive/**/rag_test_results.json
