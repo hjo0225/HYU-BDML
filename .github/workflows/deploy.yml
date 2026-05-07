@@ -56,8 +56,8 @@ jobs:
             --memory=512Mi \
             --allow-unauthenticated \
             --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:bigmarlab-db" \
-            --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest" \
-            --set-env-vars="CORS_ORIGINS=${{ secrets.FRONTEND_URL }},ADMIN_EMAILS=hjo0225@hanyang.ac.kr" \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest" \
+            --set-env-vars="CORS_ORIGINS=${{ secrets.FRONTEND_URL }},ADMIN_EMAILS=hjo0225@hanyang.ac.kr,GOOGLE_REDIRECT_URI=https://bigmarlab-backend-1030831007575.asia-northeast3.run.app/api/auth/google/callback,FRONTEND_URL=${{ secrets.FRONTEND_URL }}" \
             --quiet
 
   # ── 프론트엔드 배포 (백엔드 완료 후) ──────────────────────────────────────
