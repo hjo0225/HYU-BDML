@@ -43,6 +43,16 @@ const config: Config = {
         card:     "0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)",
         elevated: "0 10px 15px rgba(0,0,0,0.07), 0 4px 6px rgba(0,0,0,0.05)",
       },
+      keyframes: {
+        // DESIGN.md FGIInterventionInput 활성 시 펄스 (≤1.5s)
+        "ditto-pulse-ring": {
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(79, 70, 229, 0.4)" },
+          "50%":      { boxShadow: "0 0 0 6px rgba(79, 70, 229, 0)" },
+        },
+      },
+      animation: {
+        "pulse-ring": "ditto-pulse-ring 1.5s ease-in-out infinite",
+      },
     },
   },
   plugins: [],
