@@ -38,13 +38,19 @@ raw_origins = os.getenv("CORS_ORIGINS", "")
 env_origins = {o.strip() for o in raw_origins.split(",") if o.strip()}
 allowed_origins = sorted(local_dev_origins | env_origins)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# dev 환경에서는 포트가 자주 충돌해 3002/3003 으로 떠밀리므로 localhost
+# 모든 포트를 정규식으로 허용. ENVIRONMENT=production 일 때는 적용 안 됨.
+_is_prod = os.getenv("ENVIRONMENT", "development").lower() == "production"
+cors_kwargs: dict = {
+    "allow_origins": allowed_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if not _is_prod:
+    cors_kwargs["allow_origin_regex"] = r"https?://(localhost|127\.0\.0\.1):\d+"
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 app.include_router(auth.router)
 app.include_router(usage.router)
