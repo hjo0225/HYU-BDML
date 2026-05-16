@@ -210,8 +210,12 @@ async def process_record(
     if dry_run:
         return {"respondent_id": respondent_id, "status": "dry-run", "token_count": token_count}
 
-    # 임베딩 — 합성 모드는 즉시(blocking 0ms 수준), 실 API 는 외부 호출
-    embeddings = [embed(m["text"], synthetic=synthetic_embeddings) for m in memory_texts]
+    # 임베딩 — 실 OpenAI 호출은 동기·블로킹이라 그대로 호출하면 NDJSON 진행
+    # 이벤트가 못 흘러간다. asyncio.to_thread 로 각 호출 사이 event loop 양보.
+    embeddings = []
+    for m in memory_texts:
+        emb = await asyncio.to_thread(embed, m["text"], True, synthetic_embeddings)
+        embeddings.append(emb)
     avg_emb = average_embedding(embeddings)
 
     agent_id = str(uuid.uuid4())

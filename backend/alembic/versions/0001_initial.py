@@ -53,7 +53,10 @@ def upgrade() -> None:
     if not _table_exists("activity_logs"):
         op.create_table(
             "activity_logs",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            # SQLite 는 BIGINT PK 를 rowid 별칭으로 인식하지 않아 autoinc 불가.
+            # SQLite=INTEGER, PostgreSQL=BIGINT 로 자동 분기.
+            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"),
+                      primary_key=True, autoincrement=True),
             sa.Column("user_id", sa.String(36),
                       sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
             sa.Column("action", sa.String(50), nullable=False),
@@ -105,7 +108,8 @@ def upgrade() -> None:
     if not _table_exists("agent_memories"):
         op.create_table(
             "agent_memories",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"),
+                      primary_key=True, autoincrement=True),
             sa.Column("agent_id", sa.String(36),
                       sa.ForeignKey("agents.id", ondelete="CASCADE"), nullable=False),
             sa.Column("source", sa.String(20), nullable=False, server_default="base"),
