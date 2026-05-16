@@ -49,7 +49,9 @@ export function RadarChart({ data, height = 280 }: RadarChartProps) {
             borderRadius: 8,
             fontSize: 12,
           }}
-          formatter={(value: number) => value.toFixed(2)}
+          formatter={(value) =>
+            typeof value === 'number' ? value.toFixed(2) : String(value ?? '')
+          }
         />
       </RechartsRadar>
     </ResponsiveContainer>

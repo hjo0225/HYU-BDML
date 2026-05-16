@@ -3,9 +3,10 @@
 export type ClassValue =
   | string
   | number
+  | bigint
+  | boolean
   | null
   | undefined
-  | false
   | { [k: string]: unknown }
   | ClassValue[];
 
