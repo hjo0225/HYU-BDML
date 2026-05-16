@@ -34,6 +34,15 @@ const config: Config = {
         warning:  "var(--warning)",
         error:    "var(--error)",
       },
+      fontSize: {
+        // DESIGN.md font.size.score (게이지 차트 중앙 점수)
+        score: ["48px", { lineHeight: "1", fontWeight: "700" }],
+      },
+      boxShadow: {
+        // DESIGN.md size.shadow.*
+        card:     "0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)",
+        elevated: "0 10px 15px rgba(0,0,0,0.07), 0 4px 6px rgba(0,0,0,0.05)",
+      },
     },
   },
   plugins: [],

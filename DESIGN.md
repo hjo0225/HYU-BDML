@@ -6,48 +6,60 @@
 *모든 수치는 W3C DTCG 표준 규격을 따릅니다.*
 
 ### 1-1. 색상 (Colors)
-| 토큰명 | 값 | 용도 및 설명 |
-| :--- | :--- | :--- |
-| `color.brand.primary` | `#4F46E5` | 메인 브랜드 컬러 — Indigo. CTA 버튼·링크·포커스 링·활성 인디케이터 |
-| `color.brand.primary.hover` | `#4338CA` | Primary 버튼 hover |
-| `color.brand.secondary` | `#8B5CF6` | 보조 브랜드 컬러 — Violet. 강조 배지·점수 시각화 보조 |
-| `color.text.primary` | `#1F2937` | 기본 본문 및 제목 텍스트 |
-| `color.text.muted` | `#6B7280` | 부가 설명, 비활성화 텍스트 |
-| `color.bg.canvas` | `#FFFFFF` | 전체 페이지 바탕색 |
-| `color.bg.surface` | `#F9FAFB` | 카드, 섹션 등 구분용 배경색 |
-| `color.border.base` | `#E5E7EB` | 선, 테두리, 구분선 |
-| `color.status.success` | `#10B981` | V1~V5 점수 양호 (≥0.8) |
-| `color.status.warning` | `#F59E0B` | V1~V5 점수 주의 (0.5~0.8) |
-| `color.status.error` | `#EF4444` | V1~V5 점수 미달 (<0.5), 경고, 삭제 |
+
+> **테마 방향: Indigo-tinted neutral.** 순수 회색이 아닌 indigo 색조로 살짝 물든 중성 팔레트를 사용한다. 브랜드 indigo(`#4F46E5`) 가 모든 표면에 자연스럽게 녹아드는 monochrome 브랜딩(Linear · Vercel 류) 을 지향. 인증 페이지 그라데이션(`auth-gradient`) 의 깊은 indigo(`#1e1b4b`) 가 본문 `text.primary` 와 동일 hex 라는 점이 이 결정의 기반. CSS 변수 정의는 [`frontend/src/styles/globals.css`](./frontend/src/styles/globals.css) `:root`.
+
+| 토큰명 | 값 | CSS 변수 | 용도 및 설명 |
+| :--- | :--- | :--- | :--- |
+| `color.brand.primary` | `#4F46E5` | `--indigo` | 메인 브랜드 컬러 — Indigo. CTA 버튼·링크·포커스 링·활성 인디케이터 |
+| `color.brand.primary.hover` | `#4338CA` | `--indigo-hover` | Primary 버튼 hover |
+| `color.brand.primary.light` | `#eef2ff` | `--indigo-light` | Secondary 버튼 hover 배경, 활성 탭 배경 |
+| `color.brand.secondary` | `#8B5CF6` | `--violet` | 보조 브랜드 컬러 — Violet. 강조 배지·점수 시각화 보조 |
+| `color.brand.secondary.hover` | `#7C3AED` | `--violet-hover` | Violet 버튼 hover |
+| `color.brand.secondary.light` | `#f5f3ff` | `--violet-light` | Violet 강조 배경 |
+| `color.text.primary` | `#1e1b4b` | `--text-primary` | 기본 본문 및 제목 텍스트 — 깊은 indigo (검정 대신) |
+| `color.text.secondary` | `#4338ca` | `--text-secondary` | 부제·강조 텍스트 — 중간 indigo |
+| `color.text.muted` | `#9ca3af` | `--text-muted` | 부가 설명, 비활성화 텍스트 — 옅은 회색 |
+| `color.bg.canvas` | `#f5f7ff` | `--bg` | 전체 페이지 바탕색 — 매우 옅은 indigo tint |
+| `color.bg.surface` | `#ffffff` | `--surface` | 카드, 섹션, 입력창 배경 — 순수 흰색 (canvas 와 명확히 구분되도록 swap 됨) |
+| `color.border.base` | `#e0e4f0` | `--border` | 선, 테두리, 구분선 — 옅은 indigo-gray |
+| `color.bg.auth-gradient` | `linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4F46E5 100%)` | `--auth-gradient` | 로그인·회원가입·랜딩 hero 배경 그라데이션 |
+| `color.status.success` | `#10b981` | `--success` | V1~V5 점수 양호 (≥0.8) |
+| `color.status.warning` | `#f59e0b` | `--warning` | V1~V5 점수 주의 (0.5~0.8) |
+| `color.status.error` | `#ef4444` | `--error` | V1~V5 점수 미달 (<0.5), 경고, 삭제 |
 
 ### 1-2. 타이포그래피 (Typography)
-| 토큰명 | 값 | 설명 |
-| :--- | :--- | :--- |
-| `font.family.base` | `Pretendard, system-ui, sans-serif` | 기본 서체 (국문 가독성 중심). cdn.jsdelivr.net/gh/orioncactus/pretendard 또는 self-host |
-| `font.family.mono` | `ui-monospace, SFMono-Regular, "JetBrains Mono", monospace` | 코드·점수 수치 표시 |
-| `font.size.xs` | `12px` | 라벨, 배지 텍스트 |
-| `font.size.sm` | `14px` | 작은 텍스트, 캡션, 보조 정보 |
-| `font.size.base` | `16px` | 본문 기본 크기 (1rem) |
-| `font.size.lg` | `20px` | 소제목, 큰 본문 |
-| `font.size.xl` | `28px` | 페이지 타이틀 |
-| `font.size.score` | `48px` | 게이지 차트 중앙 점수 표시 |
-| `font.weight.normal` | `400` | 일반 텍스트용 두께 |
-| `font.weight.medium` | `500` | 라벨, 버튼 |
-| `font.weight.bold` | `700` | 강조 및 제목용 두께 |
+
+| DESIGN 토큰 | 값 | Tailwind 유틸 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `font.family.base` | `Pretendard Variable, Apple SD Gothic Neo, Noto Sans KR, sans-serif` | `font-sans` (기본) | 국문 가독성 중심. CDN: `cdn.jsdelivr.net/gh/orioncactus/pretendard` |
+| `font.family.mono` | `JetBrains Mono, Fira Code, monospace` | `font-mono` | 코드·점수 수치 표시 |
+| `font.size.xs` | `12px` | `text-xs` | 라벨, 배지 |
+| `font.size.sm` | `14px` | `text-sm` | 작은 텍스트, 캡션 |
+| `font.size.base` | `16px` | `text-base` | 본문 기본 (1rem) |
+| `font.size.lg` | `18px` | `text-lg` | 소제목, 큰 본문 (Tailwind 기본 18px 채택) |
+| `font.size.xl` | `30px` | `text-3xl` | 페이지 타이틀 |
+| `font.size.score` | `48px` | `text-score` | 게이지 차트 중앙 점수 (Tailwind 확장) |
+| `font.weight.normal` | `400` | `font-normal` | 본문 |
+| `font.weight.medium` | `500` | `font-medium` | 라벨·버튼 |
+| `font.weight.bold` | `700` | `font-bold` | 강조·제목 |
 
 ### 1-3. 형태 및 간격 (Shapes & Spacing)
-| 토큰명 | 값 | 설명 |
-| :--- | :--- | :--- |
-| `size.radius.sm` | `4px` | 배지, 작은 인디케이터 |
-| `size.radius.md` | `8px` | 기본 버튼, 입력창, 카드의 모서리 둥글기 |
-| `size.radius.lg` | `16px` | 차트 카드, 모달 |
-| `size.radius.full` | `9999px` | 캡슐형 버튼, 태그용 |
-| `size.spacing.xs` | `4px` | 토큰 간 미세 여백 |
-| `size.spacing.sm` | `12px` | 요소 내부 간격, 버튼 패딩 |
-| `size.spacing.md` | `24px` | 섹션 간 여백, 컨테이너 패딩 |
-| `size.spacing.lg` | `48px` | 페이지 상하 패딩 |
-| `size.shadow.card` | `0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)` | 카드 그림자 |
-| `size.shadow.elevated` | `0 10px 15px rgba(0,0,0,0.07), 0 4px 6px rgba(0,0,0,0.05)` | 모달, 드롭다운 |
+
+> **구현 원칙:** spacing · radius · fontSize 의 단계 스케일은 **Tailwind 기본값을 정식 채택**하고, Tailwind 에 없는 것만 `tailwind.config.ts` 에서 확장한다. 코드에서는 토큰명이 아닌 Tailwind 유틸(`p-3`, `rounded-lg`, `text-sm`) 을 직접 쓴다. 아래 표는 DESIGN.md ↔ Tailwind 매핑 레퍼런스.
+
+| DESIGN 토큰 | 값 | Tailwind 유틸 | 비고 |
+| :--- | :--- | :--- | :--- |
+| `size.radius.sm` | `2px` | `rounded-sm` | 배지, 작은 인디케이터 |
+| `size.radius.md` | `8px` | `rounded-lg` | 기본 버튼, 입력창, 카드 |
+| `size.radius.lg` | `12px` | `rounded-xl` | 차트 카드, 모달 |
+| `size.radius.full` | `9999px` | `rounded-full` | 캡슐형 버튼, 태그 |
+| `size.spacing.xs` | `4px` | `p-1` / `gap-1` | 토큰 간 미세 여백 |
+| `size.spacing.sm` | `12px` | `p-3` / `gap-3` | 요소 내부 간격, 버튼 패딩 |
+| `size.spacing.md` | `24px` | `p-6` / `gap-6` | 섹션 간 여백, 컨테이너 패딩 |
+| `size.spacing.lg` | `48px` | `p-12` / `gap-12` | 페이지 상하 패딩 |
+| `size.shadow.card` | `0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)` | `shadow-card` | Tailwind 확장 (config 매핑) |
+| `size.shadow.elevated` | `0 10px 15px rgba(0,0,0,0.07), 0 4px 6px rgba(0,0,0,0.05)` | `shadow-elevated` | Tailwind 확장 (config 매핑) |
 
 ## 2. 🧱 주요 컴포넌트 규칙 (Component Rules)
 
