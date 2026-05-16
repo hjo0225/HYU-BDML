@@ -9,16 +9,7 @@ const NAV_ITEMS = [
     section: '리서치',
     items: [
       { label: '대시보드', href: '/dashboard', icon: '◈' },
-      { label: '에이전트', href: '/agents', icon: '◉' },
-      { label: '대화 (1:1)', href: '/conversations', icon: '◎' },
-      { label: 'FGI 세션', href: '/fgi', icon: '⊞' },
-    ],
-  },
-  {
-    section: '평가',
-    items: [
-      { label: '성능 대시보드', href: '/evaluation', icon: '⊕' },
-      { label: '6-Lens 분석', href: '/lens', icon: '⊗' },
+      { label: '프로젝트', href: '/projects', icon: '◉' },
     ],
   },
 ];
