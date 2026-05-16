@@ -94,9 +94,9 @@
 - 축 라벨 = `font.size.sm` + `color.text.muted`.
 
 #### ScoreBadge (인라인 점수 표시)
-- 메시지/카드 옆에 붙는 작은 캡슐 배지. `size.radius.full`, `font.size.xs`, `font.weight.medium`.
-- 점수 ≥0.8 → `status.success` 배경, 0.5~0.8 → `status.warning`, <0.5 → `status.error`.
-- 좌측에 점(•) 인디케이터 + 우측에 점수(소수점 2자리).
+- 메시지/카드 옆에 붙는 작은 캡슐 배지. `rounded-full`, `text-xs`, `font-medium`.
+- **임계값은 [`docs/EVAL_SPEC.md`](./docs/EVAL_SPEC.md) §V1 의 SSOT 를 따른다.** 현재 V1 기준: ≥0.80 → `status.success`, 0.60~0.80 → `status.warning`, <0.60 → `status.error`. 옅은 배경은 Tailwind 기본 스케일(`bg-emerald-50` 등) 사용.
+- 좌측에 점(•) 인디케이터 + 우측에 점수(소수점 2자리, 선택적 라벨).
 
 ### 🎤 FGIInterventionInput (사용자 토론 개입)
 - FGI 회의실 하단 고정. 모더레이터 라운드 사이에 활성화되어 사용자가 즉석 발언 삽입.
