@@ -39,11 +39,12 @@ def _uuid_col(primary_key: bool = False, nullable: bool = False, **kw):
     return Column(UUID(as_uuid=False), primary_key=primary_key, nullable=nullable, **kw)
 
 
-def _jsonb_col(nullable: bool = True):
-    """SQLite = Text, PostgreSQL = JSONB."""
-    if DATABASE_URL.startswith("sqlite"):
-        return Column(Text, nullable=nullable)
-    return Column(JSONB, nullable=nullable)
+def _jsonb_col(nullable: bool = True, name: str | None = None):
+    """SQLite = Text, PostgreSQL = JSONB. name 지정 시 DB 컬럼명 명시(어트리뷰트와 분리)."""
+    col_type = Text if DATABASE_URL.startswith("sqlite") else JSONB
+    if name is not None:
+        return Column(name, col_type, nullable=nullable)
+    return Column(col_type, nullable=nullable)
 
 
 def _now():
@@ -114,11 +115,16 @@ class Agent(Base):
     project_id          = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
     source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey'
     source_ref          = Column(String(50), nullable=True)   # 원본 respondent_id
+    display_name        = Column(String(100), nullable=True)  # UI 표기 (예: "직장인 30대 여성 A")
+    emoji               = Column(String(8), nullable=True)    # 카드 표시용 이모지
+    intro_ko            = Column(Text, nullable=True)         # 짧은 한국어 소개
     persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과
     persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 8k tokens)
+    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 (self_actual/aspire/ought 등)
     avg_embedding       = _jsonb_col(nullable=True)           # 메모리 임베딩 평균 (1536차원 list)
     cluster             = Column(Integer, nullable=True)      # KMeans 클러스터 ID
     created_at          = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at          = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
 
 class AgentMemory(Base):
@@ -132,6 +138,9 @@ class AgentMemory(Base):
     text       = Column(Text, nullable=False)
     importance = Column(Integer, nullable=False, default=50)  # 0~100
     embedding  = _jsonb_col(nullable=False)                   # list[float] 1536차원
+    # SQLAlchemy DeclarativeBase 에서 'metadata' 어트리뷰트는 예약어이므로
+    # 어트리뷰트는 meta_json, DB 컬럼명은 'metadata' 로 매핑.
+    meta_json  = _jsonb_col(nullable=True, name="metadata")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -145,6 +154,7 @@ class EvaluationSnapshot(Base):
     identity_stats = _jsonb_col()   # V1(sync), V2(stability), V3(diversity)
     logic_stats    = _jsonb_col()   # V4(humanity), V5(reasoning_delta)
     verdict        = Column(String(50), nullable=True)   # 예: 'Verified (S3 Entry)'
+    eval_config    = _jsonb_col(nullable=True)  # 사용한 평가 설정 (모델, CF 자극 세트 버전 등)
     evaluated_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
