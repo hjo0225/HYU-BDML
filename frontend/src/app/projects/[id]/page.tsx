@@ -9,10 +9,11 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { V3Scatter } from '@/components/dashboard/V3Scatter';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProjectContext } from '@/contexts/ProjectContext';
-import { projects as projectsApi } from '@/lib/api';
-import type { ResearchProject } from '@/lib/types';
+import { evaluations as evalApi, projects as projectsApi } from '@/lib/api';
+import type { ResearchProject, ScatterResponse } from '@/lib/types';
 
 const STATUS_OPTIONS = [
   { value: 'draft', label: '준비 중 (draft)' },
@@ -38,6 +39,7 @@ function ProjectDetailView() {
   const projectId = params?.id;
 
   const [project, setProject] = useState<ResearchProject | null>(null);
+  const [scatter, setScatter] = useState<ScatterResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -57,8 +59,12 @@ function ProjectDetailView() {
     setLoading(true);
     setError(null);
     try {
-      const p = await projectsApi.get(token, projectId);
+      const [p, sc] = await Promise.all([
+        projectsApi.get(token, projectId),
+        evalApi.scatter(token, projectId).catch(() => null),
+      ]);
       setProject(p);
+      setScatter(sc);
       setTitleDraft(p.title || '');
       setStatusDraft(p.status);
     } catch (e) {
@@ -176,14 +182,34 @@ function ProjectDetailView() {
           </Link>
         </Card>
 
-        <Card padding="md" className="opacity-60">
-          <CardHeader title="평가 · FGI" subtitle="다음 Slice 에서 활성화" />
+        <Card padding="md">
+          <CardHeader title="평가 (V1·V3)" subtitle="에이전트 상세에서 실행 — 같은 프로젝트 전체가 함께 평가됩니다" />
           <p className="text-sm text-text-muted mb-4">
-            에이전트를 선택한 뒤 V1·V3 평가나 FGI 세션을 시작할 수 있습니다.
+            V1 응답 동기화율 · V3 페르소나 독립성. 결과는 본 페이지의 산점도와
+            각 에이전트 상세의 시계열에 누적됩니다.
           </p>
-          <Button variant="secondary" disabled>곧 제공</Button>
+          <Link href={`/projects/${project.id}/agents`}>
+            <Button variant="secondary" size="md">에이전트 상세에서 실행 →</Button>
+          </Link>
         </Card>
       </div>
+
+      {(scatter && scatter.n_points > 0) ? (
+        <Card padding="md" className="mb-6">
+          <V3Scatter
+            points={scatter.points}
+            distinct={scatter.distinct}
+            height={360}
+          />
+        </Card>
+      ) : (
+        <Card padding="md" className="mb-6 border-dashed">
+          <p className="text-sm text-text-muted">
+            V3 페르소나 독립성 산점도는 평가를 1회 이상 실행하면 표시됩니다.
+            에이전트 카탈로그 → 에이전트 상세 → &quot;V1·V3 실행&quot;.
+          </p>
+        </Card>
+      )}
 
       <Card padding="md" className="border-error/30">
         <CardHeader title="위험 영역" subtitle="삭제하면 에이전트·메모리·평가까지 모두 사라집니다 (복구 불가)" />

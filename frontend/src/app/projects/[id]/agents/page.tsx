@@ -259,46 +259,43 @@ function AgentsCatalogView() {
         {list.map(a => {
           const selected = selectedAgentIds.includes(a.id);
           return (
-            <button
-              type="button"
+            <Card
               key={a.id}
-              onClick={() => toggleAgent(a.id)}
-              className={`text-left rounded-xl transition-shadow focus:outline-none focus:ring-2 focus:ring-ditto-indigo ${
-                selected ? 'ring-2 ring-ditto-indigo' : ''
-              }`}
+              padding="md"
+              className={`h-full ${selected ? 'border-ditto-indigo bg-ditto-indigo-light/40 ring-2 ring-ditto-indigo' : 'hover:border-ditto-indigo/40'}`}
             >
-              <Card
-                padding="md"
-                className={`h-full ${selected ? 'border-ditto-indigo bg-ditto-indigo-light/40' : 'hover:border-ditto-indigo/40'}`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="text-2xl leading-none shrink-0">{a.emoji || '👤'}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold text-text-primary truncate">
-                        {a.display_name || `에이전트 ${a.id.slice(0, 6)}`}
-                      </h3>
-                      {a.cluster !== null && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-ditto-indigo-light text-ditto-indigo font-mono">
-                          C{a.cluster}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-text-muted mt-1 line-clamp-2">
-                      {a.summary || a.intro_ko || '요약 준비 중'}
-                    </p>
+              <div className="flex items-start gap-3">
+                <div className="text-2xl leading-none shrink-0">{a.emoji || '👤'}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/projects/${routeProjectId}/agents/${a.id}`}
+                      className="text-sm font-bold text-text-primary truncate hover:text-ditto-indigo focus:outline-none focus:underline"
+                    >
+                      {a.display_name || `에이전트 ${a.id.slice(0, 6)}`}
+                    </Link>
+                    {a.cluster !== null && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-ditto-indigo-light text-ditto-indigo font-mono shrink-0">
+                        C{a.cluster}
+                      </span>
+                    )}
                   </div>
-                  <div
-                    className={`w-5 h-5 rounded border-2 shrink-0 flex items-center justify-center ${
-                      selected ? 'border-ditto-indigo bg-ditto-indigo text-white' : 'border-border'
-                    }`}
-                    aria-hidden
-                  >
-                    {selected && <span className="text-xs leading-none">✓</span>}
-                  </div>
+                  <p className="text-xs text-text-muted mt-1 line-clamp-2">
+                    {a.summary || a.intro_ko || '요약 준비 중'}
+                  </p>
                 </div>
-              </Card>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => toggleAgent(a.id)}
+                  aria-label={selected ? '선택 해제' : '선택'}
+                  className={`w-6 h-6 rounded border-2 shrink-0 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-ditto-indigo ${
+                    selected ? 'border-ditto-indigo bg-ditto-indigo text-white' : 'border-border hover:border-ditto-indigo'
+                  }`}
+                >
+                  {selected && <span className="text-xs leading-none">✓</span>}
+                </button>
+              </div>
+            </Card>
           );
         })}
       </div>
