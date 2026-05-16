@@ -152,8 +152,11 @@ async def run_v1_v3(
 
     # 단계 2: V3 프로젝트 단위 산출
     v3_result: dict[str, Any] = {}
+    v3_xy: dict[str, tuple[float, float]] = {}
     if "v3" in metrics and persona_vectors:
         v3_result = compute_v3(agent_persona_vectors=persona_vectors)
+        for s in v3_result.get("scatter", []):
+            v3_xy[s["agent_id"]] = (s["x"], s["y"])
         if on_event:
             await on_event({
                 "type": "v3_done",
@@ -173,6 +176,10 @@ async def run_v1_v3(
             if v3_result:
                 identity["distinct"] = v3_result["distinct"]
                 identity["v3_n_agents"] = v3_result["n_agents"]
+                xy = v3_xy.get(agent.id)
+                if xy:
+                    identity["pca_x"] = xy[0]
+                    identity["pca_y"] = xy[1]
             if not identity:
                 continue
 

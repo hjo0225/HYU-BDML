@@ -6,9 +6,13 @@ import type {
   Agent,
   AgentDetail,
   AgentListQuery,
+  EvaluateEvent,
+  EvaluateRequest,
+  EvaluationSnapshot,
   ResearchProject,
   ResearchProjectCreate,
   ResearchProjectUpdate,
+  ScatterResponse,
 } from './types';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -179,6 +183,38 @@ export interface SeedTwinRequest {
   fixture?: string;
   synthetic_embeddings?: boolean | null;
 }
+
+// ── 평가 ──────────────────────────────────────────────────────────────────
+
+export const evaluations = {
+  /** V1·V3 평가 트리거 — NDJSON 진행 스트림. 한 agent 트리거라도 프로젝트
+   *  전체 agent 가 평가되어 각자 snapshot 이 생성된다. */
+  trigger(token: string, agentId: string, body?: EvaluateRequest) {
+    return ndjsonFetch<EvaluateEvent>(
+      `/api/agents/${agentId}/evaluate`,
+      body ?? { metrics: ['v1', 'v3'] },
+      token,
+    );
+  },
+
+  list: (token: string, agentId: string, limit = 20) =>
+    apiFetch<EvaluationSnapshot[]>(
+      `/api/agents/${agentId}/evaluations?limit=${limit}`,
+      { token },
+    ),
+
+  latest: (token: string, agentId: string) =>
+    apiFetch<EvaluationSnapshot | null>(
+      `/api/agents/${agentId}/evaluations/latest`,
+      { token },
+    ),
+
+  scatter: (token: string, projectId: string) =>
+    apiFetch<ScatterResponse>(
+      `/api/projects/${projectId}/evaluations/scatter`,
+      { token },
+    ),
+};
 
 export type SeedTwinEvent =
   | { type: 'start'; total: number; fixture: string }

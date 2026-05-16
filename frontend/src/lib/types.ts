@@ -83,15 +83,29 @@ export interface AgentMemory {
 
 // ── EvaluationSnapshot ────────────────────────────────────────────────────
 export interface IdentityStats {
-  v1_response_sync?: number;
-  v2_model_stability?: number;
-  v3_persona_diversity?: number;
+  // V1 (Slice 2)
+  sync?: number;
+  v1_n_eval?: number;
+  // V3 (Slice 2)
+  distinct?: number;
+  v3_n_agents?: number;
+  pca_x?: number;
+  pca_y?: number;
+  // V2 (후속)
+  stability?: number;
 }
 
 export interface LogicStats {
-  v4_humanity_score?: number;
-  v5_reasoning_delta?: number;
+  humanity?: number;
+  reasoning_delta?: number;
 }
+
+export type EvaluationVerdict =
+  | 'verified_s3'
+  | 'verified_partial'
+  | 'partial'
+  | 'failed'
+  | 'pending';
 
 export interface EvaluationSnapshot {
   id: string;
@@ -99,8 +113,43 @@ export interface EvaluationSnapshot {
   version: number;
   identity_stats: IdentityStats | null;
   logic_stats: LogicStats | null;
-  verdict: string | null;
+  verdict: EvaluationVerdict | null;
+  eval_config: Record<string, unknown> | null;
   evaluated_at: string;
+}
+
+// ── 평가 트리거·산점도 ────────────────────────────────────────────────────
+
+export interface EvaluateRequest {
+  metrics: ('v1' | 'v3')[];  // Slice 2 범위. v2/v4/v5 는 후속에서 처리.
+  mock_llm?: boolean | null;
+  synthetic_embeddings?: boolean | null;
+}
+
+export type EvaluateEvent =
+  | { type: 'trigger_meta'; project_id: string; triggered_by_agent_id: string; metrics: string[] }
+  | { type: 'start'; total: number; metrics: string[] }
+  | { type: 'agent_start'; current: number; total: number; agent_id: string }
+  | { type: 'agent_done'; current: number; total: number; agent_id: string; v1_sync?: number }
+  | { type: 'v3_done'; distinct: number; n_agents: number }
+  | { type: 'done'; snapshots: number }
+  | { type: 'result'; status: string; snapshots: Record<string, string>; distinct?: number }
+  | { type: 'error'; agent_id?: string; reason: string };
+
+export interface ScatterPoint {
+  agent_id: string;
+  display_name: string | null;
+  emoji: string | null;
+  cluster: number | null;
+  x: number;
+  y: number;
+  sync: number | null;
+}
+
+export interface ScatterResponse {
+  distinct: number | null;
+  n_points: number;
+  points: ScatterPoint[];
 }
 
 // ── API 응답 ──────────────────────────────────────────────────────────────
