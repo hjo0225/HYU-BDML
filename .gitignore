@@ -72,6 +72,8 @@ Desktop.ini
 !package-lock.json
 !tsconfig.json
 !jsconfig.json
+# FGI 스파이크 transcript (Plan 0004 §Slice 0b 가 git 추적 명시)
+!backend/spike/transcripts/*.json
 
 # ── 로그 ──────────────────────────────────────────────────────────────────────
 *.log
