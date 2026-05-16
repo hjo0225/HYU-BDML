@@ -162,4 +162,59 @@ export const agents = {
 
   get: (token: string, agentId: string) =>
     apiFetch<AgentDetail>(`/api/agents/${agentId}`, { token }),
+
+  /** Twin-2K-500 (mock 단계) 적재 — NDJSON 진행 스트림. */
+  seedTwin(token: string, projectId: string, body?: SeedTwinRequest) {
+    return ndjsonFetch<SeedTwinEvent>(
+      `/api/projects/${projectId}/agents/seed-twin`,
+      body ?? {},
+      token,
+    );
+  },
 };
+
+export interface SeedTwinRequest {
+  limit?: number;
+  cluster_k?: number;
+  fixture?: string;
+  synthetic_embeddings?: boolean | null;
+}
+
+export type SeedTwinEvent =
+  | { type: 'start'; total: number; fixture: string }
+  | { type: 'progress'; current: number; total: number; agent_id?: string; respondent_id?: string; display_name?: string }
+  | { type: 'cluster_done'; k: number }
+  | { type: 'done'; total_created: number }
+  | { type: 'error'; reason: string; respondent_id?: string };
+
+/** NDJSON 스트림 — 라인 단위 JSON 파싱. SSE 와 달리 'data:' 프리픽스 없음. */
+async function* ndjsonFetch<T>(path: string, body: object, token?: string): AsyncGenerator<T> {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) throw new Error(`NDJSON 오류: ${res.statusText}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try { yield JSON.parse(trimmed) as T; } catch {}
+    }
+  }
+  if (buffer.trim()) {
+    try { yield JSON.parse(buffer.trim()) as T; } catch {}
+  }
+}

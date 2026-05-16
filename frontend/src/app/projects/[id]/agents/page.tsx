@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useProjectContext } from '@/contexts/ProjectContext';
 import { agents as agentsApi } from '@/lib/api';
 import type { Agent } from '@/lib/types';
+import type { SeedTwinEvent } from '@/lib/api';
 
 const SOURCE_OPTIONS = [
   { value: '', label: '전체 소스' },
@@ -83,6 +84,11 @@ function AgentsCatalogView() {
     Object.fromEntries(RANGE_FILTERS.map(f => [f.key, [f.min, f.max] as [number, number]])),
   );
 
+  // seed 진행 상태
+  const [seeding, setSeeding] = useState(false);
+  const [seedProgress, setSeedProgress] = useState<{ current: number; total: number; label?: string } | null>(null);
+  const [seedError, setSeedError] = useState<string | null>(null);
+
   // 컨텍스트 동기화 — URL projectId 가 ctx 와 다르면 ctx 업데이트(선택은 자동 초기화됨)
   useEffect(() => {
     if (routeProjectId && routeProjectId !== projectId) {
@@ -112,6 +118,29 @@ function AgentsCatalogView() {
   }, [token, routeProjectId, queryOpts]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  const startSeed = useCallback(async () => {
+    if (!token || !routeProjectId || seeding) return;
+    setSeeding(true);
+    setSeedError(null);
+    setSeedProgress(null);
+    try {
+      for await (const ev of agentsApi.seedTwin(token, routeProjectId, { limit: 30 }) as AsyncGenerator<SeedTwinEvent>) {
+        if (ev.type === 'start') {
+          setSeedProgress({ current: 0, total: ev.total });
+        } else if (ev.type === 'progress') {
+          setSeedProgress({ current: ev.current, total: ev.total, label: ev.display_name });
+        } else if (ev.type === 'error') {
+          setSeedError(ev.reason);
+        }
+      }
+      await reload();
+    } catch (e) {
+      setSeedError(e instanceof Error ? e.message : '적재 실패');
+    } finally {
+      setSeeding(false);
+    }
+  }, [token, routeProjectId, seeding, reload]);
 
   const visibleIds = useMemo(() => new Set(list.map(a => a.id)), [list]);
   // 필터 적용 후에도 컨텍스트에 남아있는(현재 보이지 않는) 선택은 유지 — UX 의도
@@ -193,12 +222,36 @@ function AgentsCatalogView() {
         </div>
       </Card>
 
-      {!loading && list.length === 0 && (
+      {seeding && seedProgress && (
+        <Card padding="md" className="mb-4 border-ditto-indigo/30 bg-ditto-indigo-light/30">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-ditto-indigo">
+              적재 중… {seedProgress.current} / {seedProgress.total}
+              {seedProgress.label && <span className="text-text-muted font-normal"> · {seedProgress.label}</span>}
+            </span>
+            <span className="text-xs text-text-muted">
+              {Math.round((seedProgress.current / Math.max(1, seedProgress.total)) * 100)}%
+            </span>
+          </div>
+          <div className="h-1.5 w-full bg-ditto-indigo-light rounded-full overflow-hidden">
+            <div
+              className="h-full bg-ditto-indigo transition-all"
+              style={{ width: `${(seedProgress.current / Math.max(1, seedProgress.total)) * 100}%` }}
+            />
+          </div>
+        </Card>
+      )}
+
+      {!loading && !seeding && list.length === 0 && (
         <Card padding="lg" className="text-center">
-          <p className="text-sm text-text-muted">
-            조건에 맞는 에이전트가 없습니다. 필터를 완화하거나, 아직 적재 전이면 Slice 1.4 의
-            seed-twin 으로 30명을 적재해 보세요.
+          <p className="text-sm text-text-muted mb-4">
+            아직 적재된 에이전트가 없습니다. 실데이터 도착 전까지는 mock 30명(6 archetype × 5명)
+            으로 흐름을 검증할 수 있습니다.
           </p>
+          {seedError && <p className="text-xs text-error mb-3">{seedError}</p>}
+          <Button onClick={startSeed} loading={seeding} disabled={!token}>
+            mock 30명 적재 (Twin-2K-500 구조)
+          </Button>
         </Card>
       )}
 
