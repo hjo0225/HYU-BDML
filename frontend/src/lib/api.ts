@@ -2,6 +2,14 @@
  * Ditto API 클라이언트
  * 모든 API 호출은 이 모듈을 통해야 한다.
  */
+import type {
+  Agent,
+  AgentDetail,
+  AgentListQuery,
+  ResearchProject,
+  ResearchProjectCreate,
+  ResearchProjectUpdate,
+} from './types';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
@@ -102,4 +110,56 @@ export const auth = {
   me: (token: string) =>
     apiFetch<{ id: string; email: string; name: string | null; role: string }>(
       '/api/auth/me', { token }),
+};
+
+// ── 프로젝트 ──────────────────────────────────────────────────────────────
+
+export const projects = {
+  list: (token: string, opts?: { limit?: number; offset?: number; status?: 'draft' | 'active' | 'archived' }) => {
+    const qs = new URLSearchParams();
+    if (opts?.limit !== undefined) qs.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) qs.set('offset', String(opts.offset));
+    if (opts?.status) qs.set('status', opts.status);
+    const path = qs.toString() ? `/api/projects?${qs}` : '/api/projects';
+    return apiFetch<ResearchProject[]>(path, { token });
+  },
+
+  create: (token: string, body: ResearchProjectCreate) =>
+    apiFetch<ResearchProject>('/api/projects', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  get: (token: string, id: string) =>
+    apiFetch<ResearchProject>(`/api/projects/${id}`, { token }),
+
+  update: (token: string, id: string, body: ResearchProjectUpdate) =>
+    apiFetch<ResearchProject>(`/api/projects/${id}`, {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  remove: (token: string, id: string) =>
+    apiFetch<void>(`/api/projects/${id}`, { method: 'DELETE', token }),
+};
+
+// ── 에이전트 ──────────────────────────────────────────────────────────────
+
+export const agents = {
+  list: (token: string, projectId: string, opts?: AgentListQuery) => {
+    const qs = new URLSearchParams();
+    if (opts?.source_type) qs.set('source_type', opts.source_type);
+    if (opts?.cluster !== undefined) qs.set('cluster', String(opts.cluster));
+    if (opts?.params) qs.set('params', opts.params);
+    if (opts?.limit !== undefined) qs.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) qs.set('offset', String(opts.offset));
+    const base = `/api/projects/${projectId}/agents`;
+    const path = qs.toString() ? `${base}?${qs}` : base;
+    return apiFetch<Agent[]>(path, { token });
+  },
+
+  get: (token: string, agentId: string) =>
+    apiFetch<AgentDetail>(`/api/agents/${agentId}`, { token }),
 };
