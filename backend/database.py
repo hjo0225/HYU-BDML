@@ -125,7 +125,9 @@ class RefreshToken(Base):
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    # SQLite 는 BIGINT PRIMARY KEY 를 rowid 별칭으로 인식하지 않아 자동 증가가 안 됨.
+    # with_variant(Integer, 'sqlite') 로 SQLite 에선 INTEGER PRIMARY KEY 가 되도록.
+    id            = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     user_id       = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     action        = Column(String(50), nullable=False)
     model         = Column(String(100), nullable=True)
@@ -175,7 +177,7 @@ class AgentMemory(Base):
     """에이전트 메모리 — 기본(base), 대화 누적(conversation), FGI(fgi)."""
     __tablename__ = "agent_memories"
 
-    id         = Column(BigInteger, primary_key=True, autoincrement=True)
+    id         = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     agent_id   = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     source     = Column(String(20), nullable=False, default="base")  # 'base' | 'conversation' | 'fgi'
     category   = Column(String(50), nullable=False)   # 6-Lens 카테고리 (예: 'l1_economic')
