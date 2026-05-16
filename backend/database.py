@@ -10,7 +10,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy import (
     BigInteger, Boolean, Column, Float, ForeignKey,
-    Integer, Numeric, String, Text, DateTime,
+    Integer, Numeric, String, Text, DateTime, TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -26,6 +26,18 @@ engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
+# SQLite 는 기본적으로 외래키 제약을 비활성화 — 연결 단위로 PRAGMA 켠다.
+# (PostgreSQL 은 항상 활성이므로 분기 불필요.)
+if DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_sqlite_fk(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -39,11 +51,44 @@ def _uuid_col(primary_key: bool = False, nullable: bool = False, **kw):
     return Column(UUID(as_uuid=False), primary_key=primary_key, nullable=nullable, **kw)
 
 
-def _jsonb_col(nullable: bool = True):
-    """SQLite = Text, PostgreSQL = JSONB."""
-    if DATABASE_URL.startswith("sqlite"):
-        return Column(Text, nullable=nullable)
-    return Column(JSONB, nullable=nullable)
+class _JSONField(TypeDecorator):
+    """투명한 JSON 직렬화. SQLite=Text(JSON 문자열) / PostgreSQL=JSONB.
+
+    bind 시 dict/list → JSON 문자열 (SQLite) 또는 그대로 (PG).
+    result 시 JSON 문자열 → dict/list (SQLite) 또는 그대로 (PG).
+    """
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "sqlite":
+            return dialect.type_descriptor(Text())
+        return dialect.type_descriptor(JSONB())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "sqlite":
+            return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "sqlite" and isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+
+def _jsonb_col(nullable: bool = True, name: str | None = None):
+    """JSON 자동 직렬화 컬럼. SQLite=Text / PostgreSQL=JSONB.
+    name 지정 시 DB 컬럼명 명시(어트리뷰트와 분리)."""
+    if name is not None:
+        return Column(name, _JSONField(), nullable=nullable)
+    return Column(_JSONField(), nullable=nullable)
 
 
 def _now():
@@ -80,7 +125,9 @@ class RefreshToken(Base):
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
-    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    # SQLite 는 BIGINT PRIMARY KEY 를 rowid 별칭으로 인식하지 않아 자동 증가가 안 됨.
+    # with_variant(Integer, 'sqlite') 로 SQLite 에선 INTEGER PRIMARY KEY 가 되도록.
+    id            = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     user_id       = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     action        = Column(String(50), nullable=False)
     model         = Column(String(100), nullable=True)
@@ -114,24 +161,32 @@ class Agent(Base):
     project_id          = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
     source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey'
     source_ref          = Column(String(50), nullable=True)   # 원본 respondent_id
+    display_name        = Column(String(100), nullable=True)  # UI 표기 (예: "직장인 30대 여성 A")
+    emoji               = Column(String(8), nullable=True)    # 카드 표시용 이모지
+    intro_ko            = Column(Text, nullable=True)         # 짧은 한국어 소개
     persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과
     persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 8k tokens)
+    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 (self_actual/aspire/ought 등)
     avg_embedding       = _jsonb_col(nullable=True)           # 메모리 임베딩 평균 (1536차원 list)
     cluster             = Column(Integer, nullable=True)      # KMeans 클러스터 ID
     created_at          = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at          = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
 
 class AgentMemory(Base):
     """에이전트 메모리 — 기본(base), 대화 누적(conversation), FGI(fgi)."""
     __tablename__ = "agent_memories"
 
-    id         = Column(BigInteger, primary_key=True, autoincrement=True)
+    id         = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     agent_id   = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     source     = Column(String(20), nullable=False, default="base")  # 'base' | 'conversation' | 'fgi'
     category   = Column(String(50), nullable=False)   # 6-Lens 카테고리 (예: 'l1_economic')
     text       = Column(Text, nullable=False)
     importance = Column(Integer, nullable=False, default=50)  # 0~100
     embedding  = _jsonb_col(nullable=False)                   # list[float] 1536차원
+    # SQLAlchemy DeclarativeBase 에서 'metadata' 어트리뷰트는 예약어이므로
+    # 어트리뷰트는 meta_json, DB 컬럼명은 'metadata' 로 매핑.
+    meta_json  = _jsonb_col(nullable=True, name="metadata")
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -145,6 +200,7 @@ class EvaluationSnapshot(Base):
     identity_stats = _jsonb_col()   # V1(sync), V2(stability), V3(diversity)
     logic_stats    = _jsonb_col()   # V4(humanity), V5(reasoning_delta)
     verdict        = Column(String(50), nullable=True)   # 예: 'Verified (S3 Entry)'
+    eval_config    = _jsonb_col(nullable=True)  # 사용한 평가 설정 (모델, CF 자극 세트 버전 등)
     evaluated_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 

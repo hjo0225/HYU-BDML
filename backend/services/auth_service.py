@@ -87,7 +87,12 @@ async def verify_refresh_token(raw: str, db: AsyncSession) -> RefreshToken:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 refresh token입니다.")
     if record.is_revoked:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="만료된 refresh token입니다.")
-    if record.expires_at < datetime.now(timezone.utc):
+    # SQLite 는 timezone 정보를 보존하지 않으므로 naive datetime 으로 반환됨 —
+    # aware 와 비교하려면 UTC 로 가정해 변환. PostgreSQL 은 그대로 aware.
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="만료된 refresh token입니다.")
     return record
 

@@ -24,6 +24,17 @@ export interface ResearchProject {
   title: string | null;
   status: 'draft' | 'active' | 'archived';
   created_at: string;
+  updated_at: string | null;
+  agent_count: number;
+}
+
+export interface ResearchProjectCreate {
+  title?: string;
+}
+
+export interface ResearchProjectUpdate {
+  title?: string;
+  status?: 'draft' | 'active' | 'archived';
 }
 
 // ── Agent ──────────────────────────────────────────────────────────────────
@@ -36,10 +47,27 @@ export interface Agent {
   project_id: string;
   source_type: 'twin' | 'survey';
   source_ref: string | null;
+  display_name: string | null;
+  emoji: string | null;
+  intro_ko: string | null;
   persona_params: PersonaParams | null;
-  persona_full_prompt: string | null;
   cluster: number | null;
+  summary: string | null;
   created_at: string;
+}
+
+export interface AgentDetail extends Agent {
+  persona_full_prompt: string | null;
+  scratch: Record<string, unknown> | null;
+  updated_at: string | null;
+}
+
+export interface AgentListQuery {
+  source_type?: 'twin' | 'survey';
+  cluster?: number;
+  params?: string;  // 'l1.risk_aversion:0.3-0.7,l2.maximization:3.0-5.0'
+  limit?: number;
+  offset?: number;
 }
 
 // ── AgentMemory ───────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@/styles/globals.css';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { ProjectProvider } from '@/contexts/ProjectContext';
 
 export const metadata: Metadata = {
   title: 'Ditto — AI Agent Research Platform',
@@ -12,7 +13,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko">
       <body>
         <AuthProvider>
-          {children}
+          <ProjectProvider>
+            {children}
+          </ProjectProvider>
         </AuthProvider>
       </body>
     </html>

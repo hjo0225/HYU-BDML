@@ -1,36 +1,61 @@
 'use client';
 
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { AppShell } from '@/components/layout/AppShell';
+import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/contexts/AuthContext';
+import { projects as projectsApi } from '@/lib/api';
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const [projectCount, setProjectCount] = useState<number | null>(null);
+  const [agentCount, setAgentCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    projectsApi.list(token, { limit: 200 })
+      .then(list => {
+        setProjectCount(list.length);
+        setAgentCount(list.reduce((sum, p) => sum + (p.agent_count || 0), 0));
+      })
+      .catch(() => { setProjectCount(0); setAgentCount(0); });
+  }, [token]);
 
   return (
     <AuthGuard>
       <AppShell>
         <div className="p-8">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold text-text-primary">대시보드</h1>
-            <p className="text-text-secondary text-sm mt-1">
-              안녕하세요, <span className="font-medium">{user?.name || user?.email}</span> 님
-            </p>
+          <div className="mb-8 flex items-end justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-text-primary">대시보드</h1>
+              <p className="text-text-secondary text-sm mt-1">
+                안녕하세요, <span className="font-medium">{user?.name || user?.email}</span> 님
+              </p>
+            </div>
+            <Link href="/projects">
+              <Button size="md">+ 새 프로젝트</Button>
+            </Link>
           </div>
 
           {/* 통계 카드 */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            {[
-              { label: '리서치 프로젝트', value: '0', color: 'indigo', desc: '진행 중인 프로젝트' },
-              { label: '에이전트', value: '0', color: 'violet', desc: '생성된 AI 에이전트' },
-              { label: '대화 세션', value: '0', color: 'indigo', desc: '누적 대화 수' },
-            ].map(({ label, value, desc }) => (
-              <div key={label} className="card">
-                <p className="text-sm text-text-muted mb-1">{label}</p>
-                <p className="text-3xl font-bold text-text-primary mb-1">{value}</p>
-                <p className="text-xs text-text-muted">{desc}</p>
-              </div>
-            ))}
+            <Link href="/projects" className="card hover:border-ditto-indigo/40 transition-colors">
+              <p className="text-sm text-text-muted mb-1">리서치 프로젝트</p>
+              <p className="text-3xl font-bold text-text-primary mb-1">{projectCount ?? '—'}</p>
+              <p className="text-xs text-text-muted">진행 중인 프로젝트</p>
+            </Link>
+            <div className="card">
+              <p className="text-sm text-text-muted mb-1">에이전트</p>
+              <p className="text-3xl font-bold text-text-primary mb-1">{agentCount ?? '—'}</p>
+              <p className="text-xs text-text-muted">프로젝트에 속한 에이전트 합계</p>
+            </div>
+            <div className="card opacity-60">
+              <p className="text-sm text-text-muted mb-1">대화 세션</p>
+              <p className="text-3xl font-bold text-text-primary mb-1">—</p>
+              <p className="text-xs text-text-muted">Slice 3 이후 활성화</p>
+            </div>
           </div>
 
           {/* 시작 가이드 */}

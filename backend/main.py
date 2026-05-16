@@ -14,7 +14,7 @@ except ImportError:
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, usage
+from routers import agents, auth, projects, usage
 from database import init_db
 
 
@@ -48,6 +48,8 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(usage.router)
+app.include_router(projects.router)
+app.include_router(agents.router)
 
 
 @app.get("/api/health")
