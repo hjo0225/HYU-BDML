@@ -4,19 +4,18 @@
 
 Ditto 는 단발성 설문/인터뷰의 한계를 넘어, 응답 데이터를 **에이전트로 보존**하고 **1:1 대화 + FGI** 를 통해 지속적으로 성장시켜 가며 심층 인사이트를 발굴하도록 돕습니다.
 
-> **상태:** Active migration — 이전 프로젝트(빅데이터마케팅랩 BDML-FGI)는 [`archive/bdml-fgi/`](./archive/bdml-fgi/) 에 동결 보존됨. 마이그레이션 plan: [`docs/plans/active/0001-archive-and-bootstrap-ditto.md`](./docs/plans/active/0001-archive-and-bootstrap-ditto.md).
+> **상태:** Active — 이전 프로젝트(빅데이터마케팅랩 BDML-FGI)는 [`archive/bdml-fgi/`](./archive/bdml-fgi/) 에 동결 보존됨. 활성 개발 plan: [`docs/plans/active/0004-ditto-vertical-slices.md`](./docs/plans/active/0004-ditto-vertical-slices.md).
 
-## MVP 범위 (현재)
+## MVP 범위 (Phase 0~3)
 
-1. **에이전트 생성 — 6-Lens 데이터 구조화**
+1. **에이전트 생성 — 6-Lens 데이터 구조화** ✅ 완료
    - Twin-2K-500 한국어 응답(우선 30명) → 234문항 → L1~L6(경제·의사결정·동기·사회·가치·시간) + 정성 그룹
    - Scoring Engine (역채점 / 경제 수치화 / 능력치)
    - Hybrid Persona Prompt (수치 가이드 + 원문 가이드)
-2. **1:1 대화** — SSE 메신저, 답변 인용 + 신뢰도 시각화
-3. **FGI** — 다자 회의 (사용자 토론 개입 가능)
-4. **에이전트 성능 평가 대시보드** (Recharts)
-   - **Identity**: V1 응답 동기화율 · V2 모델 신뢰도 · V3 페르소나 독립성
-   - **Logic**: V4 인격 자연스러움 · V5 상황 대응 일관성
+2. **FGI** — 다자 회의 (사용자 토론 개입 가능)
+3. **에이전트 성능 평가 대시보드** (Recharts) — MVP는 V1·V3
+   - **Identity**: V1 응답 동기화율 · V3 페르소나 독립성
+4. **인사이트 보고서** — FGI 결과 자동 생성
 
 ## 비범위 (Out of Scope)
 
