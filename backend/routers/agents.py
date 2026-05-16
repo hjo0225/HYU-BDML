@@ -1,11 +1,19 @@
-"""에이전트 목록·상세 라우터.
+"""에이전트 목록·상세·적재 라우터.
 
-Slice 1.2 범위: GET /api/projects/{id}/agents, GET /api/agents/{id}.
-seed-twin / 평가 / 대화·FGI 엔드포인트는 후속 Slice 에서 추가.
+Slice 1.2: GET /api/projects/{id}/agents, GET /api/agents/{id}.
+Slice 1.4: POST /api/projects/{id}/agents/seed-twin (NDJSON 진행 스트림).
+평가 / 대화·FGI 엔드포인트는 후속 Slice 에서 추가.
 """
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+from typing import AsyncGenerator
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +26,7 @@ from services.agent_service import (
     short_summary,
 )
 from services.auth_service import get_current_user
+from services.seed_service import process_record, recluster_project
 
 router = APIRouter(tags=["agents"])
 
@@ -118,3 +127,106 @@ async def get_agent(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="에이전트를 찾을 수 없습니다.")
     await _verify_owned_project(agent.project_id, current_user, db)
     return _to_agent_detail(agent)
+
+
+# ── seed-twin ─────────────────────────────────────────────────────────────
+
+class SeedTwinRequest(BaseModel):
+    """Twin-2K-500 적재 요청.
+
+    fixture 미지정 시 backend/tests/_fixtures/mock_twin_30.json 사용 (mock 단계).
+    실데이터 도착 시 fixture 만 갈아끼우면 됨.
+    """
+    limit: int = Field(default=30, ge=1, le=500)
+    cluster_k: int = Field(default=5, ge=2, le=20)
+    fixture: str | None = None  # 절대경로 또는 backend/ 기준 상대경로
+    synthetic_embeddings: bool | None = None  # None=자동, True/False=강제
+
+
+def _default_fixture_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "tests" / "_fixtures" / "mock_twin_30.json"
+
+
+def _resolve_fixture(req_fixture: str | None) -> Path:
+    if not req_fixture:
+        return _default_fixture_path()
+    p = Path(req_fixture)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent.parent / req_fixture
+    return p
+
+
+async def _stream_seed(
+    project_id: str,
+    req: SeedTwinRequest,
+) -> AsyncGenerator[bytes, None]:
+    """NDJSON 진행 스트림 생성기."""
+    def emit(payload: dict) -> bytes:
+        return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+    fixture_path = _resolve_fixture(req.fixture)
+    if not fixture_path.exists():
+        yield emit({"type": "error", "reason": f"fixture 없음: {fixture_path}"})
+        return
+
+    try:
+        records = json.loads(fixture_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        yield emit({"type": "error", "reason": f"fixture 로드 실패: {e}"})
+        return
+
+    if isinstance(records, dict):
+        records = [records]
+    records = records[: req.limit]
+    total = len(records)
+    yield emit({"type": "start", "total": total, "fixture": fixture_path.name})
+
+    created = 0
+    for i, record in enumerate(records, start=1):
+        try:
+            result = await process_record(
+                record,
+                project_id=project_id,
+                synthetic_embeddings=req.synthetic_embeddings,
+            )
+            created += 1
+            yield emit({
+                "type": "progress",
+                "current": i,
+                "total": total,
+                "agent_id": result.get("agent_id"),
+                "respondent_id": result.get("respondent_id"),
+                "display_name": result.get("display_name"),
+            })
+        except Exception as e:
+            yield emit({
+                "type": "error",
+                "respondent_id": record.get("respondent_id", f"idx_{i}"),
+                "reason": str(e),
+            })
+
+    if created >= 2:
+        k = await recluster_project(project_id, k=req.cluster_k)
+        yield emit({"type": "cluster_done", "k": k})
+
+    yield emit({"type": "done", "total_created": created})
+
+
+@router.post("/api/projects/{project_id}/agents/seed-twin")
+async def seed_twin(
+    project_id: str,
+    req: SeedTwinRequest | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Twin-2K-500 30명을 프로젝트에 적재. NDJSON 진행 스트림.
+
+    mock 단계에서는 backend/tests/_fixtures/mock_twin_30.json 사용.
+    fixture 만 갈아끼우면 실데이터 적재로 전환.
+    """
+    await _verify_owned_project(project_id, current_user, db)
+    request = req or SeedTwinRequest()
+    return StreamingResponse(
+        _stream_seed(project_id, request),
+        media_type="application/x-ndjson",
+    )

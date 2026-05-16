@@ -6,6 +6,7 @@ pytest-asyncio 미사용 — asyncio.run() 으로 각 테스트 동기 실행.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import uuid
@@ -263,4 +264,115 @@ def test_unauth_returns_401():
         async with _client() as ac:
             r = await ac.get("/api/projects")
             assert r.status_code == 401
+    asyncio.run(run())
+
+
+# ── seed-twin (Slice 1.4) ──────────────────────────────────────────────────
+
+def test_seed_twin_creates_30_agents():
+    """fixture 30명 적재 → NDJSON 진행 + DB INSERT 검증."""
+    async def run():
+        await _reset_db()
+        user_id, token = await _seed_user()
+        # 프로젝트 시드
+        async with AsyncSessionLocal() as session:
+            project = ResearchProject(id=str(uuid.uuid4()), user_id=user_id, title="seed test", status="draft")
+            session.add(project)
+            await session.commit()
+            pid = project.id
+
+        async with _client() as ac:
+            r = await ac.post(
+                f"/api/projects/{pid}/agents/seed-twin",
+                json={"limit": 30, "synthetic_embeddings": True},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert r.status_code == 200, r.text
+            assert r.headers["content-type"].startswith("application/x-ndjson")
+            events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+
+        # start + 30 progress + cluster_done + done = 33 (또는 error 발생 시 차감)
+        types = [e["type"] for e in events]
+        assert types[0] == "start"
+        assert types[-1] == "done"
+        assert sum(1 for t in types if t == "progress") == 30
+        assert events[-1]["total_created"] == 30
+
+        # DB 검증 — 30명 + 클러스터 라벨 채워짐
+        from sqlalchemy import func, select as sa_select
+        async with AsyncSessionLocal() as session:
+            row = await session.execute(
+                sa_select(func.count(Agent.id)).where(Agent.project_id == pid)
+            )
+            assert row.scalar_one() == 30
+
+    asyncio.run(run())
+
+
+def test_seed_twin_unauthorized():
+    """타인 프로젝트에 seed-twin 호출 → 404."""
+    async def run():
+        await _reset_db()
+        user_a, token_a = await _seed_user("a@example.com")
+        _, token_b = await _seed_user("b@example.com")
+        async with AsyncSessionLocal() as session:
+            project = ResearchProject(id=str(uuid.uuid4()), user_id=user_a, title="A 소유")
+            session.add(project)
+            await session.commit()
+            pid = project.id
+
+        async with _client() as ac:
+            r = await ac.post(
+                f"/api/projects/{pid}/agents/seed-twin",
+                json={"limit": 1, "synthetic_embeddings": True},
+                headers={"Authorization": f"Bearer {token_b}"},
+            )
+            assert r.status_code == 404
+    asyncio.run(run())
+
+
+def test_seed_twin_then_filter_by_params():
+    """적재 후 /agents?params=l1.risk_aversion:0.0-0.5 가 일부 archetype 만 반환."""
+    async def run():
+        await _reset_db()
+        user_id, token = await _seed_user()
+        async with AsyncSessionLocal() as session:
+            project = ResearchProject(id=str(uuid.uuid4()), user_id=user_id, title="filter test")
+            session.add(project)
+            await session.commit()
+            pid = project.id
+
+        async with _client() as ac:
+            r = await ac.post(
+                f"/api/projects/{pid}/agents/seed-twin",
+                json={"limit": 30, "synthetic_embeddings": True},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert r.status_code == 200
+
+            r = await ac.get(
+                f"/api/projects/{pid}/agents?params=l1.risk_aversion:0.0-0.3",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert r.status_code == 200
+            low_risk = r.json()
+
+            r = await ac.get(
+                f"/api/projects/{pid}/agents?params=l1.risk_aversion:0.4-1.0",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            high_risk = r.json()
+
+            r = await ac.get(
+                f"/api/projects/{pid}/agents",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            total = r.json()
+
+        # 필터가 의미 있게 분할해야 함
+        assert len(total) == 30
+        assert len(low_risk) + len(high_risk) <= 30  # 중복 없음(0.3 vs 0.4 경계 분리)
+        assert 0 < len(low_risk) < 30
+        assert 0 < len(high_risk) < 30
+
     asyncio.run(run())
