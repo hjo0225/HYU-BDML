@@ -10,7 +10,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy import (
     BigInteger, Boolean, Column, Float, ForeignKey,
-    Integer, Numeric, String, Text, DateTime,
+    Integer, Numeric, String, Text, DateTime, TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -26,6 +26,18 @@ engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
+# SQLite 는 기본적으로 외래키 제약을 비활성화 — 연결 단위로 PRAGMA 켠다.
+# (PostgreSQL 은 항상 활성이므로 분기 불필요.)
+if DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_sqlite_fk(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -39,12 +51,44 @@ def _uuid_col(primary_key: bool = False, nullable: bool = False, **kw):
     return Column(UUID(as_uuid=False), primary_key=primary_key, nullable=nullable, **kw)
 
 
+class _JSONField(TypeDecorator):
+    """투명한 JSON 직렬화. SQLite=Text(JSON 문자열) / PostgreSQL=JSONB.
+
+    bind 시 dict/list → JSON 문자열 (SQLite) 또는 그대로 (PG).
+    result 시 JSON 문자열 → dict/list (SQLite) 또는 그대로 (PG).
+    """
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "sqlite":
+            return dialect.type_descriptor(Text())
+        return dialect.type_descriptor(JSONB())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "sqlite":
+            return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "sqlite" and isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+
 def _jsonb_col(nullable: bool = True, name: str | None = None):
-    """SQLite = Text, PostgreSQL = JSONB. name 지정 시 DB 컬럼명 명시(어트리뷰트와 분리)."""
-    col_type = Text if DATABASE_URL.startswith("sqlite") else JSONB
+    """JSON 자동 직렬화 컬럼. SQLite=Text / PostgreSQL=JSONB.
+    name 지정 시 DB 컬럼명 명시(어트리뷰트와 분리)."""
     if name is not None:
-        return Column(name, col_type, nullable=nullable)
-    return Column(col_type, nullable=nullable)
+        return Column(name, _JSONField(), nullable=nullable)
+    return Column(_JSONField(), nullable=nullable)
 
 
 def _now():
