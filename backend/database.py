@@ -164,9 +164,10 @@ class Agent(Base):
     display_name        = Column(String(100), nullable=True)  # UI 표기 (예: "직장인 30대 여성 A")
     emoji               = Column(String(8), nullable=True)    # 카드 표시용 이모지
     intro_ko            = Column(Text, nullable=True)         # 짧은 한국어 소개
-    persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과
-    persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 8k tokens)
-    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 (self_actual/aspire/ought 등)
+    persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과 (UI 표시용)
+    persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 12k tokens)
+    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 + V1 hold-out (self_actual/aspire/ought/holdout_* 등)
+    responses           = _jsonb_col(nullable=True)           # Twin-2K-500 raw 234문항 응답 (BEHAVIORAL_DATA 시나리오 텍스트화 원본)
     avg_embedding       = _jsonb_col(nullable=True)           # 메모리 임베딩 평균 (1536차원 list)
     cluster             = Column(Integer, nullable=True)      # KMeans 클러스터 ID
     created_at          = Column(DateTime(timezone=True), nullable=False, default=_now)
