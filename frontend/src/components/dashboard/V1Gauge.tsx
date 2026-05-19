@@ -25,7 +25,7 @@ export function V1Gauge({ sync, nEval, size = 220 }: V1GaugeProps) {
         >
           <span className="text-xs text-text-muted">평가 전</span>
         </div>
-        <span className="text-xs text-text-muted">V1 응답 동기화율</span>
+        <span className="text-xs text-text-muted">닮은 정도</span>
       </div>
     );
   }
@@ -34,12 +34,12 @@ export function V1Gauge({ sync, nEval, size = 220 }: V1GaugeProps) {
     <div className="flex flex-col items-center gap-2">
       <Gauge value={sync} display="percent" size={size} label={undefined} />
       <div className="flex items-center gap-2">
-        <ScoreBadge score={sync} label="V1" />
+        <ScoreBadge score={sync} label="닮음" />
         {nEval != null && (
-          <span className="text-xs text-text-muted">n={nEval} 자극</span>
+          <span className="text-xs text-text-muted">질문 {nEval}개로 측정</span>
         )}
       </div>
-      <span className="text-xs text-text-muted">응답 동기화율 (원문 cosine 평균)</span>
+      <span className="text-xs text-text-muted">실제 응답자와 답변이 얼마나 닮았는지</span>
     </div>
   );
 }

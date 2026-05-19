@@ -183,13 +183,13 @@ function ProjectDetailView() {
         </Card>
 
         <Card padding="md">
-          <CardHeader title="평가 (V1·V3)" subtitle="에이전트 상세에서 실행 — 같은 프로젝트 전체가 함께 평가됩니다" />
+          <CardHeader title="에이전트 품질 평가" subtitle="에이전트 카드에서 실행 — 30명 전체가 함께 평가됩니다" />
           <p className="text-sm text-text-muted mb-4">
-            V1 응답 동기화율 · V3 페르소나 독립성. 결과는 본 페이지의 산점도와
-            각 에이전트 상세의 시계열에 누적됩니다.
+            <strong>닮음</strong> — 진짜 사람과 얼마나 비슷하게 답하는지.<br />
+            <strong>다양성</strong> — 30명이 서로 얼마나 다른 인격인지.
           </p>
           <Link href={`/projects/${project.id}/agents`}>
-            <Button variant="secondary" size="md">에이전트 상세에서 실행 →</Button>
+            <Button variant="secondary" size="md">에이전트 보기 →</Button>
           </Link>
         </Card>
       </div>
@@ -205,8 +205,8 @@ function ProjectDetailView() {
       ) : (
         <Card padding="md" className="mb-6 border-dashed">
           <p className="text-sm text-text-muted">
-            V3 페르소나 독립성 산점도는 평가를 1회 이상 실행하면 표시됩니다.
-            에이전트 카탈로그 → 에이전트 상세 → &quot;V1·V3 실행&quot;.
+            에이전트 다양성 분포도는 평가를 한 번 돌리면 나타납니다.
+            에이전트 카드에 들어가서 &quot;평가 실행&quot; 버튼을 눌러보세요.
           </p>
         </Card>
       )}

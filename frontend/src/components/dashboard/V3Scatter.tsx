@@ -49,15 +49,15 @@ export function V3Scatter({ points, distinct, height = 320, colorByCluster = tru
 
   const distinctLabel =
     distinct == null ? '—' :
-    distinct >= 3.0 ? `${distinct.toFixed(2)} · High diversity` :
-    distinct >= 1.5 ? `${distinct.toFixed(2)} · Moderate` :
-    `${distinct.toFixed(2)} · Mode collapse 의심`;
+    distinct >= 3.0 ? `${distinct.toFixed(2)} · 다양한 사람들` :
+    distinct >= 1.5 ? `${distinct.toFixed(2)} · 보통` :
+    `${distinct.toFixed(2)} · 서로 비슷비슷`;
 
   return (
     <div>
       <div className="flex items-baseline justify-between mb-2">
-        <h3 className="text-sm font-semibold text-text-secondary">V3 페르소나 독립성</h3>
-        <span className="text-xs text-text-muted">distinct = <span className="text-text-primary font-medium">{distinctLabel}</span></span>
+        <h3 className="text-sm font-semibold text-text-secondary">에이전트 다양성 분포</h3>
+        <span className="text-xs text-text-muted">점수 <span className="text-text-primary font-medium">{distinctLabel}</span></span>
       </div>
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -117,7 +117,7 @@ export function V3Scatter({ points, distinct, height = 320, colorByCluster = tru
         </ResponsiveContainer>
       </div>
       <p className="text-[10px] text-text-muted mt-2">
-        ≥ 3.0 high diversity · 1.5~3.0 moderate · &lt; 1.5 mode collapse 의심 (EVAL_SPEC §3)
+        3.0 이상이면 다양 · 1.5~3.0 보통 · 1.5 미만은 비슷한 사람만 모인 경고 신호
       </p>
     </div>
   );
