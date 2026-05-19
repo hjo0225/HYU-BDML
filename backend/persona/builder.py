@@ -1,37 +1,39 @@
-"""하이브리드 페르소나 프롬프트 빌더.
+"""페르소나 프롬프트 빌더.
 
-build_persona(persona_params, qualitative, demographics) → 시스템 프롬프트 str
+build_persona(persona_params, qualitative, demographics, responses) → 시스템 프롬프트 str
+
+[NUMERICAL GUIDES] 수치 표 대신 [BEHAVIORAL DATA] Q&A 시나리오 (27 척도 단위)
+를 주입한다. 수치는 persona_params 컬럼에 그대로 보존되어 UI 에서 노출됨.
 """
 from __future__ import annotations
 
 from .compressor import trim_to_limit
 from .intro import build_intro_ko
+from .qa_textualizer import build_behavioral_data
 from prompts.persona_system import (
     IDENTITY_TEMPLATE,
-    NUMERICAL_GUIDE_TEMPLATE,
     QUALITATIVE_ANCHOR_TEMPLATE,
     CONSTRAINTS_TEMPLATE,
     SYSTEM_PROMPT_TEMPLATE,
 )
 
 
-def _safe(params: dict, key: str, default=0.0):
-    return params.get(key, default)
-
-
 def build_persona(
     persona_params: dict,
     qualitative: dict,
     demographics: dict,
-    max_tokens: int = 8000,
+    responses: dict | None = None,
+    max_tokens: int = 12000,
 ) -> str:
-    """하이브리드 페르소나 시스템 프롬프트를 조립한다.
+    """페르소나 시스템 프롬프트 조립.
 
     Args:
-        persona_params: score_all() 의 출력 dict.
-        qualitative: extract_qualitative() 의 출력 dict.
-        demographics: extract_demographics() 의 출력 dict.
-        max_tokens: 최대 토큰 수 (기본 8000).
+        persona_params: score_all() 의 출력 dict (수치 점수 — UI 표시용).
+        qualitative: extract_qualitative() 출력 — anchor 3종 + V1 hold-out.
+        demographics: extract_demographics() 출력 — 인구통계 dict.
+        responses: validate_input() 출력 — 234문항 raw 응답. 없으면 BEHAVIORAL
+                   DATA 섹션이 비어 있음 (구버전 호환).
+        max_tokens: 최대 토큰 수 (기본 12000 — BEHAVIORAL DATA 포함 여유 확보).
 
     Returns:
         시스템 프롬프트 문자열 (max_tokens 이내로 자동 압축).
@@ -39,34 +41,7 @@ def build_persona(
     intro = build_intro_ko(persona_params, demographics)
     identity = IDENTITY_TEMPLATE.format(intro=intro)
 
-    numerical = NUMERICAL_GUIDE_TEMPLATE.format(
-        l1_risk_aversion=_safe(persona_params, "l1.risk_aversion"),
-        l1_loss_aversion_lambda=_safe(persona_params, "l1.loss_aversion_lambda", 1.0),
-        l1_mental_accounting=_safe(persona_params, "l1.mental_accounting"),
-        l1_tightwad_spendthrift=_safe(persona_params, "l1.tightwad_spendthrift", 13),
-        l2_maximization=_safe(persona_params, "l2.maximization", 3.0),
-        l2_need_for_closure=_safe(persona_params, "l2.need_for_closure", 3.0),
-        l2_need_for_cognition=_safe(persona_params, "l2.need_for_cognition", 3.0),
-        l2_crt_score=int(_safe(persona_params, "l2.crt_score", 0)),
-        l3_regulatory_focus=_safe(persona_params, "l3.regulatory_focus", 4.0),
-        l3_agency=_safe(persona_params, "l3.agency", 5.0),
-        l3_communion=_safe(persona_params, "l3.communion", 5.0),
-        l3_need_for_uniqueness=_safe(persona_params, "l3.need_for_uniqueness", 3.0),
-        l4_self_monitoring=_safe(persona_params, "l4.self_monitoring", 2.5),
-        l4_horizontal_individualism=_safe(persona_params, "l4.horizontal_individualism", 3.0),
-        l4_vertical_individualism=_safe(persona_params, "l4.vertical_individualism", 3.0),
-        l4_horizontal_collectivism=_safe(persona_params, "l4.horizontal_collectivism", 3.0),
-        l4_vertical_collectivism=_safe(persona_params, "l4.vertical_collectivism", 3.0),
-        l4_empathy=_safe(persona_params, "l4.empathy", 3.0),
-        l4_dictator_send_ratio=_safe(persona_params, "l4.dictator_send_ratio", 0.4),
-        l5_minimalism=_safe(persona_params, "l5.minimalism", 3.0),
-        l5_green_values=_safe(persona_params, "l5.green_values", 3.0),
-        l6_discount_rate_annual=_safe(persona_params, "l6.discount_rate_annual", 0.5),
-        l6_present_bias_beta=_safe(persona_params, "l6.present_bias_beta", 0.0),
-        l6_conscientiousness=int(_safe(persona_params, "l6.conscientiousness", 4)),
-        ability_financial_literacy=int(_safe(persona_params, "ability.financial_literacy", 4)),
-        ability_numeracy=int(_safe(persona_params, "ability.numeracy", 4)),
-    )
+    behavioral_data = build_behavioral_data(responses or {}, persona_params or {})
 
     qual_anchors = QUALITATIVE_ANCHOR_TEMPLATE.format(
         self_aspire=qualitative.get("self_aspire", ""),
@@ -78,7 +53,7 @@ def build_persona(
 
     full_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         identity=identity,
-        numerical_guides=numerical,
+        behavioral_data=behavioral_data,
         qualitative_anchors=qual_anchors,
         constraints=constraints,
     )

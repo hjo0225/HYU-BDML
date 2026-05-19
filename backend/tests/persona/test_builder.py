@@ -22,35 +22,45 @@ def persona_components(sample_data):
     params = score_all(responses)
     qualitative = extract_qualitative(sample_data)
     demographics = extract_demographics(sample_data)
-    return params, qualitative, demographics
+    return params, qualitative, demographics, responses
 
 
 def test_build_persona_returns_string(persona_components):
-    params, qual, demo = persona_components
-    prompt = build_persona(params, qual, demo)
+    params, qual, demo, responses = persona_components
+    prompt = build_persona(params, qual, demo, responses)
     assert isinstance(prompt, str)
     assert len(prompt) > 100
 
 
-def test_build_persona_contains_cite_markers(persona_components):
-    """CITE 마커가 포함되어야 한다."""
-    params, qual, demo = persona_components
-    prompt = build_persona(params, qual, demo)
-    assert "[CITE:L1]" in prompt
-    assert "[CITE:L2]" in prompt
+def test_build_persona_contains_behavioral_data(persona_components):
+    """BEHAVIORAL DATA 섹션 + L1~L6 그룹 헤더가 포함되어야 한다."""
+    params, qual, demo, responses = persona_components
+    prompt = build_persona(params, qual, demo, responses)
+    assert "[BEHAVIORAL DATA]" in prompt
+    assert "L1. 경제적 합리성" in prompt
+    assert "L2. 의사결정 스타일" in prompt
+    assert "L1-1 위험 회피" in prompt  # 첫 척도 시나리오 헤더
 
 
 def test_build_persona_contains_qualitative(persona_components):
     """정성 서술이 포함되어야 한다."""
-    params, qual, demo = persona_components
-    prompt = build_persona(params, qual, demo)
+    params, qual, demo, responses = persona_components
+    prompt = build_persona(params, qual, demo, responses)
     assert qual["self_aspire"][:10] in prompt
 
 
 def test_build_persona_within_token_limit(persona_components):
-    params, qual, demo = persona_components
-    prompt = build_persona(params, qual, demo, max_tokens=8000)
+    params, qual, demo, responses = persona_components
+    prompt = build_persona(params, qual, demo, responses, max_tokens=8000)
     assert count_tokens(prompt) <= 8000
+
+
+def test_build_persona_without_responses_skips_behavioral(persona_components):
+    """responses 누락 시 BEHAVIORAL DATA 섹션이 비어 있어도 에러 없이 동작."""
+    params, qual, demo, _ = persona_components
+    prompt = build_persona(params, qual, demo)
+    assert isinstance(prompt, str)
+    assert "[BEHAVIORAL DATA]" in prompt  # 헤더는 들어가지만 그룹 블록은 비어 있음
 
 
 def test_trim_to_limit_reduces_tokens():
