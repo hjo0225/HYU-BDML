@@ -48,14 +48,14 @@ def test_cosine_basic():
 def test_compute_v1_identical_text_high_sync():
     """동일 답변이면 sync 가 1.0 에 가까워야 함."""
     scratch = {
-        "self_aspire": "이상적인 삶 텍스트 A",
-        "self_ought": "의무 텍스트 B",
-        "self_actual": "실제 성격 텍스트 C",
+        "holdout_recent_purchase": "최근 큰 소비 텍스트 A",
+        "holdout_info_source": "신뢰하는 정보 출처 텍스트 B",
+        "holdout_lifestyle": "라이프스타일 한 단어 텍스트 C",
     }
     agent_answers = {
-        "self_aspire": "이상적인 삶 텍스트 A",
-        "self_ought": "의무 텍스트 B",
-        "self_actual": "실제 성격 텍스트 C",
+        "recent_purchase": "최근 큰 소비 텍스트 A",
+        "info_source": "신뢰하는 정보 출처 텍스트 B",
+        "lifestyle": "라이프스타일 한 단어 텍스트 C",
     }
     result = compute_v1(
         agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
@@ -67,14 +67,14 @@ def test_compute_v1_identical_text_high_sync():
 def test_compute_v1_different_text_lower_sync():
     """다른 답변이면 sync 가 떨어져야 함."""
     scratch = {
-        "self_aspire": "안정적 가족 중심 삶",
-        "self_ought": "성실한 직장 생활",
-        "self_actual": "검소한 소비자",
+        "holdout_recent_purchase": "지난 달 가전을 비교 끝에 가장 싼 모델로 결정했습니다.",
+        "holdout_info_source": "오랜 거래 동네 가게 사장님의 말을 가장 신뢰합니다.",
+        "holdout_lifestyle": "한 단어로 계획형 — 매달 예산을 미리 짭니다.",
     }
     agent_answers = {
-        "self_aspire": "모험과 자유로운 여행",
-        "self_ought": "자기 자신을 위한 시간",
-        "self_actual": "트렌드를 따라가는 얼리어답터",
+        "recent_purchase": "사전예약 한정판 신상 운동화를 시세 두 배에 결제했습니다.",
+        "info_source": "인스타와 유튜브 쇼츠에서 트렌드를 가장 먼저 봅니다.",
+        "lifestyle": "한 단어로 얼리어답터 — 새 서비스를 가장 먼저 시도합니다.",
     }
     result = compute_v1(
         agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
@@ -86,13 +86,13 @@ def test_compute_v1_different_text_lower_sync():
 
 def test_compute_v1_skips_missing():
     """scratch 또는 answer 누락 시 skip."""
-    scratch = {"self_aspire": "A"}
-    agent_answers = {"self_aspire": "A", "self_ought": "B"}  # actual 누락
+    scratch = {"holdout_recent_purchase": "A"}
+    agent_answers = {"recent_purchase": "A", "info_source": "B"}  # lifestyle 누락
     result = compute_v1(
         agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
     )
     assert result["n_eval"] == 1
-    assert set(result["skipped"]) == {"self_ought", "self_actual"}
+    assert set(result["skipped"]) == {"info_source", "lifestyle"}
 
 
 def test_compute_v3_diversity_positive():
