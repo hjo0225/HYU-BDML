@@ -159,7 +159,7 @@ class Agent(Base):
 
     id                  = Column(String(36), primary_key=True)
     project_id          = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey'
+    source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey' | 'package'
     source_ref          = Column(String(50), nullable=True)   # 원본 respondent_id
     display_name        = Column(String(100), nullable=True)  # UI 표기 (예: "직장인 30대 여성 A")
     emoji               = Column(String(8), nullable=True)    # 카드 표시용 이모지
@@ -203,6 +203,32 @@ class EvaluationSnapshot(Base):
     verdict        = Column(String(50), nullable=True)   # 예: 'Verified (S3 Entry)'
     eval_config    = _jsonb_col(nullable=True)  # 사용한 평가 설정 (모델, CF 자극 세트 버전 등)
     evaluated_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class Conversation(Base):
+    """1:1 대화 세션 — 사용자 ↔ 단일 에이전트 (plan 0007)."""
+    __tablename__ = "conversations"
+
+    id         = Column(String(36), primary_key=True)
+    project_id = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id   = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title      = Column(String(200), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    ended_at   = Column(DateTime(timezone=True), nullable=True)
+
+
+class ConversationTurn(Base):
+    """대화 발화 — 사용자 또는 에이전트 한 턴."""
+    __tablename__ = "conversation_turns"
+
+    id              = Column(String(36), primary_key=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    role            = Column(String(20), nullable=False)   # 'user' | 'agent'
+    content         = Column(Text, nullable=False)
+    citations       = _jsonb_col(nullable=True)            # V1 인용 마커 검증 결과 (후속)
+    confidence      = Column(String(20), nullable=True)    # 'direct'|'inferred'|'guess'|'unknown' (후속)
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ── 세션 Dependency ───────────────────────────────────────────────────────
