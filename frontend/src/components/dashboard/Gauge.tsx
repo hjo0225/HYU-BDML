@@ -25,7 +25,7 @@ export function Gauge({ value, label, size = 220, display = 'percent' }: GaugePr
   return (
     <div
       className="relative"
-      style={{ width: size, height: Math.round(size * 0.62) }}
+      style={{ width: size, height: Math.round(size * (label ? 0.62 : 0.52)) }}
     >
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>

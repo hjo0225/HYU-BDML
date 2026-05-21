@@ -193,7 +193,7 @@ async def process_record(
     persona_params = score_all(responses)
     qualitative = extract_qualitative(record)
     demographics = extract_demographics(record)
-    prompt = build_persona(persona_params, qualitative, demographics)
+    prompt = build_persona(persona_params, qualitative, demographics, responses)
     token_count = count_tokens(prompt)
 
     memory_texts = build_memory_texts(persona_params, qualitative, demographics)
@@ -233,6 +233,7 @@ async def process_record(
             persona_params=persona_params,
             persona_full_prompt=prompt,
             scratch=scratch,
+            responses=responses,  # 234문항 raw — BEHAVIORAL DATA 재빌드 가능
             avg_embedding=avg_emb,
         ))
         await db.flush()

@@ -35,6 +35,8 @@ const config: Config = {
         error:    "var(--error)",
       },
       fontSize: {
+        // DESIGN.md font.size.2xs (마이크로 라벨 — 배지·캡션·메타)
+        "2xs": ["10px", { lineHeight: "1.4" }],
         // DESIGN.md font.size.score (게이지 차트 중앙 점수)
         score: ["48px", { lineHeight: "1", fontWeight: "700" }],
       },

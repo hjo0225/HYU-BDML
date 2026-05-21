@@ -23,6 +23,19 @@ from services.auth_service import get_current_user
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
+def _ensure_not_demo(user: User) -> None:
+    """공용 데모 계정(role='demo')은 사전 시드 프로젝트만 소비 — 변경 차단 (plan 0009).
+
+    모든 데모 방문자가 단일 데모 계정을 공유하므로, 생성·수정·삭제를 막아
+    공유 데이터 오염과 프로젝트 누적을 방지한다.
+    """
+    if user.role == "demo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="데모에서는 프로젝트를 만들거나 변경할 수 없습니다. 회원가입 후 이용하세요.",
+        )
+
+
 async def _load_owned(project_id: str, user: User, db: AsyncSession) -> ResearchProject:
     """본인 소유 프로젝트 로드. 없거나 타인 소유면 404."""
     result = await db.execute(
@@ -47,6 +60,7 @@ def _to_out(project: ResearchProject, agent_count: int) -> ResearchProjectOut:
         user_id=project.user_id,
         title=project.title,
         status=project.status,
+        brief=project.brief,
         created_at=project.created_at,
         updated_at=project.updated_at,
         agent_count=agent_count,
@@ -93,13 +107,23 @@ async def create_project(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """프로젝트 생성. title 미입력 시 'YYYY-MM-DD 프로젝트' 자동 생성."""
+    """프로젝트 생성. title 미입력 시 'YYYY-MM-DD 프로젝트' 자동 생성.
+
+    brief(목적·타겟·활용방안)는 입력값이 하나라도 있을 때만 JSON 으로 저장.
+    """
+    _ensure_not_demo(current_user)
     title = (req.title or f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')} 프로젝트").strip()
+    brief_dict = None
+    if req.brief:
+        d = req.brief.model_dump()
+        if any(v for v in d.values()):
+            brief_dict = d
     project = ResearchProject(
         id=str(uuid.uuid4()),
         user_id=current_user.id,
         title=title,
         status="draft",
+        brief=brief_dict,
     )
     db.add(project)
     await db.flush()
@@ -126,6 +150,7 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
 ):
     """프로젝트 부분 갱신. 전달된 필드만 반영."""
+    _ensure_not_demo(current_user)
     project = await _load_owned(project_id, current_user, db)
     payload = req.model_dump(exclude_unset=True)
     if not payload:
@@ -144,5 +169,6 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
 ):
     """프로젝트 삭제. agents/agent_memories 는 ondelete=CASCADE 로 연쇄 삭제."""
+    _ensure_not_demo(current_user)
     project = await _load_owned(project_id, current_user, db)
     await db.execute(delete(ResearchProject).where(ResearchProject.id == project.id))

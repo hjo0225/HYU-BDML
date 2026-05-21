@@ -80,7 +80,7 @@ export function FGIInterventionInput({
         )}
       />
       {active && (
-        <div className="flex items-center justify-between mt-1 text-[10px] text-text-muted">
+        <div className="flex items-center justify-between mt-1 text-2xs text-text-muted">
           <span>{value.length} / {maxLength}</span>
           <span>Enter 전송 · Shift+Enter 줄바꿈 · Esc 양보</span>
         </div>

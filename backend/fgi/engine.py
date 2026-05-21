@@ -1,0 +1,439 @@
+"""FGI 라운드 엔진 v2 (plan 0008 v2 · item 4).
+
+흐름(사용자 제공 스펙):
+  1) 사회자가 주제를 N Round(소주제+목표질문)로 분해한 토론 플랜 생성
+  2) 매 턴 engagement score 동적 발화자 선정 (round-robin 아님)
+  3) 발화마다 follow-up cascade (토큰 1차 → LLM rubric 2차) · 비활동 참가자 pull-in
+  4) Round 종료 시 Reflection (세션 휘발, 자기/타인 구분)
+  5) Round 사이 사용자 개입 창(30초, Round당 최대 2회)
+  6) 세션 종료 → 구조화 인사이트 보고서
+
+SSE 이벤트: round_start / moderator / agent_delta / agent_end / user_turn_required /
+round_end / session_end / error
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import Agent, FGISession, FGITurn
+from fgi import cascade, config, engagement, memory, reflection, report
+from fgi.prompts import moderator as mod_prompts
+from fgi.prompts.utterance import AGENT_TURN, FGI_GOAL_PREAMBLE, PASS_INSTRUCTION, STANCE_INSTRUCTION
+from services.llm_client import chat_completion, stream_chat
+
+
+# ── 사용자 개입 조정 (run 코루틴 ↔ intervene 엔드포인트) ─────────────────────
+class _Waiter:
+    def __init__(self, round_no: int, order: int):
+        self.round = round_no
+        self.order = order
+        self.queue: asyncio.Queue[str] = asyncio.Queue()
+
+
+_WAITERS: dict[str, _Waiter] = {}
+
+# '개입 안 함' 신호 — 사용자가 명시적으로 건너뛸 때 큐에 넣는 센티넬 (v0.3.2).
+_SKIP_SENTINEL = "__SKIP_INTERVENTION__"
+
+# 수동 제어 플래그 (§11 수동 전환 · §12 수동 종료) — control 엔드포인트가 set, run 루프가 소비.
+_CONTROLS: dict[str, dict[str, bool]] = {}
+
+
+def get_waiter(session_id: str) -> _Waiter | None:
+    return _WAITERS.get(session_id)
+
+
+def skip_intervention(session_id: str) -> bool:
+    """사용자가 '개입 안 함'을 선택 → 대기 중이면 즉시 다음 라운드로 진행. 대기 중이면 True."""
+    waiter = _WAITERS.get(session_id)
+    if waiter is None:
+        return False
+    waiter.queue.put_nowait(_SKIP_SENTINEL)
+    return True
+
+
+def set_control(session_id: str, action: str) -> bool:
+    """action='next_round'|'end_session' 플래그 설정. 진행 중 세션이면 True."""
+    if action not in ("next_round", "end_session"):
+        return False
+    _CONTROLS.setdefault(session_id, {})[action] = True
+    return True
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _strip_quotes(text: str) -> str:
+    """발화 전체를 감싼 따옴표 제거 — 모델이 본문을 따옴표로 감싸 출력하는 누출 보정."""
+    t = text.strip()
+    while len(t) >= 2 and t[0] in "\"'“”‘’" and t[-1] in "\"'“”‘’":
+        t = t[1:-1].strip()
+    return t
+
+
+def _is_pass(text: str) -> bool:
+    """에이전트가 '새로 더할 게 없다'며 패스했는지 — 발언으로 치지 않는다 (v0.3.2)."""
+    t = text.strip().strip("[]()*").strip().lower()
+    return t in ("", "pass", "패스", "[pass]") or t.startswith("[pass]") or len(t) < 2
+
+
+async def _save_turn(db, *, session_id, round_no, order, role, content, agent_id=None, meta=None) -> FGITurn:
+    turn = FGITurn(
+        id=str(uuid.uuid4()), session_id=session_id, round=round_no, order_in_round=order,
+        role=role, agent_id=agent_id, content=content, meta_json=meta,
+    )
+    db.add(turn)
+    await db.commit()
+    return turn
+
+
+async def _generate_plan(topic: str, n_rounds: int, mock: bool | None) -> list[dict]:
+    """주제를 N Round(소주제+목표질문)로 분해. 실패 시 일반 플랜."""
+    try:
+        raw = (await chat_completion(
+            system=mod_prompts.MODERATOR_SYSTEM,
+            user=mod_prompts.ROUND_PLAN_USER.format(topic=topic, n_rounds=n_rounds),
+            model=config.CHAT_MODEL, temperature=0.4, max_tokens=600, mock=mock,
+        )).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        plan = json.loads(raw)
+        plan = [p for p in plan if p.get("subtopic") and p.get("goal_question")]
+        if plan:
+            return plan[:n_rounds]
+    except Exception:  # noqa: BLE001
+        pass
+    # 폴백 — 일반 토론 흐름
+    generic = [
+        {"subtopic": "현황과 경험", "goal_question": f"'{topic}'와 관련해 평소 경험은 어떠셨나요?"},
+        {"subtopic": "원인과 감정", "goal_question": "그렇게 느끼게 된 결정적 계기는 무엇이었나요?"},
+        {"subtopic": "비교와 대안", "goal_question": "다른 선택지와 비교하면 어떤 점이 달랐나요?"},
+        {"subtopic": "개선과 기대", "goal_question": "어떤 점이 바뀌면 생각이 달라질까요?"},
+        {"subtopic": "가격·의향", "goal_question": "비용 측면에서 수용 가능한 선은 어디인가요?"},
+    ]
+    return generic[:n_rounds] if n_rounds <= len(generic) else generic + generic[: n_rounds - len(generic)]
+
+
+def _others_recent(history: list[dict], self_id: str, k: int = 4) -> str:
+    lines = [f"- {t['name']}: {t['content']}" for t in history[-k - 1:] if t.get("agent_id") != self_id and t["role"] != "moderator"]
+    return "\n".join(lines[-k:]) or "(아직 다른 참여자 발언 없음)"
+
+
+async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moderator_msg, history, mock,
+                        stance=None, allow_pass=False):
+    """에이전트 1발화 — 토큰 스트리밍 yield + 저장 + 기억 기록. 마지막에 ('end', turn, content).
+
+    stance('critical'|'positive')가 주어지면 라운드 진영 지시를 앞에 덧붙인다(v0.3, 자유토론 전용).
+    allow_pass=True 면 '새로 더할 게 없으면 [PASS]' 지침을 주고, 응답이 패스면 토큰을 흘리지 않고
+    ('pass', None, None) 만 내보낸 뒤 종료(발언으로 저장하지 않음, v0.3.2).
+    """
+    refl = reflection.context_for(session.id, agent.id)
+    others = _others_recent(history, agent.id)
+    user = AGENT_TURN.format(moderator_message=moderator_msg, others_summary=others)
+    if allow_pass:
+        user = PASS_INSTRUCTION + "\n\n" + user
+    if stance and stance in STANCE_INSTRUCTION:
+        user = STANCE_INSTRUCTION[stance] + "\n\n" + user
+    if refl:
+        user = refl + "\n\n" + user
+    # FGI 참여 지침(목표 주입)을 페르소나 프롬프트 앞에 결합 (v0.2 §04).
+    persona = agent.persona_full_prompt or "당신은 소비자 페르소나입니다."
+    system_prompt = FGI_GOAL_PREAMBLE + "\n\n" + persona
+    parts: list[str] = []
+    async for delta in stream_chat(
+        system=system_prompt,
+        messages=[{"role": "user", "content": user}],
+        model=config.CHAT_MODEL, temperature=0.85, max_tokens=240, mock=mock,
+    ):
+        parts.append(delta)
+        if not allow_pass:           # 패스 판정을 위해 패스 모드에선 토큰을 흘리지 않고 모은다
+            yield ("delta", delta, None)
+    content = _strip_quotes("".join(parts))
+    if allow_pass and _is_pass(content):
+        yield ("pass", None, None)   # 새로 더할 게 없음 → 발언하지 않음
+        return
+    if allow_pass:
+        yield ("delta", content, None)  # 패스 아님 → 본문을 한 번에 표시
+    name = agent.display_name or "참여자"
+    turn = await _save_turn(db, session_id=session.id, round_no=round_no, order=order,
+                            role="agent", content=content, agent_id=agent.id, meta={"display_name": name})
+    history.append({"round": round_no, "order": order, "role": "agent", "agent_id": agent.id, "name": name, "content": content})
+    reflection.record(session.id, speaker_id=agent.id, speaker_name=name, content=content, agent_ids=agent_ids)
+    yield ("end", turn, content)
+
+
+async def run_fgi(
+    db: AsyncSession,
+    *,
+    session: FGISession,
+    agents: list[Agent],
+    max_rounds: int = 5,
+    allow_user_intervention: bool = True,
+    intervention_timeout: float | None = None,
+    plan: list[dict] | None = None,
+    mock: bool | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    timeout = config.INTERVENTION_TIMEOUT if intervention_timeout is None else intervention_timeout
+    agent_ids = [a.id for a in agents]
+    by_id = {a.id: a for a in agents}
+    name_by = {a.id: (a.display_name or "참여자") for a in agents}
+    # 세션 기억 방 초기화 (record 가 agent_ids 를 알도록)
+    reflection._STORE.setdefault(session.id, {aid: reflection._AgentMem() for aid in agent_ids})
+
+    agents_meta = [{"agent_id": a.id, "name": name_by[a.id], "summary": (a.intro_ko or "")} for a in agents]
+    started_dt = session.started_at if (session.started_at and session.started_at.tzinfo) else (
+        session.started_at.replace(tzinfo=timezone.utc) if session.started_at else _now())
+
+    def _session_over() -> bool:
+        if _CONTROLS.get(session.id, {}).get("end_session"):
+            return True
+        return (_now() - started_dt).total_seconds() / 60 > config.SESSION_MAX_MIN
+
+    # 확정된 라운드 플랜(AI 제안)이 있으면 그대로 사용, 없으면 엔진이 자체 생성.
+    # probes: Phase C(자유토론) 수렴 시 의견을 갈라 재점화할 쟁점.
+    confirmed = [
+        {
+            "subtopic": (p.get("subtopic") or "").strip(),
+            "goal_question": (p.get("goal_question") or "").strip(),
+            "probes": [str(x).strip() for x in (p.get("probes") or []) if str(x).strip()],
+        }
+        for p in (plan or [])
+        if (p.get("goal_question") or "").strip()
+    ]
+    plan = confirmed if confirmed else await _generate_plan(session.topic, max_rounds, mock)
+    history: list[dict] = []
+    round_summaries: list[dict] = []
+    ended_early = False
+
+    # 에이전트 1발화 → 이벤트 스트림 + 마지막 content 를 _holder 에 저장하는 재사용 헬퍼.
+    _holder = {"content": ""}
+
+    async def _agent_says(agent: Agent, moderator_msg: str, order_no: int, round_no: int,
+                          stance: str | None = None, allow_pass: bool = False):
+        spoke = False
+        async for kind, a, b in _stream_agent(
+            db, session=session, agent_ids=agent_ids, agent=agent, round_no=round_no,
+            order=order_no, moderator_msg=moderator_msg, history=history, mock=mock,
+            stance=stance, allow_pass=allow_pass,
+        ):
+            if kind == "delta":
+                yield {"type": "agent_delta", "agent_id": agent.id, "delta": a}
+            elif kind == "end":
+                spoke = True
+                _holder["content"] = b
+                yield {"type": "agent_end", "agent_id": agent.id, "turn_id": a.id,
+                       "content": b, "citations": [], "confidence": "unknown"}
+            # kind == "pass": 발언하지 않음 (이벤트 없음)
+        _holder["passed"] = not spoke
+
+    async def _mod_record(text: str, order_no: int, round_no: int, meta: dict | None = None) -> None:
+        await _save_turn(db, session_id=session.id, round_no=round_no, order=order_no, role="moderator", content=text, meta=meta)
+        history.append({"round": round_no, "order": order_no, "role": "moderator", "agent_id": None, "name": "모더레이터", "content": text})
+
+    # 한 Round = Phase A(질문) → B(순서답변) → C(티키타카) → D(개입) → 종료 follow-up (v0.2 §03).
+    for r, step in enumerate(plan, 1):
+        if _session_over():
+            ended_early = True
+            break
+        subtopic = step["subtopic"]
+        goal_q = step["goal_question"]
+        yield {"type": "round_start", "round": r, "subtopic": subtopic, "goal_question": goal_q}
+        order = 0
+
+        # 진영 부여 — 합창 방지(v0.3): 라운드마다 절반은 비판·우려, 절반은 긍정·옹호로 교대 배정.
+        stance_by = {a.id: ("critical" if (i + r) % 2 == 0 else "positive") for i, a in enumerate(agents)}
+
+        # ── Phase A — 모더레이터가 Round 질문 제시 ──────────────────────────
+        mod_msg = await chat_completion(
+            system=mod_prompts.MODERATOR_SYSTEM,
+            user=mod_prompts.SUBTOPIC_OPENING.format(round_no=r, subtopic=subtopic, goal_question=goal_q),
+            model=config.CHAT_MODEL, temperature=0.6, max_tokens=200, mock=mock,
+        )
+        await _mod_record(mod_msg, order, r)
+        reflection.record(session.id, speaker_id=None, speaker_name="모더레이터", content=mod_msg, agent_ids=agent_ids)
+        yield {"type": "moderator", "round": r, "content": mod_msg, "phase": "A"}
+        order += 1
+
+        # ── Phase B — 전원이 고정 순서대로 1차 답변 (자기 경험에 충실, 진영 없음) ──
+        last_text = ""
+        for agent in agents:
+            if _session_over():
+                ended_early = True
+                break
+            async for ev in _agent_says(agent, mod_msg, order, r):
+                yield ev
+            last_text = _holder["content"]
+            order += 1
+
+        # ── Phase C — 쟁점 주도 토론 (v0.3.1): 모더레이터가 쟁점을 제시 → 진영이 논쟁 → 다음 쟁점 ──
+        # novelty 수렴 감지 없음. 쟁점 개수가 Phase C 길이를 결정(예측 가능). 쟁점이 없으면 핵심 질문으로 1세그먼트.
+        probes_list: list[str] = list(step.get("probes") or [])
+        segments: list[str | None] = probes_list if probes_list else [None]
+        spoke_in_c: set[str] = set()
+        c_total = 0  # Phase C 전체 발화 수 (총상한 적용)
+
+        for seg_q in segments:
+            if ended_early or _session_over() or c_total >= config.MAX_TIKITAKA_UTTER:
+                break
+            ctrl = _CONTROLS.get(session.id, {})
+            if ctrl.get("next_round"):       # 수동 '다음 주제로'
+                ctrl["next_round"] = False
+                break
+            # 모더레이터가 쟁점 제시(쟁점이 있을 때). 없으면 핵심 질문으로 이어 논쟁.
+            if seg_q is not None:
+                await _mod_record(seg_q, order, r, meta={"kind": "phase_c_probe"})
+                yield {"type": "moderator", "round": r, "content": seg_q, "phase": "C", "probe": True}
+                order += 1
+                active_q = seg_q
+            else:
+                active_q = mod_msg
+
+            seg_count: dict[str, int] = {a.id: 0 for a in agents}
+            last_speaker_id: str | None = None
+            last_text = active_q
+            seg_utter = 0
+            while seg_utter < config.PROBE_MAX_UTTER and c_total < config.MAX_TIKITAKA_UTTER and not ended_early:
+                if _session_over():
+                    ended_early = True
+                    break
+                if _CONTROLS.get(session.id, {}).get("next_round"):
+                    _CONTROLS[session.id]["next_round"] = False
+                    break
+                scores = await engagement.llm_engagement(agents_meta, subtopic, last_text, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
+                # 직전 발화자·발화 상한 도달자 제외, 관심도 τ 이상. 덜 말한 사람 우선.
+                cands = [a for a in agents
+                         if a.id != last_speaker_id
+                         and seg_count[a.id] < config.MAX_C_PER_AGENT
+                         and scores.get(a.id, {}).get("interest", 0.0) >= config.TIKITAKA_THRESHOLD]
+                cands.sort(key=lambda a: (seg_count[a.id], -scores.get(a.id, {}).get("interest", 0.0)))
+                if not cands:
+                    break  # 이 쟁점에 더 말할 사람 없음 → 다음 쟁점으로
+                spoke_this_cycle = False
+                for agent in cands:
+                    if seg_utter >= config.PROBE_MAX_UTTER or c_total >= config.MAX_TIKITAKA_UTTER or _session_over():
+                        break
+                    # 자유토론: 진영 부여 + 같은 말이면 패스(발언 안 함).
+                    async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id], allow_pass=True):
+                        yield ev
+                    if _holder.get("passed"):
+                        continue  # 새로 더할 게 없어 패스 → 발언으로 치지 않음
+                    spoke_this_cycle = True
+                    last_text = _holder["content"]
+                    last_speaker_id = agent.id
+                    spoke_in_c.add(agent.id)
+                    seg_count[agent.id] += 1
+                    order += 1
+                    seg_utter += 1
+                    c_total += 1
+                if not spoke_this_cycle:
+                    break  # 이번 사이클에 아무도 새 발언 안 함 → 다음 쟁점/세그먼트
+
+        # ── Phase D — Phase C 동안 침묵한 에이전트 강제 호명 (Follow-up 1) ──
+        if not ended_early:
+            silent = [a for a in agents if a.id not in spoke_in_c]
+            for di, agent in enumerate(silent[: config.PHASE_D_MAX_PULLINS]):
+                if _session_over():
+                    ended_early = True
+                    break
+                q = cascade.inactive_prompt(name_by[agent.id], idx=di)
+                await _mod_record(q, order, r, meta={"kind": "phase_d_pull"})
+                yield {"type": "moderator", "round": r, "content": q, "follow_up": True, "phase": "D"}
+                order += 1
+                async for ev in _agent_says(agent, q, order, r):  # 질문에 답하는 세션 — 진영 없음
+                    yield ev
+                order += 1
+
+        # ── Round 종료 — 동적 follow-up 1회 (v0.3): 순서답변+티키타카를 보고 부족한 지점을 LLM 이 1개 질문 ──
+        if not ended_early:
+            round_lines = "\n".join(
+                f"- {t['name']}: {t['content']}" for t in history if t["round"] == r and t["role"] == "agent"
+            )
+            fq = await cascade.dynamic_round_followup(goal_q, subtopic, round_lines, mock=mock)
+            if fq:
+                await _mod_record(fq, order, r, meta={"kind": "follow_up_dynamic"})
+                yield {"type": "moderator", "round": r, "content": fq, "follow_up": True}
+                order += 1
+                # 관심도 높은 2명이 응답 (라운드당 1회 한정).
+                fscores = await engagement.llm_engagement(agents_meta, fq, fq, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
+                responders = sorted(agents, key=lambda a: fscores.get(a.id, {}).get("interest", 0.5), reverse=True)[:2]
+                for ag in responders:
+                    if _session_over():
+                        break
+                    async for ev in _agent_says(ag, fq, order, r):  # 질문에 답하는 세션 — 진영 없음
+                        yield ev
+                    order += 1
+
+        summary = "\n".join(f"- {t['name']}: {t['content']}" for t in history if t["round"] == r and t["role"] == "agent")
+        round_summaries.append({"round": r, "subtopic": subtopic, "summary": summary})
+        yield {"type": "round_end", "round": r, "summary": summary}
+
+        if ended_early:
+            break
+
+        # 사용자 개입 창 (30초, Round당 최대 2회) — 개입 시 전원 응답 (§10)
+        if allow_user_intervention and r < len(plan):
+            interventions = 0
+            while interventions < config.INTERVENTION_MAX_PER_ROUND:
+                waiter = _Waiter(round_no=r, order=order)
+                _WAITERS[session.id] = waiter
+                yield {"type": "user_turn_required", "round": r, "deadline_seconds": int(timeout),
+                       "remaining": config.INTERVENTION_MAX_PER_ROUND - interventions}
+                try:
+                    user_msg = await asyncio.wait_for(waiter.queue.get(), timeout)
+                except asyncio.TimeoutError:
+                    _WAITERS.pop(session.id, None)
+                    break
+                finally:
+                    _WAITERS.pop(session.id, None)
+                if user_msg == _SKIP_SENTINEL:
+                    break  # 사용자가 '개입 안 함' 선택 → 다음 라운드로
+                await db.commit()
+                interventions += 1
+                order += 1
+                history.append({"round": r, "order": waiter.order, "role": "user", "agent_id": None, "name": "기업 관계자", "content": user_msg})
+                reflection.record(session.id, speaker_id=None, speaker_name="기업 관계자", content=user_msg, agent_ids=agent_ids)
+                # 개입 질문에 참여자 전원이 우선 응답 (engagement 점수 순)
+                scores = await engagement.llm_engagement(agents_meta, user_msg, user_msg, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
+                ordered = sorted(agents, key=lambda ag: scores.get(ag.id, {}).get("interest", 0.5), reverse=True)
+                for resp_agent in ordered:
+                    async for kind, a, b in _stream_agent(db, session=session, agent_ids=agent_ids, agent=resp_agent, round_no=r, order=order,
+                                                          moderator_msg=user_msg, history=history, mock=mock):
+                        if kind == "delta":
+                            yield {"type": "agent_delta", "agent_id": resp_agent.id, "delta": a}
+                        else:
+                            yield {"type": "agent_end", "agent_id": resp_agent.id, "turn_id": a.id,
+                                   "content": b, "citations": [], "confidence": "unknown"}
+                    order += 1
+
+    # 세션 종료 → 기억 영속 + 구조화 보고서
+    n_done_rounds = len(round_summaries)
+    await memory.persist_fgi_memories(db, session_id=session.id, topic=session.topic, agent_ids=agent_ids, mock=mock)
+    duration_min = max(1, round((_now() - started_dt).total_seconds() / 60))
+
+    all_turns = (await db.execute(
+        select(FGITurn).where(FGITurn.session_id == session.id)
+        .order_by(FGITurn.round, FGITurn.order_in_round, FGITurn.created_at)
+    )).scalars().all()
+    rep = await report.build_report(
+        topic=session.topic, turns=list(all_turns), name_by_agent=name_by,
+        round_summaries=round_summaries, n_agents=len(agents), n_rounds=n_done_rounds,
+        duration_min=duration_min, mock=mock,
+    )
+
+    session.minutes_md = json.dumps(rep, ensure_ascii=False)
+    session.status = "completed"
+    session.ended_at = _now()
+    db.add(session)
+    await db.commit()
+    reflection.clear(session.id)
+    _CONTROLS.pop(session.id, None)
+
+    yield {"type": "session_end", "report": rep, "minutes_md": session.minutes_md, "ended_early": ended_early}

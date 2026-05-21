@@ -148,6 +148,7 @@ class ResearchProject(Base):
     user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title      = Column(String(200), nullable=True)
     status     = Column(String(20), nullable=False, default="draft")  # 'draft' | 'active' | 'archived'
+    brief      = _jsonb_col(nullable=True)  # 의뢰서 {objective, target, use_case} — AI 컨텍스트 (plan 0009)
     settings   = _jsonb_col()  # 프로젝트 설정 (평가 파라미터 등)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
@@ -159,14 +160,15 @@ class Agent(Base):
 
     id                  = Column(String(36), primary_key=True)
     project_id          = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey'
+    source_type         = Column(String(20), nullable=False)  # 'twin' | 'survey' | 'package'
     source_ref          = Column(String(50), nullable=True)   # 원본 respondent_id
     display_name        = Column(String(100), nullable=True)  # UI 표기 (예: "직장인 30대 여성 A")
     emoji               = Column(String(8), nullable=True)    # 카드 표시용 이모지
     intro_ko            = Column(Text, nullable=True)         # 짧은 한국어 소개
-    persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과
-    persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 8k tokens)
-    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 (self_actual/aspire/ought 등)
+    persona_params      = _jsonb_col(nullable=True)           # L1~L6 + ability 수치 결과 (UI 표시용)
+    persona_full_prompt = Column(Text, nullable=True)         # 합성된 시스템 프롬프트 (<= 12k tokens)
+    scratch             = _jsonb_col(nullable=True)           # 인구통계 + 정성 원문 + V1 hold-out (self_actual/aspire/ought/holdout_* 등)
+    responses           = _jsonb_col(nullable=True)           # Twin-2K-500 raw 234문항 응답 (BEHAVIORAL_DATA 시나리오 텍스트화 원본)
     avg_embedding       = _jsonb_col(nullable=True)           # 메모리 임베딩 평균 (1536차원 list)
     cluster             = Column(Integer, nullable=True)      # KMeans 클러스터 ID
     created_at          = Column(DateTime(timezone=True), nullable=False, default=_now)
@@ -202,6 +204,65 @@ class EvaluationSnapshot(Base):
     verdict        = Column(String(50), nullable=True)   # 예: 'Verified (S3 Entry)'
     eval_config    = _jsonb_col(nullable=True)  # 사용한 평가 설정 (모델, CF 자극 세트 버전 등)
     evaluated_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class Conversation(Base):
+    """1:1 대화 세션 — 사용자 ↔ 단일 에이전트 (plan 0007)."""
+    __tablename__ = "conversations"
+
+    id         = Column(String(36), primary_key=True)
+    project_id = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id   = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title      = Column(String(200), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    ended_at   = Column(DateTime(timezone=True), nullable=True)
+
+
+class ConversationTurn(Base):
+    """대화 발화 — 사용자 또는 에이전트 한 턴."""
+    __tablename__ = "conversation_turns"
+
+    id              = Column(String(36), primary_key=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    role            = Column(String(20), nullable=False)   # 'user' | 'agent'
+    content         = Column(Text, nullable=False)
+    citations       = _jsonb_col(nullable=True)            # V1 인용 마커 검증 결과 (후속)
+    confidence      = Column(String(20), nullable=True)    # 'direct'|'inferred'|'guess'|'unknown' (후속)
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class FGISession(Base):
+    """FGI(다자 회의) 세션 — 사용자 호스트 + 에이전트 N명 (plan 0008)."""
+    __tablename__ = "fgi_sessions"
+
+    id          = Column(String(36), primary_key=True)
+    project_id  = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id     = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    topic       = Column(Text, nullable=False)             # 회의 주제
+    agent_ids   = _jsonb_col()                             # 참여 에이전트 id 배열
+    plan        = _jsonb_col(nullable=True)                # 라운드 플랜 [{round,subtopic,goal_question}] — AI 제안 확정본 (plan 0010)
+    max_rounds  = Column(Integer, nullable=False, default=6)
+    allow_user_intervention = Column(Boolean, nullable=False, default=True)
+    status      = Column(String(20), nullable=False, default="running")  # 'running'|'completed'|'cancelled'
+    minutes_md  = Column(Text, nullable=True)              # 종료 시 생성되는 인사이트 보고서 (Markdown)
+    started_at  = Column(DateTime(timezone=True), nullable=False, default=_now)
+    ended_at    = Column(DateTime(timezone=True), nullable=True)
+
+
+class FGITurn(Base):
+    """FGI 발화 — 모더레이터 / 에이전트 / 사용자 개입 한 턴."""
+    __tablename__ = "fgi_turns"
+
+    id             = Column(String(36), primary_key=True)
+    session_id     = Column(String(36), ForeignKey("fgi_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    round          = Column(Integer, nullable=False)       # 1-based 라운드 번호
+    order_in_round = Column(Integer, nullable=False)       # 라운드 내 발화 순서 (0-based)
+    role           = Column(String(20), nullable=False)    # 'moderator'|'agent'|'user'
+    agent_id       = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
+    content        = Column(Text, nullable=False)
+    meta_json      = _jsonb_col(nullable=True)             # 발화자명·engagement 등 부가 정보
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ── 세션 Dependency ───────────────────────────────────────────────────────

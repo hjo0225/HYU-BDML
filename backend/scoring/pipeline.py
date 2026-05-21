@@ -126,7 +126,12 @@ def score_all(responses: dict) -> dict:
 
 
 def extract_qualitative(data: dict) -> dict:
-    """자유응답 정성 텍스트 추출."""
+    """자유응답 정성 텍스트 추출.
+
+    self_aspire/ought/actual 는 페르소나 프롬프트 anchor 로 사용. holdout_* 는
+    V1 평가의 hold-out 자극 — 페르소나 빌더가 사용하지 않으므로 프롬프트에
+    들어가지 않고, V1 채점 시 cosine 비교 원문으로만 쓰인다.
+    """
     responses = data.get("responses", {})
     qualitative = data.get("qualitative", {})
     return {
@@ -134,6 +139,9 @@ def extract_qualitative(data: dict) -> dict:
         "self_ought":  qualitative.get("self_ought")  or responses.get("L3-4.Q2", ""),
         "self_actual": qualitative.get("self_actual") or responses.get("L3-4.Q3", ""),
         "dictator_reasoning": qualitative.get("dictator_reasoning", ""),
+        "holdout_recent_purchase": qualitative.get("holdout_recent_purchase", ""),
+        "holdout_info_source": qualitative.get("holdout_info_source", ""),
+        "holdout_lifestyle": qualitative.get("holdout_lifestyle", ""),
     }
 
 
