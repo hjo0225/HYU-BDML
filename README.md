@@ -1,8 +1,8 @@
-# Ditto
+# Mind-Bridge
 
 > 소비자를 가장 가까운 곳에 두고 대화하고, 회의하며, 인사이트를 얻는 **리서치 플랫폼**.
 
-Ditto 는 단발성 설문/인터뷰의 한계를 넘어, 응답 데이터를 **에이전트로 보존**하고 **1:1 대화 + FGI** 를 통해 지속적으로 성장시켜 가며 심층 인사이트를 발굴하도록 돕습니다.
+Mind-Bridge 는 단발성 설문/인터뷰의 한계를 넘어, 응답 데이터를 **에이전트로 보존**하고 **1:1 대화 + FGI** 를 통해 지속적으로 성장시켜 가며 심층 인사이트를 발굴하도록 돕습니다.
 
 > **상태:** Active — 이전 프로젝트(빅데이터마케팅랩 BDML-FGI)는 [`archive/bdml-fgi/`](./archive/bdml-fgi/) 에 동결 보존됨. 활성 개발 plan: [`docs/plans/active/0004-ditto-vertical-slices.md`](./docs/plans/active/0004-ditto-vertical-slices.md).
 

@@ -1,4 +1,4 @@
-# 🏛️ DESIGN.md — Ditto
+# 🏛️ DESIGN.md — Mind-Bridge
 
 > 디자인 토큰 + 컴포넌트 규칙의 Single Source of Truth. UI 코드 작성 전 반드시 이 문서를 먼저 읽고, 정의된 토큰만 사용한다. 새 토큰이 필요하면 코드보다 이 문서를 먼저 수정한다.
 
@@ -34,6 +34,7 @@
 | :--- | :--- | :--- | :--- |
 | `font.family.base` | `Pretendard Variable, Apple SD Gothic Neo, Noto Sans KR, sans-serif` | `font-sans` (기본) | 국문 가독성 중심. CDN: `cdn.jsdelivr.net/gh/orioncactus/pretendard` |
 | `font.family.mono` | `JetBrains Mono, Fira Code, monospace` | `font-mono` | 코드·점수 수치 표시 |
+| `font.size.2xs` | `10px` | `text-2xs` | 마이크로 라벨·메타·진행률 (Tailwind 확장). 12px 미만이 필요한 보조 정보 전용 — 본문에 쓰지 말 것 |
 | `font.size.xs` | `12px` | `text-xs` | 라벨, 배지 |
 | `font.size.sm` | `14px` | `text-sm` | 작은 텍스트, 캡션 |
 | `font.size.base` | `16px` | `text-base` | 본문 기본 (1rem) |
@@ -67,6 +68,8 @@
 - **Primary**: `color.brand.primary` 배경 + 흰색 글자.
 - **Secondary**: 투명 배경 + `color.brand.primary` 테두리와 글자.
 - **Common**: 모든 버튼은 호버(Hover) 시 투명도가 0.8로 변하며, `size.radius.md`를 적용한다.
+- **size**: `sm`/`md`(기본)/`lg`. **세로로 쌓는 버튼 묶음은 `fullWidth` 로 폭을 통일**한다 (개별 `className="w-full"` 금지 — 크기 불일치 원인).
+- **링크 버튼**: 페이지 이동 버튼은 `<Link><Button>` 으로 감싸지 말고 `<Button href="…">` 를 쓴다 (내부적으로 `next/link` 렌더 — 래퍼가 크기·정렬을 깨뜨리는 것을 방지).
 
 ### 📥 입력창 (Inputs)
 - 테두리는 `color.border.base`, 포커스 시 `color.brand.primary` 색상의 2px 테두리 적용.
@@ -103,6 +106,25 @@
 - 평소: 비활성, `color.text.muted` 안내 ("모더레이터가 발언 차례를 전달하면 입력할 수 있습니다").
 - 활성: `color.brand.primary` 2px 외곽선 + 가벼운 펄스 애니메이션 (≤1.5s).
 - 단축키 `Enter` 전송, `Shift+Enter` 줄바꿈, `Esc` 입력 포기 (다음 에이전트 라운드로 양보).
+
+### 🏷️ Badge (범용 캡슐)
+- cluster 태그·상태 칩·source 라벨 등 점수가 아닌 짧은 메타 표시. (점수는 `ScoreBadge` 사용.)
+- `rounded-full`, `font-medium`. variant: `neutral`(indigo-light) / `indigo` / `violet` / `success` / `warning` / `error`. size: `sm`(text-2xs) / `md`(text-xs). `dot` 옵션 시 좌측 색상 점.
+- 옅은 배경은 `success/warning/error` 에 한해 Tailwind 기본 스케일(`bg-emerald-50` 등) 사용.
+
+### 📝 Textarea
+- `Input` 과 동일한 API(`label`/`error`/`hint`) 의 멀티라인 입력. `size.radius.md`, 포커스 시 `color.brand.primary` 2px 링. `resize-y`.
+
+### 🫥 EmptyState
+- 빈 목록·"첫 메시지를 보내세요"·"평가 전" 플레이스홀더. (icon) + title(`text-sm` secondary) + description(`text-xs` muted) + (action) 세로 중앙 정렬.
+
+### ⏳ Spinner · LoadingState
+- `Spinner`: `border-current border-r-transparent animate-spin` (Button 로딩과 동일 시각 언어). size sm/md/lg.
+- `LoadingState`: Spinner + 안내 문구를 영역 중앙 정렬. 페이지·카드 로딩 플레이스홀더.
+
+### 📐 PageContainer · PageHeader (레이아웃)
+- `PageContainer`: AppShell 내부 콘텐츠 외곽. `p-8 mx-auto` + `width`(`narrow` max-w-3xl / `default` max-w-5xl / `wide` max-w-6xl). **모든 페이지는 이 컴포넌트로 외곽을 감싼다** (직접 `p-8 max-w-* mx-auto` 금지).
+- `PageHeader`: (선택) 뒤로가기 링크 + 타이틀(`text-3xl bold`) + 부제 + 우측 actions 슬롯.
 
 ## 3. 🤖 AI 작업 수칙 (AI Instructions)
 1. **토큰 우선**: CSS 작성 또는 Tailwind 사용 시 위 토큰을 CSS 변수 또는 `tailwind.config.ts`로 매핑하여 사용한다.
