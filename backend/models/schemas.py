@@ -77,6 +77,43 @@ class AgentDetailOut(AgentOut):
     updated_at: datetime | None
 
 
+# ── Conversation (1:1 대화, plan 0007) ──────────────────────────────────────
+
+class ConversationCreate(BaseModel):
+    """대화 세션 생성 입력 (agent_id 는 경로 파라미터)."""
+    title: str | None = Field(default=None, max_length=200)
+
+
+class ConversationTurnOut(BaseModel):
+    id: str
+    role: str            # 'user' | 'agent'
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationOut(BaseModel):
+    id: str
+    project_id: str
+    agent_id: str
+    title: str | None
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetailOut(ConversationOut):
+    """대화 메타 + 전체 turn (재로드용)."""
+    turns: list[ConversationTurnOut] = []
+
+
+class ChatMessageRequest(BaseModel):
+    """사용자 발화 — 에이전트 응답을 SSE 로 스트리밍."""
+    content: str = Field(min_length=1)
+
+
 # ── EvaluationSnapshot ────────────────────────────────────────────────────
 
 class EvaluationSnapshotOut(BaseModel):

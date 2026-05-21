@@ -14,7 +14,7 @@ except ImportError:
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import agents, auth, evaluation, projects, usage
+from routers import agents, auth, conversations, evaluation, projects, usage
 from database import init_db
 
 
@@ -56,6 +56,7 @@ app.include_router(auth.router)
 app.include_router(usage.router)
 app.include_router(projects.router)
 app.include_router(agents.router)
+app.include_router(conversations.router)
 app.include_router(evaluation.router)
 
 

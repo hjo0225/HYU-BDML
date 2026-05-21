@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 import openai
 
@@ -80,3 +80,71 @@ async def chat_completion(
         return (res.choices[0].message.content or "").strip()
 
     return await asyncio.to_thread(_call)
+
+
+async def stream_chat(
+    *,
+    system: str,
+    messages: list[dict[str, str]],
+    model: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 800,
+    mock: Optional[bool] = None,
+) -> AsyncGenerator[str, None]:
+    """멀티턴 chat completion 토큰 스트리밍.
+
+    1:1 대화·FGI 발화 공유. system(페르소나) + messages(이전 user/assistant
+    history + 새 user) 를 받아 텍스트 델타를 순차 yield 한다.
+
+    Args:
+        system: 시스템 프롬프트 (페르소나 — package 는 ~30k 토큰 가능, gpt-4o 128k).
+        messages: [{role:'user'|'assistant', content:str}, ...] 시간순.
+        model, temperature, max_tokens: 표준 인자.
+        mock: True=강제 mock, False=강제 실 API, None=API 키 유무 자동.
+
+    Yields:
+        응답 텍스트 델타 (조각).
+    """
+    use_mock = mock if mock is not None else not _has_api_key()
+    if use_mock:
+        last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        text = _mock_answer(system, last_user)
+        # 스트리밍처럼 보이도록 어절 단위로 흘려보낸다.
+        for chunk in text.split(" "):
+            yield chunk + " "
+            await asyncio.sleep(0)
+        return
+
+    # OpenAI 동기 stream 을 큐로 받아 async 로 중계 (event loop 비차단).
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    _SENTINEL = object()
+
+    def _produce() -> None:
+        try:
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            stream = client.chat.completions.create(
+                model=model or _DEFAULT_MODEL,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+                messages=[{"role": "system", "content": system}, *messages],
+            )
+            for event in stream:
+                delta = event.choices[0].delta.content if event.choices else None
+                if delta:
+                    loop.call_soon_threadsafe(queue.put_nowait, delta)
+        except Exception as e:  # noqa: BLE001 — 에러도 스트림으로 전달
+            loop.call_soon_threadsafe(queue.put_nowait, RuntimeError(str(e)))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
+
+    asyncio.get_running_loop().run_in_executor(None, _produce)
+
+    while True:
+        item = await queue.get()
+        if item is _SENTINEL:
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item

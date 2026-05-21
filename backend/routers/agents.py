@@ -79,7 +79,7 @@ def _to_agent_detail(agent: Agent) -> AgentDetailOut:
 @router.get("/api/projects/{project_id}/agents", response_model=list[AgentOut])
 async def list_project_agents(
     project_id: str,
-    source_type: str | None = Query(default=None, pattern="^(twin|survey)$"),
+    source_type: str | None = Query(default=None, pattern="^(twin|survey|package)$"),
     cluster: int | None = Query(default=None, ge=0),
     params: str | None = Query(
         default=None,
