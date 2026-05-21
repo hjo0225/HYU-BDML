@@ -116,7 +116,7 @@ export function V3Scatter({ points, distinct, height = 320, colorByCluster = tru
           </ScatterChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-[10px] text-text-muted mt-2">
+      <p className="text-2xs text-text-muted mt-2">
         3.0 이상이면 다양 · 1.5~3.0 보통 · 1.5 미만은 비슷한 사람만 모인 경고 신호
       </p>
     </div>

@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { projects as projectsApi } from '@/lib/api';
 
@@ -26,18 +28,12 @@ export default function DashboardPage() {
   return (
     <AuthGuard>
       <AppShell>
-        <div className="p-8">
-          <div className="mb-8 flex items-end justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-bold text-text-primary">대시보드</h1>
-              <p className="text-text-secondary text-sm mt-1">
-                안녕하세요, <span className="font-medium">{user?.name || user?.email}</span> 님
-              </p>
-            </div>
-            <Link href="/projects">
-              <Button size="md">+ 새 프로젝트</Button>
-            </Link>
-          </div>
+        <PageContainer width="wide">
+          <PageHeader
+            title="대시보드"
+            subtitle={<>안녕하세요, <span className="font-medium">{user?.name || user?.email}</span> 님</>}
+            actions={<Button href="/projects" size="md">+ 새 프로젝트</Button>}
+          />
 
           {/* 통계 카드 */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -82,7 +78,7 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
-        </div>
+        </PageContainer>
       </AppShell>
     </AuthGuard>
   );

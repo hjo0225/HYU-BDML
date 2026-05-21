@@ -18,11 +18,19 @@ export interface TokenResponse {
 }
 
 // ── ResearchProject ────────────────────────────────────────────────────────
+/** 프로젝트 의뢰서 — 목적·타겟·활용방안 (AI 판단 컨텍스트). */
+export interface ProjectBrief {
+  objective?: string | null;  // 조사 목적
+  target?: string | null;     // 타겟 소비자
+  use_case?: string | null;   // 결과 활용 방안
+}
+
 export interface ResearchProject {
   id: string;
   user_id: string;
   title: string | null;
   status: 'draft' | 'active' | 'archived';
+  brief: ProjectBrief | null;
   created_at: string;
   updated_at: string | null;
   agent_count: number;
@@ -30,11 +38,13 @@ export interface ResearchProject {
 
 export interface ResearchProjectCreate {
   title?: string;
+  brief?: ProjectBrief;
 }
 
 export interface ResearchProjectUpdate {
   title?: string;
   status?: 'draft' | 'active' | 'archived';
+  brief?: ProjectBrief;
 }
 
 // ── Agent ──────────────────────────────────────────────────────────────────
@@ -52,6 +62,8 @@ export interface Agent {
   intro_ko: string | null;
   persona_params: PersonaParams | null;
   cluster: number | null;
+  age_range: string | null;  // 인구통계 필터용 (scratch 에서 추출)
+  gender: string | null;
   summary: string | null;
   created_at: string;
 }
@@ -195,6 +207,89 @@ export type ChatStreamEvent =
       citations: MemoryCitation[];   // PoC: 빈 배열
       confidence: 'direct' | 'inferred' | 'guess' | 'unknown';
     }
+  | { type: 'error'; reason: string };
+
+// ── FGI (다자 회의, plan 0008) ───────────────────────────────────────────────
+export interface FGITurn {
+  id: string;
+  round: number;
+  order_in_round: number;
+  role: 'moderator' | 'agent' | 'user';
+  agent_id: string | null;
+  content: string;
+  created_at: string;
+}
+
+export interface FGISession {
+  id: string;
+  project_id: string;
+  topic: string;
+  agent_ids: string[];
+  status: 'running' | 'completed' | 'cancelled';
+  minutes_md: string | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export interface FGISessionDetail extends FGISession {
+  turns: FGITurn[];
+}
+
+export interface CreateFGIRequest {
+  topic: string;
+  agent_ids: string[];
+  rounds: SuggestedRound[];          // 확정된 라운드별 질문 제안 = 토론 플랜 (plan 0010)
+  allow_user_intervention?: boolean; // 기본 true
+}
+
+export interface InterveneRequest {
+  content: string;
+}
+
+/** 라운드별 질문 제안 (plan 0009 · item 6). */
+export interface SuggestRoundsRequest {
+  topic: string;
+  n_rounds?: number;  // 기본 5
+}
+
+export interface SuggestedRound {
+  round: number;
+  subtopic: string;
+  goal_question: string;
+  probes?: string[];  // 자유토론 수렴 시 의견을 가를 쟁점 (plan 0012)
+}
+
+export interface SuggestRoundsResponse {
+  rounds: SuggestedRound[];
+}
+
+/** 구조화 인사이트 보고서 (FGI v2 · plan 0008). minutes_md 에 JSON 문자열로도 저장. */
+export interface FGIReport {
+  topic: string;
+  meta: { date: string; n_agents: number; n_rounds: number; duration_min: number | null };
+  key_insights: { title: string; description: string; sources: string[] }[];
+  agent_perspectives: { name: string; stance: string; key_quote: string }[];
+  round_analysis: { round: number; title: string; summary: string }[];
+  action_items: { title: string; description: string; expected_effect: string }[];
+}
+
+/** /api/fgi-sessions/{id}/run SSE 이벤트 (api-spec.md). */
+export type FGIStreamEvent =
+  | { type: 'round_start'; round: number; subtopic?: string; goal_question?: string }
+  | { type: 'moderator'; round: number; content: string; follow_up?: boolean }
+  | { type: 'agent_delta'; agent_id: string; delta: string }
+  | {
+      type: 'agent_end';
+      agent_id: string;
+      turn_id: string;
+      content: string;
+      citations: MemoryCitation[];
+      confidence: string;
+      engagement?: Record<string, number>;
+    }
+  | { type: 'user_turn_required'; round: number; deadline_seconds: number; remaining?: number }
+  | { type: 'round_end'; round: number; summary: string }
+  | { type: 'session_end'; report: FGIReport; minutes_md: string }
   | { type: 'error'; reason: string };
 
 // ── API 응답 ──────────────────────────────────────────────────────────────

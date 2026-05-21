@@ -10,13 +10,19 @@ import type {
   Conversation,
   ConversationCreate,
   ConversationDetail,
+  CreateFGIRequest,
   EvaluateEvent,
   EvaluateRequest,
   EvaluationSnapshot,
+  FGISession,
+  FGISessionDetail,
+  FGIStreamEvent,
   ResearchProject,
   ResearchProjectCreate,
   ResearchProjectUpdate,
   ScatterResponse,
+  SuggestRoundsRequest,
+  SuggestRoundsResponse,
 } from './types';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -120,6 +126,20 @@ export const auth = {
       '/api/auth/me', { token }),
 };
 
+// ── 데모 진입 (plan 0008) ──────────────────────────────────────────────────
+
+export const demo = {
+  /** 무인증 데모 세션 시작 — 데모 토큰 + 데모 프로젝트 id 발급 (멱등 시드). */
+  startSession: () =>
+    apiFetch<{
+      access_token: string;
+      token_type: string;
+      user: { id: string; email: string; name: string | null; role: string };
+      project_id: string;
+      n_agents: number;
+    }>('/api/demo/session', { method: 'POST' }),
+};
+
 // ── 프로젝트 ──────────────────────────────────────────────────────────────
 
 export const projects = {
@@ -212,6 +232,60 @@ export const conversations = {
       token,
     ) as AsyncGenerator<ChatStreamEvent>;
   },
+};
+
+// ── FGI (다자 회의, plan 0008) ────────────────────────────────────────────────
+
+export const fgi = {
+  create: (token: string, projectId: string, body: CreateFGIRequest) =>
+    apiFetch<FGISession>(`/api/projects/${projectId}/fgi-sessions`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  /** 회의 주제 → 라운드별 소주제·핵심 질문 제안 (세션 생성 없는 미리보기). */
+  suggestRounds: (token: string, projectId: string, body: SuggestRoundsRequest) =>
+    apiFetch<SuggestRoundsResponse>(`/api/projects/${projectId}/fgi-sessions/suggest-rounds`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  get: (token: string, sessionId: string) =>
+    apiFetch<FGISessionDetail>(`/api/fgi-sessions/${sessionId}`, { token }),
+
+  /** FGI 진행 SSE — round_start/moderator/agent_delta/agent_end/user_turn_required/round_end/session_end. */
+  run(token: string, sessionId: string) {
+    return streamFetch(
+      `/api/fgi-sessions/${sessionId}/run`,
+      {},
+      token,
+    ) as AsyncGenerator<FGIStreamEvent>;
+  },
+
+  /** user_turn_required 구간에서 사용자(기업 관계자) 개입 발언 삽입. */
+  intervene: (token: string, sessionId: string, content: string) =>
+    apiFetch<{ ok: boolean; turn_id: string }>(`/api/fgi-sessions/${sessionId}/intervene`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ content }),
+    }),
+
+  /** '개입 안 함' — 대기 중인 개입 창을 닫고 다음 라운드로 진행. */
+  skipIntervention: (token: string, sessionId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/fgi-sessions/${sessionId}/skip-intervention`, {
+      method: 'POST',
+      token,
+    }),
+
+  /** 수동 제어 — 'next_round'(다음 주제로) | 'end_session'(토론 종료). */
+  control: (token: string, sessionId: string, action: 'next_round' | 'end_session') =>
+    apiFetch<{ ok: boolean; action: string }>(`/api/fgi-sessions/${sessionId}/control`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ action }),
+    }),
 };
 
 // ── 평가 ──────────────────────────────────────────────────────────────────

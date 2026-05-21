@@ -7,11 +7,15 @@ import { AuthGuard } from '@/components/auth/AuthGuard';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { LoadingState } from '@/components/ui/Spinner';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { V1Gauge } from '@/components/dashboard/V1Gauge';
+import { PersonaProfile } from '@/components/dashboard/PersonaProfile';
 import { statusColorVar } from '@/components/dashboard/score';
 import { useAuth } from '@/contexts/AuthContext';
 import { agents as agentsApi, evaluations as evalApi } from '@/lib/api';
-import type { AgentDetail, EvaluateEvent, EvaluationSnapshot } from '@/lib/types';
+import type { AgentDetail, EvaluationSnapshot } from '@/lib/types';
 
 // V3 distinct 임계 → 색상 매핑. EVAL_SPEC.md §3 SSOT.
 type V3Status = 'success' | 'warning' | 'error';
@@ -43,9 +47,6 @@ function AgentDetailView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number; v1?: number } | null>(null);
-
   const reload = useCallback(async () => {
     if (!token || !agentId) return;
     setLoading(true);
@@ -66,56 +67,29 @@ function AgentDetailView() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  const onRun = useCallback(async () => {
-    if (!token || !agentId || running) return;
-    setRunning(true);
-    setProgress(null);
-    setError(null);
-    try {
-      for await (const ev of evalApi.trigger(token, agentId, { metrics: ['v1', 'v3'] }) as AsyncGenerator<EvaluateEvent>) {
-        if (ev.type === 'start') {
-          setProgress({ current: 0, total: ev.total });
-        } else if (ev.type === 'agent_done') {
-          setProgress(prev => ({
-            current: ev.current,
-            total: ev.total,
-            v1: ev.agent_id === agentId ? ev.v1_sync : prev?.v1,
-          }));
-        } else if (ev.type === 'error') {
-          setError(ev.reason);
-        }
-      }
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '평가 실행 실패');
-    } finally {
-      setRunning(false);
-    }
-  }, [token, agentId, running, reload]);
-
   const latest = snapshots[0] ?? null;
   const sync = latest?.identity_stats?.sync ?? null;
   const distinct = latest?.identity_stats?.distinct ?? null;
 
   if (loading) {
-    return <div className="p-8 max-w-5xl mx-auto"><p className="text-sm text-text-muted">불러오는 중…</p></div>;
+    return <PageContainer><LoadingState /></PageContainer>;
   }
 
   if (!agent) {
     return (
-      <div className="p-8 max-w-5xl mx-auto">
+      <PageContainer>
         <Card padding="lg">
           <p className="text-sm text-error mb-3">{error || '에이전트를 찾을 수 없습니다.'}</p>
-          <Link href={`/projects/${projectId}/agents`} className="text-sm text-ditto-indigo hover:underline">← 카탈로그로</Link>
+          <Link href={`/projects/${projectId}/agents`} className="text-sm text-ditto-indigo hover:underline">← AI 소비자</Link>
         </Card>
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <PageContainer>
       <div className="mb-4">
-        <Link href={`/projects/${projectId}/agents`} className="text-xs text-text-muted hover:text-ditto-indigo">← 에이전트 카탈로그</Link>
+        <Link href={`/projects/${projectId}/agents`} className="text-xs text-text-muted hover:text-ditto-indigo">← AI 소비자</Link>
       </div>
 
       {/* 헤더 + 평가 실행 — 좌(에이전트 정보) 우(액션) */}
@@ -127,47 +101,32 @@ function AgentDetailView() {
               {agent.display_name || `에이전트 ${agent.id.slice(0, 6)}`}
             </h1>
             <p className="text-sm text-text-muted mt-1">{agent.intro_ko || agent.summary || '요약 준비 중'}</p>
-            <div className="flex items-center gap-3 mt-2 text-xs text-text-muted">
-              <span>소스: <span className="font-mono">{agent.source_type}</span></span>
-              {agent.cluster !== null && <span>· cluster <span className="font-mono">C{agent.cluster}</span></span>}
-              <span>· id <span className="font-mono">{agent.id.slice(0, 8)}</span></span>
+            <div className="flex items-center gap-2 mt-2 text-xs text-text-muted">
+              {[agent.age_range, agent.gender].filter(Boolean).map((d) => (
+                <Badge key={String(d)} variant="neutral" size="sm">{String(d)}</Badge>
+              ))}
             </div>
           </div>
-          <div className="shrink-0 flex flex-col items-end gap-2 min-w-[220px]">
-            <Button onClick={onRun} loading={running}>
-              {running ? '평가 중…' : '품질 평가 실행'}
+          <div className="shrink-0 flex flex-col items-end gap-2 w-44">
+            <Button
+              href={`/projects/${projectId}/agents/${agent.id}/chat`}
+              variant="primary"
+              fullWidth
+            >
+              1:1 대화하기
             </Button>
-            <Link href={`/projects/${projectId}/agents/${agent.id}/chat`} className="w-full">
-              <Button variant="secondary" className="w-full">1:1 대화하기</Button>
-            </Link>
-            <span className="text-[10px] text-text-muted text-right leading-snug">
-              프로젝트의 모든 에이전트가<br />함께 평가됩니다 (1~2분 소요)
-            </span>
-            {latest && (
-              <span className="text-[10px] text-text-muted">
-                최근 v{latest.version} · {new Date(latest.evaluated_at).toLocaleString('ko-KR')}
-              </span>
-            )}
-            {progress && (
-              <div className="w-full">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-text-muted">
-                    {progress.current} / {progress.total}
-                    {progress.v1 != null && <span className="ml-1">· V1 {progress.v1.toFixed(2)}</span>}
-                  </span>
-                  <span className="text-[10px] text-text-muted">
-                    {Math.round((progress.current / Math.max(1, progress.total)) * 100)}%
-                  </span>
-                </div>
-                <div className="h-1 w-full bg-ditto-indigo-light rounded-full overflow-hidden">
-                  <div className="h-full bg-ditto-indigo transition-all"
-                       style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }} />
-                </div>
-              </div>
-            )}
-            {error && <p className="text-[10px] text-error">{error}</p>}
+            {error && <p className="text-2xs text-error">{error}</p>}
           </div>
         </div>
+      </Card>
+
+      {/* 6-Lens 페르소나 프로파일 — 키워드 특징 + 렌즈별 수치 */}
+      <Card padding="md" className="mb-4">
+        <CardHeader
+          title="6-Lens 페르소나 프로파일"
+          subtitle="설문 응답에서 도출한 심리·행동 척도 (L1~L6)"
+        />
+        <PersonaProfile params={agent.persona_params} />
       </Card>
 
       {/* V1 · V3 각각 한 카드씩 */}
@@ -180,11 +139,11 @@ function AgentDetailView() {
             subtitle="실제 응답자와 얼마나 닮았는지"
           />
 
-          <div className="mt-2 flex justify-center items-center" style={{ height: 225 }}>
+          <div className="mt-2 flex justify-center items-center h-56">
             <V1Gauge sync={sync} size={420} />
           </div>
 
-          <div className="mt-2 text-sm text-text-secondary leading-relaxed" style={{ height: 92 }}>
+          <div className="mt-2 text-sm text-text-secondary leading-relaxed h-24">
             <p>
               에이전트한테 <strong>새로운 질문 몇 개</strong>를 던져봅니다 — 예를 들어
               &quot;최근에 한 큰 소비는?&quot;, &quot;본인 라이프스타일을 한 단어로?&quot; 같은 거요.
@@ -192,7 +151,7 @@ function AgentDetailView() {
             </p>
           </div>
 
-          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+          <div className="mt-2 grid grid-cols-3 gap-1.5 text-2xs">
             <div className="bg-emerald-50 text-success rounded-md px-2 py-1.5 text-center">
               <div className="font-semibold text-xs">80% 이상</div>
               <div className="opacity-80 mt-0.5">거의 똑같이 답함</div>
@@ -216,15 +175,14 @@ function AgentDetailView() {
           />
 
           {distinct == null ? (
-            <div className="mt-2 flex flex-col items-center justify-center gap-2" style={{ height: 225 }}>
-              <div className="rounded-2xl border-4 border-dashed border-border flex items-center justify-center"
-                   style={{ width: 174, height: 138 }}>
+            <div className="mt-2 flex flex-col items-center justify-center gap-2 h-56">
+              <div className="rounded-2xl border-4 border-dashed border-border flex items-center justify-center w-44 h-36">
                 <span className="text-xs text-text-muted">평가 전</span>
               </div>
               <span className="text-xs text-text-muted">아직 측정 안 됨</span>
             </div>
           ) : (
-            <div className="mt-2 flex flex-col items-center justify-center" style={{ height: 225 }}>
+            <div className="mt-2 flex flex-col items-center justify-center h-56">
               <div
                 className="text-7xl font-bold tabular-nums leading-none"
                 style={{ color: statusColorVar[v3Status(distinct)] }}
@@ -234,7 +192,7 @@ function AgentDetailView() {
             </div>
           )}
 
-          <div className="mt-2 text-sm text-text-secondary leading-relaxed" style={{ height: 92 }}>
+          <div className="mt-2 text-sm text-text-secondary leading-relaxed h-24">
             <p>
               프로젝트의 30명 에이전트가 <strong>서로 얼마나 다른 인격</strong>인지를 봅니다.
               모두에게 같은 질문을 던졌을 때 답변이 천차만별이면 다양한 사람들이 모인 거고,
@@ -242,7 +200,7 @@ function AgentDetailView() {
             </p>
           </div>
 
-          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+          <div className="mt-2 grid grid-cols-3 gap-1.5 text-2xs">
             <div className="bg-emerald-50 text-success rounded-md px-2 py-1.5 text-center">
               <div className="font-semibold text-xs">3.0 이상</div>
               <div className="opacity-80 mt-0.5">다양함</div>
@@ -259,6 +217,6 @@ function AgentDetailView() {
         </Card>
 
       </div>
-    </div>
+    </PageContainer>
   );
 }

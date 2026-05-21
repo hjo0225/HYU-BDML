@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Logo } from '@/components/layout/Logo';
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/api';
 
@@ -43,9 +46,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 auth-page-bg">
       <div className="w-full max-w-sm">
         {/* 헤더 */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">Ditto</h1>
-          <p className="text-indigo-200 text-sm mt-1">Research Platform</p>
+        <div className="flex flex-col items-center mb-8">
+          <Logo height={40} wordmarkClassName="text-3xl text-white" />
         </div>
 
         {/* 카드 */}
@@ -53,36 +55,30 @@ export default function LoginPage() {
           <h2 className="text-lg font-semibold text-text-primary mb-6">로그인</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1">이메일</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="your@email.com"
-                required
-                className="input-field"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-text-secondary mb-1">비밀번호</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="8자 이상"
-                required
-                className="input-field"
-              />
-            </div>
+            <Input
+              label="이메일"
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              required
+            />
+            <Input
+              label="비밀번호"
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="8자 이상"
+              required
+            />
 
             {error && (
               <p className="text-sm text-error bg-red-50 rounded-lg px-3 py-2">{error}</p>
             )}
 
-            <button type="submit" disabled={loading} className="btn-primary w-full mt-2">
-              {loading ? '로그인 중...' : '로그인'}
-            </button>
+            <Button type="submit" loading={loading} className="w-full mt-2">
+              로그인
+            </Button>
           </form>
 
           <div className="flex items-center gap-3 my-5">
@@ -107,6 +103,12 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
+
+        <p className="text-center mt-5">
+          <Link href="/demo" className="text-sm text-white/90 underline underline-offset-4 hover:text-white">
+            ✨ 로그인 없이 데모 이용해보기
+          </Link>
+        </p>
       </div>
     </div>
   );

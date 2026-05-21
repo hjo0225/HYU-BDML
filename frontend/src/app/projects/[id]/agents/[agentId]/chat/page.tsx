@@ -9,6 +9,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ChatBubble } from '@/components/chat/ChatBubble';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useAuth } from '@/contexts/AuthContext';
 import { agents as agentsApi, conversations as convApi } from '@/lib/api';
 import type { AgentDetail, ConversationTurn } from '@/lib/types';
@@ -124,9 +125,11 @@ function ChatView() {
       {/* 대화 영역 */}
       <div className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-border bg-surface p-4">
         {turns.length === 0 && !streaming && (
-          <p className="py-12 text-center text-sm text-text-muted">
-            첫 메시지를 보내 대화를 시작하세요.
-          </p>
+          <EmptyState
+            icon="💬"
+            title="아직 대화가 없어요"
+            description={`${agent?.display_name ?? '이 에이전트'}에게 첫 메시지를 보내 대화를 시작하세요.`}
+          />
         )}
         {turns.map((t) => (
           <ChatBubble key={t.id} role={t.role} author={t.role === 'agent' ? agent?.display_name ?? undefined : undefined}>

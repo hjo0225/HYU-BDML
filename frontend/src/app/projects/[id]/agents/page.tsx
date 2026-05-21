@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { AppShell } from '@/components/layout/AppShell';
@@ -9,28 +9,17 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Badge } from '@/components/ui/Badge';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProjectContext } from '@/contexts/ProjectContext';
 import { agents as agentsApi } from '@/lib/api';
+import { personaKeywords } from '@/lib/persona';
 import type { Agent } from '@/lib/types';
 import type { SeedTwinEvent } from '@/lib/api';
 
-const SOURCE_OPTIONS = [
-  { value: '', label: '전체 소스' },
-  { value: 'twin', label: 'Twin-2K-500' },
-  { value: 'survey', label: 'Survey 기반' },
-];
-
-const CLUSTER_OPTIONS = [
-  { value: '', label: '전체 클러스터' },
-  { value: '0', label: '클러스터 0' },
-  { value: '1', label: '클러스터 1' },
-  { value: '2', label: '클러스터 2' },
-  { value: '3', label: '클러스터 3' },
-  { value: '4', label: '클러스터 4' },
-];
-
-// 6-Lens 범위 필터 — Slice 1.3 에서는 2축(L1·L2)만 노출. 추가 축은 후속.
+// 6-Lens 범위 필터 — 2축(위험회피·선택신중함)만 노출. 사용자 친화 라벨.
 interface RangeFilter {
   key: string;
   label: string;
@@ -40,9 +29,23 @@ interface RangeFilter {
 }
 
 const RANGE_FILTERS: RangeFilter[] = [
-  { key: 'l1.risk_aversion', label: 'L1 위험 회피', min: 0, max: 1, step: 0.05 },
-  { key: 'l2.maximization', label: 'L2 극대화 성향', min: 1, max: 5, step: 0.1 },
+  { key: 'l1.risk_aversion', label: '위험 회피 성향', min: 0, max: 1, step: 0.05 },
+  { key: 'l2.maximization', label: '선택 신중함(극대화)', min: 1, max: 5, step: 0.1 },
 ];
+
+// 인구통계 필터 옵션을 로드된 목록에서 동적으로 도출 (실데이터 표기 변동 흡수).
+function distinctOptions(values: (string | null)[]): { value: string; label: string }[] {
+  const seen = new Set<string>();
+  const out: { value: string; label: string }[] = [];
+  for (const v of values) {
+    const s = (v ?? '').trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push({ value: s, label: s });
+  }
+  out.sort((a, b) => a.label.localeCompare(b.label, 'ko'));
+  return out;
+}
 
 function buildParamsQS(ranges: Record<string, [number, number] | undefined>): string | undefined {
   const tokens: string[] = [];
@@ -69,17 +72,16 @@ export default function ProjectAgentsPage() {
 
 function AgentsCatalogView() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const { token } = useAuth();
-  const { projectId, selectedAgentIds, toggleAgent, clearSelection, setProjectId } = useProjectContext();
+  const { projectId, selectedAgentIds, toggleAgent, clearSelection, setSelectedAgents, setProjectId } = useProjectContext();
   const routeProjectId = params?.id;
 
   const [list, setList] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [sourceType, setSourceType] = useState('');
-  const [cluster, setCluster] = useState('');
+  const [ageFilter, setAgeFilter] = useState('');
+  const [genderFilter, setGenderFilter] = useState('');
   const [ranges, setRanges] = useState<Record<string, [number, number]>>(() =>
     Object.fromEntries(RANGE_FILTERS.map(f => [f.key, [f.min, f.max] as [number, number]])),
   );
@@ -96,12 +98,11 @@ function AgentsCatalogView() {
     }
   }, [routeProjectId, projectId, setProjectId]);
 
+  // 성향(persona_params) 범위는 서버 필터, 연령대·성별은 클라이언트 필터(로드 후 적용).
   const queryOpts = useMemo(() => ({
-    source_type: (sourceType || undefined) as 'twin' | 'survey' | undefined,
-    cluster: cluster !== '' ? Number(cluster) : undefined,
     params: buildParamsQS(ranges),
     limit: 200,
-  }), [sourceType, cluster, ranges]);
+  }), [ranges]);
 
   const reload = useCallback(async () => {
     if (!token || !routeProjectId) return;
@@ -118,6 +119,17 @@ function AgentsCatalogView() {
   }, [token, routeProjectId, queryOpts]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // 인구통계 옵션은 로드된 목록에서 도출, 필터는 클라이언트 측 적용.
+  const ageOptions = useMemo(() => distinctOptions(list.map(a => a.age_range)), [list]);
+  const genderOptions = useMemo(() => distinctOptions(list.map(a => a.gender)), [list]);
+  const filtered = useMemo(
+    () => list.filter(a =>
+      (!ageFilter || a.age_range === ageFilter) &&
+      (!genderFilter || a.gender === genderFilter),
+    ),
+    [list, ageFilter, genderFilter],
+  );
 
   const startSeed = useCallback(async () => {
     if (!token || !routeProjectId || seeding) return;
@@ -142,7 +154,7 @@ function AgentsCatalogView() {
     }
   }, [token, routeProjectId, seeding, reload]);
 
-  const visibleIds = useMemo(() => new Set(list.map(a => a.id)), [list]);
+  const visibleIds = useMemo(() => new Set(filtered.map(a => a.id)), [filtered]);
   // 필터 적용 후에도 컨텍스트에 남아있는(현재 보이지 않는) 선택은 유지 — UX 의도
   const selectedCount = selectedAgentIds.length;
   const visibleSelectedCount = useMemo(
@@ -150,39 +162,38 @@ function AgentsCatalogView() {
     [selectedAgentIds, visibleIds],
   );
 
-  const onNext = useCallback(() => {
-    // 다음 단계는 Slice 2(평가) — 아직 미구현. 임시로 개요로 복귀하면서 ctx 만 유지.
-    router.push(`/projects/${routeProjectId}`);
-  }, [router, routeProjectId]);
+  // 선택은 ProjectContext(sessionStorage)에 자동 저장됨 — '저장'은 확정 피드백 + 다음 흐름 안내.
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { setSaved(false); }, [selectedAgentIds]);
+  const onSave = useCallback(() => {
+    setSelectedAgents(selectedAgentIds);  // 현재 선택 확정 (멱등)
+    setSaved(true);
+  }, [setSelectedAgents, selectedAgentIds]);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto pb-32">
-      <div className="mb-6">
-        <Link href={`/projects/${routeProjectId}`} className="text-xs text-text-muted hover:text-ditto-indigo">← 프로젝트 개요</Link>
-      </div>
+    <PageContainer width="wide" className="pb-32">
+      <PageHeader
+        title="AI 소비자"
+        subtitle="조건으로 필터링해 AI 소비자를 고르고 저장하세요. 저장한 소비자가 1:1 채팅·FGI 토론에 등장합니다."
+        backHref={`/projects/${routeProjectId}`}
+        backLabel="프로젝트 개요"
+      />
 
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-text-primary">에이전트 카탈로그</h1>
-        <p className="text-sm text-text-muted mt-1">
-          6-Lens 범위로 필터링하고 다음 단계에 사용할 에이전트를 선택합니다.
-        </p>
-      </div>
-
-      <Card padding="md" className="mb-4">
+      <Card padding="md" className="mb-4" data-tour="agents">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
           <Select
-            label="소스"
-            name="source_type"
-            options={SOURCE_OPTIONS}
-            value={sourceType}
-            onChange={e => setSourceType(e.target.value)}
+            label="연령대"
+            name="age_range"
+            options={[{ value: '', label: '전체 연령' }, ...ageOptions]}
+            value={ageFilter}
+            onChange={e => setAgeFilter(e.target.value)}
           />
           <Select
-            label="클러스터"
-            name="cluster"
-            options={CLUSTER_OPTIONS}
-            value={cluster}
-            onChange={e => setCluster(e.target.value)}
+            label="성별"
+            name="gender"
+            options={[{ value: '', label: '전체 성별' }, ...genderOptions]}
+            value={genderFilter}
+            onChange={e => setGenderFilter(e.target.value)}
           />
           <div className="md:col-span-2 grid grid-cols-2 gap-3">
             {RANGE_FILTERS.map(f => {
@@ -217,7 +228,13 @@ function AgentsCatalogView() {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span>{loading ? '불러오는 중…' : `${list.length}명 일치`}</span>
+          <span>
+            {loading
+              ? '불러오는 중…'
+              : (ageFilter || genderFilter)
+                ? `${filtered.length}명 일치 (전체 ${list.length}명)`
+                : `${list.length}명`}
+          </span>
           {error && <span className="text-error">· {error}</span>}
         </div>
       </Card>
@@ -245,19 +262,27 @@ function AgentsCatalogView() {
       {!loading && !seeding && list.length === 0 && (
         <Card padding="lg" className="text-center">
           <p className="text-sm text-text-muted mb-4">
-            아직 적재된 에이전트가 없습니다. 실데이터 도착 전까지는 mock 30명(6 archetype × 5명)
-            으로 흐름을 검증할 수 있습니다.
+            아직 등록된 AI 소비자가 없습니다. 샘플 30명으로 흐름을 미리 체험할 수 있습니다.
           </p>
           {seedError && <p className="text-xs text-error mb-3">{seedError}</p>}
           <Button onClick={startSeed} loading={seeding} disabled={!token}>
-            mock 30명 적재 (Twin-2K-500 구조)
+            샘플 30명 불러오기
           </Button>
         </Card>
       )}
 
+      {!loading && list.length > 0 && filtered.length === 0 && (
+        <Card padding="lg" className="text-center mb-4">
+          <p className="text-sm text-text-muted">
+            선택한 조건에 맞는 AI 소비자가 없습니다. 필터를 조정해보세요.
+          </p>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {list.map(a => {
+        {filtered.map(a => {
           const selected = selectedAgentIds.includes(a.id);
+          const demo = [a.age_range, a.gender].filter(Boolean) as string[];
           return (
             <Card
               key={a.id}
@@ -267,22 +292,30 @@ function AgentsCatalogView() {
               <div className="flex items-start gap-3">
                 <div className="text-2xl leading-none shrink-0">{a.emoji || '👤'}</div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Link
                       href={`/projects/${routeProjectId}/agents/${a.id}`}
                       className="text-sm font-bold text-text-primary truncate hover:text-ditto-indigo focus:outline-none focus:underline"
                     >
-                      {a.display_name || `에이전트 ${a.id.slice(0, 6)}`}
+                      {a.display_name || `AI 소비자 ${a.id.slice(0, 6)}`}
                     </Link>
-                    {a.cluster !== null && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-ditto-indigo-light text-ditto-indigo font-mono shrink-0">
-                        C{a.cluster}
-                      </span>
-                    )}
+                    {demo.map(d => (
+                      <Badge key={d} variant="neutral" size="sm" className="shrink-0">{d}</Badge>
+                    ))}
                   </div>
                   <p className="text-xs text-text-muted mt-1 line-clamp-2">
                     {a.summary || a.intro_ko || '요약 준비 중'}
                   </p>
+                  {(() => {
+                    const kws = personaKeywords(a.persona_params, 3);
+                    return kws.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {kws.map((k) => (
+                          <Badge key={k} variant="violet" size="sm">{k}</Badge>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <button
                   type="button"
@@ -313,14 +346,21 @@ function AgentsCatalogView() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {saved && selectedCount > 0 && (
+            <>
+              <span className="text-xs font-medium text-success">✓ 저장됨</span>
+              <Button href={`/projects/${routeProjectId}/chat`} variant="secondary" size="sm">1:1 채팅 →</Button>
+              <Button href={`/projects/${routeProjectId}/fgi`} variant="secondary" size="sm">FGI 토론 →</Button>
+            </>
+          )}
           <Button variant="ghost" onClick={clearSelection} disabled={selectedCount === 0}>
             선택 해제
           </Button>
-          <Button variant="primary" onClick={onNext} disabled={selectedCount === 0}>
-            다음 단계로 →
+          <Button variant="primary" onClick={onSave} disabled={selectedCount === 0}>
+            선택 저장
           </Button>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }

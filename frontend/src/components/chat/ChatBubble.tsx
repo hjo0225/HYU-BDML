@@ -39,7 +39,7 @@ const ROLE_BUBBLE: Record<ChatRole, string> = {
 const AUTHOR_CLASS: Record<ChatRole, string> = {
   user: 'text-xs text-text-muted mb-1 text-right',
   agent: 'text-xs text-text-muted mb-1',
-  moderator: 'text-[10px] text-text-muted mb-1 text-center uppercase tracking-wider',
+  moderator: 'text-2xs text-text-muted mb-1 text-center uppercase tracking-wider',
 };
 
 export function ChatBubble({

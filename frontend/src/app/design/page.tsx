@@ -3,8 +3,13 @@
 import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { Select } from '@/components/ui/Select';
 import { Card, CardHeader } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Spinner, LoadingState } from '@/components/ui/Spinner';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Gauge } from '@/components/dashboard/Gauge';
 import { RadarChart } from '@/components/dashboard/RadarChart';
 import { ScoreBadge } from '@/components/dashboard/ScoreBadge';
@@ -69,7 +74,7 @@ export default function DesignPage() {
                 />
                 <div className="text-xs font-mono text-text-secondary">{s.name}</div>
                 {s.note && (
-                  <div className="text-[10px] text-text-muted">{s.note}</div>
+                  <div className="text-2xs text-text-muted">{s.note}</div>
                 )}
               </div>
             ))}
@@ -103,6 +108,18 @@ export default function DesignPage() {
               </div>
             ))}
           </div>
+          {/* fullWidth: 세로로 쌓을 때 크기 통일 / href: Link 래핑 없이 링크 버튼 */}
+          <div className="mt-5 grid md:grid-cols-2 gap-4">
+            <div className="w-52 flex flex-col gap-2">
+              <p className="text-2xs text-text-muted font-mono">fullWidth (크기 통일)</p>
+              <Button fullWidth>품질 평가 실행</Button>
+              <Button variant="secondary" fullWidth>1:1 대화하기</Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-2xs text-text-muted font-mono">href → next/link 로 렌더</p>
+              <Button href="#" leftIcon={<span>→</span>}>링크 버튼</Button>
+            </div>
+          </div>
         </Section>
 
         {/* ──────── Inputs ──────── */}
@@ -114,6 +131,70 @@ export default function DesignPage() {
             <Input label="left addon" name="url" leftAddon="https://" placeholder="ditto.kr" />
             <Select label="에이전트 소스" name="src" options={SELECT_OPTIONS} placeholder="선택…" defaultValue="" />
             <Select label="비활성" name="dis" options={SELECT_OPTIONS} disabled defaultValue="twin" />
+          </div>
+        </Section>
+
+        {/* ──────── Textarea ──────── */}
+        <Section title="Textarea">
+          <div className="grid md:grid-cols-2 gap-4">
+            <Textarea label="자유 발화" name="msg" placeholder="메시지를 입력하세요…" />
+            <Textarea label="에러 상태" name="bad" defaultValue="너무 짧음" error="10자 이상 입력하세요" rows={2} />
+          </div>
+        </Section>
+
+        {/* ──────── Badge ──────── */}
+        <Section title="Badge — 범용 캡슐 (cluster·status·source)">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              {(['neutral', 'indigo', 'violet', 'success', 'warning', 'error'] as const).map((v) => (
+                <Badge key={v} variant={v}>{v}</Badge>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="indigo" dot>cluster C2</Badge>
+              <Badge variant="success" dot>active</Badge>
+              <Badge variant="neutral" size="sm">size sm</Badge>
+              <Badge variant="violet" size="sm">package</Badge>
+            </div>
+          </div>
+        </Section>
+
+        {/* ──────── Spinner · LoadingState ──────── */}
+        <Section title="Spinner · LoadingState">
+          <div className="flex items-center gap-8">
+            <div className="flex items-end gap-4 text-ditto-indigo">
+              <Spinner size="sm" />
+              <Spinner size="md" />
+              <Spinner size="lg" />
+            </div>
+            <div className="flex-1 border border-border rounded-lg">
+              <LoadingState label="에이전트 불러오는 중…" />
+            </div>
+          </div>
+        </Section>
+
+        {/* ──────── EmptyState ──────── */}
+        <Section title="EmptyState — 빈 상태 플레이스홀더">
+          <div className="border border-dashed border-border rounded-xl">
+            <EmptyState
+              icon="💬"
+              title="아직 대화가 없어요"
+              description="첫 메시지를 보내 이 에이전트와 대화를 시작하세요."
+              action={<Button size="sm">대화 시작</Button>}
+            />
+          </div>
+        </Section>
+
+        {/* ──────── PageHeader ──────── */}
+        <Section title="PageHeader — 페이지 상단 (뒤로 + 제목 + 액션)">
+          <div className="border border-border rounded-xl p-6 bg-bg">
+            <PageHeader
+              title="에이전트 카탈로그"
+              subtitle="agent_package PoC (6명)"
+              backHref="#"
+              backLabel="프로젝트"
+              actions={<Button size="sm">에이전트 추가</Button>}
+            />
           </div>
         </Section>
 
