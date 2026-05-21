@@ -103,16 +103,29 @@ def parse_lens_reflections(persona_text: str) -> list[dict]:
     return memories
 
 
+# 가명 풀 — 원본 실명 미사용. pid 순서로 결정적 배정(성별 인지). (plan 0010)
+PSEUDONYMS_FEMALE = ["김서연", "이지우", "박하은", "최수아", "정예린", "강유진", "윤지민", "한소율"]
+PSEUDONYMS_MALE = ["김도윤", "이준우", "박시우", "최지호", "정현우", "강민준", "윤태경", "한승재"]
+
+
+def pick_pseudonym(gender: str, num: int) -> str:
+    """성별·번호로 결정적 가명 배정. 성별 불명 시 여성 풀."""
+    pool = PSEUDONYMS_MALE if "남" in gender else PSEUDONYMS_FEMALE
+    return pool[(max(num, 1) - 1) % len(pool)]
+
+
 def derive_display(meta: dict, pid: str) -> tuple[str, str, str]:
-    """카드용 (display_name, emoji, intro_ko) — 실명 미사용, age/gender 기반."""
+    """카드용 (display_name, emoji, intro_ko) — 가명 + age/gender 라벨."""
     resp = (meta or {}).get("respondent", {}) or {}
     age = (resp.get("age") or "").strip()
     gender = (resp.get("gender") or "").strip()
-    num = pid.replace("pid_", "")
+    num_str = pid.replace("pid_", "")
+    num = int(num_str) if num_str.isdigit() else 1
     bits = [b for b in [age, gender] if b]
     label = " ".join(bits) if bits else "응답자"
-    display_name = f"{label} · 페르소나 {num}"
-    intro = f"{label} 인터뷰 기반 페르소나 (Twin-2K-500 + 6-Lens reflection)"
+    name = pick_pseudonym(gender, num)
+    display_name = name  # 카드/대화에는 이름만 표시 — 인구통계는 intro_ko 로
+    intro = f"{label} 인터뷰 기반 페르소나"
     return display_name, "👤", intro
 
 

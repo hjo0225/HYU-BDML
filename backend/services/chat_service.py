@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Agent, Conversation, ConversationTurn
 from services.llm_client import stream_chat
 
-# package 페르소나(~30k 토큰)는 long-context 모델 필요. twin/survey 는 ≤8k 이라 동일 모델로 충분.
-_LONG_CONTEXT_MODEL = "gpt-4o"
+# package 페르소나(~30k 토큰)는 long-context 모델 필요. gpt-4o-mini 도 128k 컨텍스트라 충분.
+_LONG_CONTEXT_MODEL = "gpt-4o-mini"
 
 
 async def create_conversation(

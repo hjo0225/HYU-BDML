@@ -22,6 +22,7 @@ from models.schemas import AgentDetailOut, AgentOut
 from services.agent_service import (
     _parse_jsonish,
     agent_passes_params_filter,
+    demographics,
     parse_params_filter,
     short_summary,
 )
@@ -42,6 +43,7 @@ async def _verify_owned_project(project_id: str, user: User, db: AsyncSession) -
 
 
 def _to_agent_out(agent: Agent) -> AgentOut:
+    age_range, gender = demographics(agent)
     return AgentOut(
         id=agent.id,
         project_id=agent.project_id,
@@ -52,12 +54,15 @@ def _to_agent_out(agent: Agent) -> AgentOut:
         intro_ko=agent.intro_ko,
         persona_params=_parse_jsonish(agent.persona_params),
         cluster=agent.cluster,
+        age_range=age_range,
+        gender=gender,
         summary=short_summary(agent),
         created_at=agent.created_at,
     )
 
 
 def _to_agent_detail(agent: Agent) -> AgentDetailOut:
+    age_range, gender = demographics(agent)
     return AgentDetailOut(
         id=agent.id,
         project_id=agent.project_id,
@@ -70,6 +75,8 @@ def _to_agent_detail(agent: Agent) -> AgentDetailOut:
         persona_full_prompt=agent.persona_full_prompt,
         scratch=_parse_jsonish(agent.scratch),
         cluster=agent.cluster,
+        age_range=age_range,
+        gender=gender,
         summary=short_summary(agent),
         created_at=agent.created_at,
         updated_at=agent.updated_at,

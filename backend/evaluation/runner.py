@@ -94,7 +94,7 @@ async def run_v1_v3(
         "metrics": metrics,
         "mock_llm": mock_llm,
         "synthetic_embeddings": synthetic_embeddings,
-        "model": "gpt-4o",
+        "model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
     }
 

@@ -148,6 +148,7 @@ class ResearchProject(Base):
     user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title      = Column(String(200), nullable=True)
     status     = Column(String(20), nullable=False, default="draft")  # 'draft' | 'active' | 'archived'
+    brief      = _jsonb_col(nullable=True)  # 의뢰서 {objective, target, use_case} — AI 컨텍스트 (plan 0009)
     settings   = _jsonb_col()  # 프로젝트 설정 (평가 파라미터 등)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
@@ -229,6 +230,39 @@ class ConversationTurn(Base):
     citations       = _jsonb_col(nullable=True)            # V1 인용 마커 검증 결과 (후속)
     confidence      = Column(String(20), nullable=True)    # 'direct'|'inferred'|'guess'|'unknown' (후속)
     created_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class FGISession(Base):
+    """FGI(다자 회의) 세션 — 사용자 호스트 + 에이전트 N명 (plan 0008)."""
+    __tablename__ = "fgi_sessions"
+
+    id          = Column(String(36), primary_key=True)
+    project_id  = Column(String(36), ForeignKey("research_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id     = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    topic       = Column(Text, nullable=False)             # 회의 주제
+    agent_ids   = _jsonb_col()                             # 참여 에이전트 id 배열
+    plan        = _jsonb_col(nullable=True)                # 라운드 플랜 [{round,subtopic,goal_question}] — AI 제안 확정본 (plan 0010)
+    max_rounds  = Column(Integer, nullable=False, default=6)
+    allow_user_intervention = Column(Boolean, nullable=False, default=True)
+    status      = Column(String(20), nullable=False, default="running")  # 'running'|'completed'|'cancelled'
+    minutes_md  = Column(Text, nullable=True)              # 종료 시 생성되는 인사이트 보고서 (Markdown)
+    started_at  = Column(DateTime(timezone=True), nullable=False, default=_now)
+    ended_at    = Column(DateTime(timezone=True), nullable=True)
+
+
+class FGITurn(Base):
+    """FGI 발화 — 모더레이터 / 에이전트 / 사용자 개입 한 턴."""
+    __tablename__ = "fgi_turns"
+
+    id             = Column(String(36), primary_key=True)
+    session_id     = Column(String(36), ForeignKey("fgi_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    round          = Column(Integer, nullable=False)       # 1-based 라운드 번호
+    order_in_round = Column(Integer, nullable=False)       # 라운드 내 발화 순서 (0-based)
+    role           = Column(String(20), nullable=False)    # 'moderator'|'agent'|'user'
+    agent_id       = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
+    content        = Column(Text, nullable=False)
+    meta_json      = _jsonb_col(nullable=True)             # 발화자명·engagement 등 부가 정보
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ── 세션 Dependency ───────────────────────────────────────────────────────

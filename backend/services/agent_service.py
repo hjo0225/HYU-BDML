@@ -59,6 +59,20 @@ def short_summary(agent: Agent) -> str:
     return " — ".join(pieces) if pieces else "프로필 요약 준비 중"
 
 
+def demographics(agent: Agent) -> tuple[str | None, str | None]:
+    """카드/필터용 인구통계 (age_range, gender) — scratch 에서 추출.
+
+    scratch.age_range 우선, 없으면 scratch.age. gender 는 그대로.
+    """
+    scratch = _parse_jsonish(getattr(agent, "scratch", None)) or {}
+    age = scratch.get("age_range") or scratch.get("age")
+    gender = scratch.get("gender")
+    return (
+        str(age).strip() if age else None,
+        str(gender).strip() if gender else None,
+    )
+
+
 def parse_params_filter(raw: str | None) -> list[tuple[str, float, float]]:
     """`l1.risk_aversion:0.3-0.7,l2.maximization:3.0-5.0` → [(key, lo, hi), ...]"""
     if not raw:
