@@ -6,6 +6,10 @@ import type {
   Agent,
   AgentDetail,
   AgentListQuery,
+  ChatStreamEvent,
+  Conversation,
+  ConversationCreate,
+  ConversationDetail,
   EvaluateEvent,
   EvaluateRequest,
   EvaluationSnapshot,
@@ -183,6 +187,32 @@ export interface SeedTwinRequest {
   fixture?: string;
   synthetic_embeddings?: boolean | null;
 }
+
+// ── 1:1 대화 (plan 0007) ────────────────────────────────────────────────────
+
+export const conversations = {
+  create: (token: string, agentId: string, body: ConversationCreate = {}) =>
+    apiFetch<Conversation>(`/api/agents/${agentId}/conversations`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify(body),
+    }),
+
+  list: (token: string, agentId: string) =>
+    apiFetch<Conversation[]>(`/api/agents/${agentId}/conversations`, { token }),
+
+  get: (token: string, conversationId: string) =>
+    apiFetch<ConversationDetail>(`/api/conversations/${conversationId}`, { token }),
+
+  /** 사용자 발화 전송 → 에이전트 응답 SSE 스트림 (delta / done / error). */
+  sendMessage(token: string, conversationId: string, content: string) {
+    return streamFetch(
+      `/api/conversations/${conversationId}/messages`,
+      { content },
+      token,
+    ) as AsyncGenerator<ChatStreamEvent>;
+  },
+};
 
 // ── 평가 ──────────────────────────────────────────────────────────────────
 

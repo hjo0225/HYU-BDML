@@ -45,7 +45,7 @@ export interface PersonaParams {
 export interface Agent {
   id: string;
   project_id: string;
-  source_type: 'twin' | 'survey';
+  source_type: 'twin' | 'survey' | 'package';
   source_ref: string | null;
   display_name: string | null;
   emoji: string | null;
@@ -63,7 +63,7 @@ export interface AgentDetail extends Agent {
 }
 
 export interface AgentListQuery {
-  source_type?: 'twin' | 'survey';
+  source_type?: 'twin' | 'survey' | 'package';
   cluster?: number;
   params?: string;  // 'l1.risk_aversion:0.3-0.7,l2.maximization:3.0-5.0'
   limit?: number;
@@ -151,6 +151,51 @@ export interface ScatterResponse {
   n_points: number;
   points: ScatterPoint[];
 }
+
+// ── Conversation (1:1 대화, plan 0007) ──────────────────────────────────────
+export interface ConversationTurn {
+  id: string;
+  role: 'user' | 'agent';
+  content: string;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  project_id: string;
+  agent_id: string;
+  title: string | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export interface ConversationDetail extends Conversation {
+  turns: ConversationTurn[];
+}
+
+export interface ConversationCreate {
+  title?: string;
+}
+
+export interface MemoryCitation {
+  category: string;
+  snippet: string;
+  score: number;
+  via: 'llm_self_cite' | 'embedding' | 'both';
+}
+
+/** /api/conversations/{id}/messages SSE 이벤트 (api-spec.md). */
+export type ChatStreamEvent =
+  | { type: 'start'; conversation_id: string; agent_id: string }
+  | { type: 'delta'; delta: string }
+  | {
+      type: 'end';
+      turn_id: string;
+      content: string;
+      citations: MemoryCitation[];   // PoC: 빈 배열
+      confidence: 'direct' | 'inferred' | 'guess' | 'unknown';
+    }
+  | { type: 'error'; reason: string };
 
 // ── API 응답 ──────────────────────────────────────────────────────────────
 export interface ApiError {
