@@ -100,7 +100,6 @@ function AgentDetailView() {
             <h1 className="text-xl font-bold text-text-primary">
               {agent.display_name || `에이전트 ${agent.id.slice(0, 6)}`}
             </h1>
-            <p className="text-sm text-text-muted mt-1">{agent.intro_ko || agent.summary || '요약 준비 중'}</p>
             <div className="flex items-center gap-2 mt-2 text-xs text-text-muted">
               {[agent.age_range, agent.gender].filter(Boolean).map((d) => (
                 <Badge key={String(d)} variant="neutral" size="sm">{String(d)}</Badge>

@@ -153,7 +153,6 @@ function ChatMessengerView() {
               <span className="text-xl leading-none">{active?.emoji || '👤'}</span>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-text-primary">{active?.display_name || '에이전트'}</p>
-                {active?.intro_ko && <p className="truncate text-2xs text-text-muted">{active.intro_ko}</p>}
               </div>
             </div>
 

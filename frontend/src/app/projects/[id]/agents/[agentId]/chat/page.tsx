@@ -117,7 +117,6 @@ function ChatView() {
           <span className="text-2xl">{agent?.emoji ?? '👤'}</span>
           <div>
             <p className="font-semibold text-text-primary">{agent?.display_name ?? '에이전트'}</p>
-            {agent?.intro_ko && <p className="text-xs text-text-muted">{agent.intro_ko}</p>}
           </div>
         </div>
       </div>

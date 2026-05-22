@@ -6,11 +6,10 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Spinner } from '@/components/ui/Spinner';
 import { ChatBubble } from '@/components/chat/ChatBubble';
 import { V1Gauge } from '@/components/dashboard/V1Gauge';
 import { V3Scatter } from '@/components/dashboard/V3Scatter';
-import { agents as agentsApi, conversations as convApi, evaluations as evalApi } from '@/lib/api';
+import { conversations as convApi, evaluations as evalApi } from '@/lib/api';
 import { personaKeywords } from '@/lib/persona';
 import type { Agent, ConversationTurn, ScatterResponse } from '@/lib/types';
 
@@ -71,7 +70,13 @@ export function DemoAgentsStep({ token, projectId, agents }: Props) {
               <span className="text-2xl">{a.emoji ?? '👤'}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold text-text-primary">{a.display_name ?? '에이전트'}</p>
-                <p className="line-clamp-2 text-xs text-text-muted">{a.intro_ko ?? a.summary ?? '소비자 페르소나'}</p>
+                {[a.age_range, a.gender].filter(Boolean).length > 0 && (
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {([a.age_range, a.gender].filter(Boolean) as string[]).map((d) => (
+                      <Badge key={d} variant="neutral" size="sm">{d}</Badge>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {personaKeywords(a.persona_params, 3).map((k) => (
                     <Badge key={k} variant="violet" size="sm">{k}</Badge>

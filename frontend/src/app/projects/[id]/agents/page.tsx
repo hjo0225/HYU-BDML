@@ -303,9 +303,6 @@ function AgentsCatalogView() {
                       <Badge key={d} variant="neutral" size="sm" className="shrink-0">{d}</Badge>
                     ))}
                   </div>
-                  <p className="text-xs text-text-muted mt-1 line-clamp-2">
-                    {a.summary || a.intro_ko || '요약 준비 중'}
-                  </p>
                   {(() => {
                     const kws = personaKeywords(a.persona_params, 3);
                     return kws.length > 0 ? (
