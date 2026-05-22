@@ -9,6 +9,7 @@ import { ChatBubble } from '@/components/chat/ChatBubble';
 import { FGIInterventionInput } from '@/components/chat/FGIInterventionInput';
 import { Spinner } from '@/components/ui/Spinner';
 import { fgi as fgiApi } from '@/lib/api';
+import { personaKeywords } from '@/lib/persona';
 import { DEMO_FGI_MAX_ROUNDS, DEMO_FGI_TOPIC } from '@/lib/demoScenario';
 import type { Agent, FGIReport, SuggestedRound } from '@/lib/types';
 
@@ -134,8 +135,11 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     setTurns((p) => [...p, { id: `user-${p.length}`, role: 'user', author: '나 (기업 관계자)', content: text }]);
     try {
       await fgiApi.intervene(token, sid, text);
-    } catch {
-      /* 데모: 개입 실패는 조용히 무시 (자동 진행) */
+    } catch (e) {
+      // 개입 전송 실패를 조용히 삼키지 않는다. 엔진은 개입 신호가 올 때까지 대기하므로,
+      // 실패 시 (1) 원인을 표면화하고 (2) 대기 창을 풀어 다음 라운드로 진행시킨다(장시간 멈춤 방지).
+      setError(e instanceof Error ? `개입 전송 실패: ${e.message}` : '개입 전송에 실패했습니다.');
+      try { await fgiApi.skipIntervention(token, sid); } catch { /* 무시 */ }
     }
   }, [token]);
 
@@ -157,6 +161,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   return (
     <div className="space-y-4">
       {phase === 'idle' && (
+        <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
         <Card>
           <h3 className="mb-1 font-semibold text-text-primary">FGI 회의 설정</h3>
           <p className="mb-3 text-xs text-text-muted">
@@ -222,6 +227,9 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             )}
           </div>
         </Card>
+
+        <FGIAgentPanel agents={agents} />
+        </div>
       )}
 
       {phase !== 'idle' && (
@@ -294,5 +302,58 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
 
       {error && <p className="text-sm text-error">{error}</p>}
     </div>
+  );
+}
+
+// 플랜 설정 화면 우측 — 이번 토론에 참여하는 AI 소비자 미리보기 패널.
+// 빈 우측 공간을 채우고, 시작 전에 누가 토론하는지 한눈에 보여준다.
+function FGIAgentPanel({ agents }: { agents: Agent[] }) {
+  return (
+    <Card className="lg:sticky lg:top-4">
+      <h3 className="flex items-center gap-2 text-sm font-bold text-text-primary">
+        참여 AI 소비자
+        <span className="rounded-full bg-ditto-indigo px-2 py-0.5 text-2xs font-bold text-white">{agents.length}</span>
+      </h3>
+      <p className="mb-3 mt-0.5 text-2xs text-text-muted">
+        이번 토론에 참여하는 소비자입니다. ‘AI 소비자’ 탭에서 변경할 수 있어요.
+      </p>
+      <div className="space-y-2">
+        {agents.map((a, i) => {
+          const tint = i % 2 === 0
+            ? 'bg-ditto-indigo-light text-ditto-indigo'
+            : 'bg-ditto-violet-light text-ditto-violet';
+          const demo = [a.age_range, a.gender].filter(Boolean) as string[];
+          const kws = personaKeywords(a.persona_params, 2);
+          return (
+            <div
+              key={a.id}
+              className="flex items-start gap-3 rounded-xl border border-border bg-bg p-3 transition-colors hover:border-ditto-indigo/40"
+            >
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg ${tint}`}>
+                {a.emoji ?? '👤'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-sm font-bold text-text-primary">{a.display_name ?? '참여자'}</span>
+                  {demo.map((d) => (
+                    <Badge key={d} variant="neutral" size="sm">{d}</Badge>
+                  ))}
+                </div>
+                {kws.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {kws.map((k) => (
+                      <Badge key={k} variant="violet" size="sm">{k}</Badge>
+                    ))}
+                  </div>
+                )}
+                {(a.intro_ko || a.summary) && (
+                  <p className="mt-1 line-clamp-2 text-xs text-text-muted">{a.intro_ko ?? a.summary}</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
