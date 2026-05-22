@@ -9,6 +9,7 @@ import { ChatBubble } from '@/components/chat/ChatBubble';
 import { FGIInterventionInput } from '@/components/chat/FGIInterventionInput';
 import { Spinner } from '@/components/ui/Spinner';
 import { fgi as fgiApi } from '@/lib/api';
+import { useProjectContext } from '@/contexts/ProjectContext';
 import { personaKeywords } from '@/lib/persona';
 import { DEMO_FGI_MAX_ROUNDS, DEMO_FGI_TOPIC } from '@/lib/demoScenario';
 import type { Agent, FGIReport, SuggestedRound } from '@/lib/types';
@@ -44,12 +45,21 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const [interveneActive, setInterveneActive] = useState(false);  // '네' 선택 후 채팅 입력 단계
   const [error, setError] = useState<string | null>(null);
 
+  const { setFgiRunning } = useProjectContext();
+
   const sessionIdRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [turns, streaming]);
+
+  // FGI 진행 중에는 전역 플래그를 켜 사이드바 'AI 소비자' 탭 이동을 잠근다(이탈 시 SSE 끊김 방지).
+  // 페이지 이탈/언마운트 시 자동 해제.
+  useEffect(() => {
+    setFgiRunning(phase === 'running');
+    return () => setFgiRunning(false);
+  }, [phase, setFgiRunning]);
 
   const suggest = useCallback(async () => {
     if (suggesting || !topic.trim()) return;
@@ -267,33 +277,6 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             <div ref={bottomRef} />
           </div>
 
-          {phase === 'running' && (interveneAsking || interveneActive) && (
-            <div>
-              {interveneAsking ? (
-                <div className="flex items-center gap-2 rounded-xl border border-ditto-indigo/30 bg-ditto-indigo-light/40 px-3 py-2.5">
-                  <span className="flex-1 text-sm text-text-secondary">
-                    라운드가 끝났어요. 지금 토론에 직접 개입하시겠어요? (선택할 때까지 기다립니다)
-                  </span>
-                  <Button size="sm" onClick={() => { setInterveneAsking(false); setInterveneActive(true); }}>
-                    네, 개입할게요
-                  </Button>
-                  <button
-                    onClick={declineIntervention}
-                    className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary"
-                  >
-                    아니요, 계속
-                  </button>
-                </div>
-              ) : (
-                <FGIInterventionInput
-                  active={interveneActive}
-                  onSubmit={submitIntervention}
-                  onYield={declineIntervention}
-                />
-              )}
-            </div>
-          )}
-
           {phase === 'done' && (
             <p className="text-sm text-success">✓ 회의가 종료되었습니다. 다음 단계에서 인사이트 보고서를 확인하세요.</p>
           )}
@@ -301,6 +284,46 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       )}
 
       {error && <p className="text-sm text-error">{error}</p>}
+
+      {/* 개입 여부 선택 — 주변을 어둡게 덮는 백드롭 모달. 선택할 때까지 회의는 대기한다. */}
+      {phase === 'running' && (interveneAsking || interveneActive) && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl">
+            {interveneAsking ? (
+              <>
+                <h4 className="mb-1 text-base font-bold text-text-primary">라운드가 끝났어요</h4>
+                <p className="mb-4 text-sm text-text-secondary">
+                  지금 토론에 직접 개입하시겠어요? 선택하실 때까지 회의는 기다립니다.
+                </p>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={declineIntervention}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg hover:text-text-primary"
+                  >
+                    아니요, 계속
+                  </button>
+                  <Button size="sm" onClick={() => { setInterveneAsking(false); setInterveneActive(true); }}>
+                    네, 개입할게요
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h4 className="mb-2 text-base font-bold text-text-primary">개입 발언 입력</h4>
+                <FGIInterventionInput
+                  active={interveneActive}
+                  onSubmit={submitIntervention}
+                  onYield={declineIntervention}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

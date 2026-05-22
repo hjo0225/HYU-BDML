@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/layout/Logo';
 import { useAuth } from '@/contexts/AuthContext';
+import { useProjectContext } from '@/contexts/ProjectContext';
 
-interface NavItem { label: string; href: string; icon: string; disabled?: boolean; indent?: boolean }
+interface NavItem { label: string; href: string; icon: string; disabled?: boolean; indent?: boolean; disabledReason?: string }
 interface NavSection { section: string; items: NavItem[] }
 
 const NAV_ITEMS: NavSection[] = [
@@ -20,16 +21,23 @@ const NAV_ITEMS: NavSection[] = [
 ];
 
 // 프로젝트 세부 탭. 프로젝트 미선택(projectId=null) 시 비활성 상태로 노출한다.
-function projectNav(projectId: string | null): NavSection {
+// fgiRunning 동안에는 FGI 의 참여자 소스인 'AI 소비자' 탭을 잠가, 진행 중 이탈로
+// SSE 세션이 끊기는 것을 막는다.
+function projectNav(projectId: string | null, fgiRunning: boolean): NavSection {
   const at = (suffix: string) => (projectId ? `/projects/${projectId}${suffix}` : '');
   const disabled = !projectId;
+  const lockedByFgi = !disabled && fgiRunning;
   return {
     section: '프로젝트',
     items: [
       { label: '개요', href: at(''), icon: '▤', disabled },
       { label: '질문 관리', href: at('/questions'), icon: '✎', disabled },
       { label: '품질 평가', href: at('/quality'), icon: '◐', disabled },
-      { label: 'AI 소비자', href: at('/agents'), icon: '👥', disabled },
+      {
+        label: 'AI 소비자', href: at('/agents'), icon: '👥',
+        disabled: disabled || lockedByFgi,
+        disabledReason: lockedByFgi ? 'FGI 진행 중에는 이동할 수 없습니다' : undefined,
+      },
       { label: '1:1 채팅', href: at('/chat'), icon: '💬', disabled, indent: true },
       { label: 'FGI 토론', href: at('/fgi'), icon: '🗣', disabled, indent: true },
     ],
@@ -39,11 +47,12 @@ function projectNav(projectId: string | null): NavSection {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { fgiRunning } = useProjectContext();
 
   // 현재 프로젝트 id (/projects/{id}…). 세부 탭은 항상 노출하되 미선택 시 비활성.
   const projMatch = pathname.match(/^\/projects\/([^/]+)/);
   const projectId = projMatch ? projMatch[1] : null;
-  const sections: NavSection[] = [...NAV_ITEMS, projectNav(projectId)];
+  const sections: NavSection[] = [...NAV_ITEMS, projectNav(projectId, fgiRunning)];
 
   // 가장 긴(가장 구체적인) 일치 href 하나만 활성 처리 (비활성 항목 제외).
   const activeHref = sections
@@ -67,18 +76,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <p className="px-5 mb-1 text-2xs font-semibold uppercase tracking-wider text-text-muted">
                 {section}
               </p>
-              {items.map(({ label, href, icon, disabled, indent }) => {
+              {items.map(({ label, href, icon, disabled, indent, disabledReason }) => {
                 const pad = indent ? 'pl-10 pr-5' : 'px-5';
-                // 비활성(프로젝트 미선택) 항목은 클릭 불가 회색 표시.
+                // 비활성(프로젝트 미선택 또는 FGI 진행 중) 항목은 클릭 불가 회색 표시.
                 if (disabled) {
                   return (
                     <div
                       key={label}
-                      title="먼저 프로젝트를 선택하세요"
+                      title={disabledReason ?? '먼저 프로젝트를 선택하세요'}
                       className={`flex items-center gap-2.5 ${pad} py-2 text-sm text-text-muted/50 cursor-not-allowed select-none`}
                     >
                       <span className="text-base leading-none">{icon}</span>
                       {label}
+                      {disabledReason && <span className="ml-auto text-sm leading-none" aria-hidden>🔒</span>}
                     </div>
                   );
                 }

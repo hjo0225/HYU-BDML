@@ -14,13 +14,13 @@ import { DemoFGIStep } from '@/components/demo/DemoFGIStep';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProjectContext } from '@/contexts/ProjectContext';
 import { agents as agentsApi } from '@/lib/api';
-import type { Agent, FGIReport } from '@/lib/types';
+import type { Agent } from '@/lib/types';
 
 function FGIView() {
   const params = useParams<{ id: string }>();
   const projectId = params?.id;
   const { token } = useAuth();
-  const { selectedAgentIds } = useProjectContext();
+  const { selectedAgentIds, fgiRunning } = useProjectContext();
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [doneSessionId, setDoneSessionId] = useState<string | null>(null);
 
@@ -37,7 +37,7 @@ function FGIView() {
   }, [token, projectId, selectedAgentIds]);
 
   // 보고서는 회의 페이지에 바로 띄우지 않고, 다음 페이지에서 보여준다.
-  const onComplete = useCallback((sid: string, _rep: FGIReport) => setDoneSessionId(sid), []);
+  const onComplete = useCallback((sid: string) => setDoneSessionId(sid), []);
 
   if (!token || !projectId) return null;
   if (agents === null) return <PageContainer><LoadingState label="에이전트를 불러오는 중…" /></PageContainer>;
@@ -48,7 +48,9 @@ function FGIView() {
         title="FGI 진행"
         subtitle="선택된 에이전트로 AI 모더레이터 진행 다자 토론을 실행하고, 인사이트 보고서를 생성합니다."
         backHref={`/projects/${projectId}/agents`}
-        backLabel="에이전트 카탈로그"
+        backLabel="AI 소비자"
+        backDisabled={fgiRunning}
+        backDisabledReason="FGI 진행 중에는 이동할 수 없습니다"
       />
       {agents.length === 0 ? (
         <EmptyState

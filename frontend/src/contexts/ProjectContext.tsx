@@ -24,6 +24,9 @@ interface ProjectContextValue extends ProjectContextState {
   setSelectedAgents: (ids: string[]) => void;
   clearSelection: () => void;
   reset: () => void;
+  /** FGI 진행 중 여부(비영속·세션 한정). 진행 중에는 사이드바 탭 이동을 막는다. */
+  fgiRunning: boolean;
+  setFgiRunning: (running: boolean) => void;
 }
 
 const STORAGE_KEY = 'ditto_project_context';
@@ -57,6 +60,8 @@ function persist(state: ProjectContextState) {
 
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<ProjectContextState>(EMPTY);
+  // FGI 진행 플래그 — sessionStorage 에 저장하지 않는다(새로고침 시 잠금이 남지 않도록).
+  const [fgiRunning, setFgiRunning] = useState(false);
 
   // SSR 안전을 위해 마운트 후 sessionStorage 로드
   useEffect(() => {
@@ -99,8 +104,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const reset = useCallback(() => setState(EMPTY), []);
 
   const value = useMemo<ProjectContextValue>(
-    () => ({ ...state, setProjectId, toggleAgent, setSelectedAgents, clearSelection, reset }),
-    [state, setProjectId, toggleAgent, setSelectedAgents, clearSelection, reset],
+    () => ({ ...state, setProjectId, toggleAgent, setSelectedAgents, clearSelection, reset, fgiRunning, setFgiRunning }),
+    [state, setProjectId, toggleAgent, setSelectedAgents, clearSelection, reset, fgiRunning],
   );
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
