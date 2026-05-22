@@ -339,15 +339,15 @@ function FGIAgentPanel({ agents }: { agents: Agent[] }) {
                     <Badge key={d} variant="neutral" size="sm">{d}</Badge>
                   ))}
                 </div>
-                {kws.length > 0 && (
+                {/* 키워드 중심 표현 — 인구통계는 위 배지로 충분하므로 'OO 인터뷰 기반 페르소나' 소개문은 생략. */}
+                {kws.length > 0 ? (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {kws.map((k) => (
                       <Badge key={k} variant="violet" size="sm">{k}</Badge>
                     ))}
                   </div>
-                )}
-                {(a.intro_ko || a.summary) && (
-                  <p className="mt-1 line-clamp-2 text-xs text-text-muted">{a.intro_ko ?? a.summary}</p>
+                ) : (
+                  <p className="mt-1 text-2xs text-text-muted">프로파일 분석 준비 중…</p>
                 )}
               </div>
             </div>
