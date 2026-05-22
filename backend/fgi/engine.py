@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
@@ -79,6 +80,21 @@ def _strip_quotes(text: str) -> str:
     return t
 
 
+def _strip_speaker_prefix(text: str, name: str) -> str:
+    """발화 앞에 붙은 발화자 본인 이름 라벨 제거 — '최수아:', '[최수아]', '최수아 -' 등의 누출 보정.
+
+    프롬프트로 본문만 출력하라고 지시해도 모델이 대본처럼 '이름: 내용'을 붙이는 경우가 있어,
+    채팅 버블 라벨과 본문에 이름이 중복 노출되는 것을 막는다. 본인 이름일 때만 제거한다.
+    """
+    t = text.strip()
+    if not name:
+        return t
+    nm = re.escape(name.strip())
+    # '[최수아]' / '최수아' 뒤에 : ：, ) ] > - – — 또는 공백+구분자가 오는 라벨 형태만 제거.
+    m = re.match(rf"^\s*\[?{nm}\]?\s*[:：)\]>\-–—]\s*", t)
+    return t[m.end():].strip() if m else t
+
+
 def _is_pass(text: str) -> bool:
     """에이전트가 '새로 더할 게 없다'며 패스했는지 — 발언으로 치지 않는다 (v0.3.2)."""
     t = text.strip().strip("[]()*").strip().lower()
@@ -122,6 +138,22 @@ async def _generate_plan(topic: str, n_rounds: int, mock: bool | None) -> list[d
     return generic[:n_rounds] if n_rounds <= len(generic) else generic + generic[: n_rounds - len(generic)]
 
 
+async def _frame_probe(subtopic: str, recent: str, probe: str, mock: bool | None) -> str:
+    """미리 준비된 쟁점을 직전 논의에 이어 자연스럽게 던지는 모더레이터 발언으로 재작성.
+
+    LLM 실패 또는 빈 응답 시 원본 쟁점 문구를 그대로 사용(폴백).
+    """
+    try:
+        text = _strip_quotes((await chat_completion(
+            system=mod_prompts.MODERATOR_SYSTEM,
+            user=mod_prompts.PROBE_INTRO.format(subtopic=subtopic, recent=recent, probe=probe),
+            model=config.CHAT_MODEL, temperature=0.6, max_tokens=160, mock=mock,
+        )).strip())
+        return text or probe
+    except Exception:  # noqa: BLE001 — 키 없음/네트워크 오류 시 원본 쟁점으로 폴백
+        return probe
+
+
 def _others_recent(history: list[dict], self_id: str, k: int = 4) -> str:
     lines = [f"- {t['name']}: {t['content']}" for t in history[-k - 1:] if t.get("agent_id") != self_id and t["role"] != "moderator"]
     return "\n".join(lines[-k:]) or "(아직 다른 참여자 발언 없음)"
@@ -156,13 +188,14 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
         parts.append(delta)
         if not allow_pass:           # 패스 판정을 위해 패스 모드에선 토큰을 흘리지 않고 모은다
             yield ("delta", delta, None)
-    content = _strip_quotes("".join(parts))
+    name = agent.display_name or "참여자"
+    # 따옴표 누출 + 본인 이름 라벨('최수아:') 누출을 본문에서 제거 — 버블 라벨과 중복 노출 방지.
+    content = _strip_speaker_prefix(_strip_quotes("".join(parts)), name)
     if allow_pass and _is_pass(content):
         yield ("pass", None, None)   # 새로 더할 게 없음 → 발언하지 않음
         return
     if allow_pass:
         yield ("delta", content, None)  # 패스 아님 → 본문을 한 번에 표시
-    name = agent.display_name or "참여자"
     turn = await _save_turn(db, session_id=session.id, round_no=round_no, order=order,
                             role="agent", content=content, agent_id=agent.id, meta={"display_name": name})
     history.append({"round": round_no, "order": order, "role": "agent", "agent_id": agent.id, "name": name, "content": content})
@@ -288,11 +321,15 @@ async def run_fgi(
                 ctrl["next_round"] = False
                 break
             # 모더레이터가 쟁점 제시(쟁점이 있을 때). 없으면 핵심 질문으로 이어 논쟁.
+            # 쟁점은 그대로 읽어주지 않고, 직전 라운드 발언 흐름에 이어 자연스럽게 던진다(v0.3.3).
             if seg_q is not None:
-                await _mod_record(seg_q, order, r, meta={"kind": "phase_c_probe"})
-                yield {"type": "moderator", "round": r, "content": seg_q, "phase": "C", "probe": True}
+                recent_turns = [t for t in history if t["round"] == r and t["role"] == "agent"][-3:]
+                recent = "\n".join(f"- {t['name']}: {t['content']}" for t in recent_turns) or "(아직 이번 라운드 발언 없음)"
+                probe_msg = await _frame_probe(subtopic, recent, seg_q, mock)
+                await _mod_record(probe_msg, order, r, meta={"kind": "phase_c_probe", "probe_source": seg_q})
+                yield {"type": "moderator", "round": r, "content": probe_msg, "phase": "C", "probe": True}
                 order += 1
-                active_q = seg_q
+                active_q = probe_msg
             else:
                 active_q = mod_msg
 
@@ -308,14 +345,19 @@ async def run_fgi(
                     _CONTROLS[session.id]["next_round"] = False
                     break
                 scores = await engagement.llm_engagement(agents_meta, subtopic, last_text, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
-                # 직전 발화자·발화 상한 도달자 제외, 관심도 τ 이상. 덜 말한 사람 우선.
-                cands = [a for a in agents
-                         if a.id != last_speaker_id
-                         and seg_count[a.id] < config.MAX_C_PER_AGENT
-                         and scores.get(a.id, {}).get("interest", 0.0) >= config.TIKITAKA_THRESHOLD]
-                cands.sort(key=lambda a: (seg_count[a.id], -scores.get(a.id, {}).get("interest", 0.0)))
+
+                def _interest(a) -> float:
+                    return scores.get(a.id, {}).get("interest", 0.5)
+
+                # 발화 후보: 직전 발화자·발화 상한(MAX_C_PER_AGENT) 도달자만 제외하고 전원 후보로 둔다.
+                # engagement 점수는 '누가 먼저 말할지' 순서에만 쓰고, 후보를 걸러 죽이는 하드 게이트로는
+                # 쓰지 않는다 — 실모드에서 점수가 보수적(전원 τ 미만)이거나 JSON 파싱이 한 번 어긋나도
+                # Phase C 토론이 통째로 사라지지 않도록. 수렴은 allow_pass(할 말 없으면 [PASS]) +
+                # 세그먼트/에이전트 발화 상한으로 자연 종료된다.
+                cands = [a for a in agents if a.id != last_speaker_id and seg_count[a.id] < config.MAX_C_PER_AGENT]
+                cands.sort(key=lambda a: (seg_count[a.id], -_interest(a)))
                 if not cands:
-                    break  # 이 쟁점에 더 말할 사람 없음 → 다음 쟁점으로
+                    break  # 이 쟁점에 더 말할 사람 없음(전원 발화 상한 도달) → 다음 쟁점으로
                 spoke_this_cycle = False
                 for agent in cands:
                     if seg_utter >= config.PROBE_MAX_UTTER or c_total >= config.MAX_TIKITAKA_UTTER or _session_over():

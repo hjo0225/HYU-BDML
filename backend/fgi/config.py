@@ -41,7 +41,7 @@ NOVELTY_THRESHOLD = _f("FGI_NOVELTY_THRESHOLD", 0.3)      # §11 발화 포화�
 SESSION_MAX_MIN = _f("FGI_SESSION_MAX_MIN", 60)          # §12 세션 최대 시간(분)
 
 # Round 내부 Phase 구조 (v0.2 스펙: A 질문 → B 순서답변 → C 티키타카 → D 개입)
-TIKITAKA_THRESHOLD = _f("FGI_TIKITAKA_THRESHOLD", 0.7)    # τ: Phase C 발화권 관심도(0~1) 컷오프
+TIKITAKA_THRESHOLD = _f("FGI_TIKITAKA_THRESHOLD", 0.7)    # τ(현재 미사용): 과거 Phase C 발화권 컷오프. v0.3.4 부터 점수는 순서 결정에만 쓰고 하드 게이트는 폐지(보수적 점수에 토론이 죽는 문제). 호환 위해 키 유지.
 MAX_TIKITAKA_UTTER = _i("FGI_MAX_TIKITAKA", 15)           # Phase C 발화 총상한 (모든 쟁점 세그먼트 합)
 MAX_C_PER_AGENT = _i("FGI_MAX_C_PER_AGENT", 2)           # 한 쟁점 세그먼트 내 에이전트당 발화 상한 (독점 방지)
 PROBE_MAX_UTTER = _i("FGI_PROBE_MAX_UTTER", 4)           # 쟁점 하나당 토론 발화 상한
