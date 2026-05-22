@@ -137,9 +137,37 @@ async def resolve_user(email: str) -> User | None:
         return res.scalar_one_or_none()
 
 
-async def create_project(user_id: str, title: str) -> str:
-    project_id = str(uuid.uuid4())
+async def ensure_user(email: str) -> User:
+    """소유자 유저를 보장(없으면 생성). 데모 소스 적재 시 운영 DB 에 해당 계정이
+    아직 로그인하지 않았을 수 있어, 패스워드 없는 소유자 행을 만들어 FK 를 충족한다."""
+    email = email.lower().strip()
     async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if user is not None:
+            return user
+        user = User(
+            id=str(uuid.uuid4()), email=email, hashed_pw=None,
+            name=email.split("@")[0], role="researcher", is_active=True,
+        )
+        db.add(user)
+        await db.commit()
+        print(f"[IMPORT] 소유자 유저 생성: {email} (id={user.id[:8]}…)")
+        return user
+
+
+async def create_project(user_id: str, title: str, project_id: str | None = None) -> str:
+    """프로젝트 생성. project_id 지정 시 그 ID 로 멱등 생성(이미 있으면 재사용).
+
+    데모 소스(--as-demo-source)처럼 ID 가 고정돼야 운영 DB 에서도 데모가 찾을 수 있다.
+    """
+    project_id = project_id or str(uuid.uuid4())
+    async with AsyncSessionLocal() as db:
+        existing = (await db.execute(
+            select(ResearchProject).where(ResearchProject.id == project_id)
+        )).scalar_one_or_none()
+        if existing is not None:
+            print(f"[IMPORT] 프로젝트가 이미 존재 — 재사용: {project_id[:8]}…")
+            return project_id
         db.add(ResearchProject(
             id=project_id,
             user_id=user_id,
@@ -242,15 +270,26 @@ async def main_async(args) -> None:
     pids = [p.strip() for p in pids if p.strip()]
     print(f"[IMPORT] 대상 {len(pids)}명: {', '.join(pids)} (dry_run={args.dry_run})")
 
-    # 사용자 확인
-    user = await resolve_user(args.user_email)
-    if not user:
-        raise SystemExit(
-            f"[ERR] 사용자 없음: {args.user_email} — 먼저 해당 계정으로 1회 로그인하세요."
-        )
+    # 사용자 확인 — 데모 소스 적재(--as-demo-source/--ensure-owner)는 없으면 생성
+    if (args.as_demo_source or args.ensure_owner) and not args.dry_run:
+        user = await ensure_user(args.user_email)
+    else:
+        user = await resolve_user(args.user_email)
+        if not user:
+            raise SystemExit(
+                f"[ERR] 사용자 없음: {args.user_email} — 먼저 해당 계정으로 1회 로그인하거나 --ensure-owner 사용."
+            )
     print(f"[IMPORT] 사용자: {user.email} (id={user.id[:8]}…)")
 
     # 프로젝트 결정
+    fixed_id = args.project_id
+    if args.as_demo_source:
+        # 데모 소스로 적재 — demo_service.SOURCE_PROJECT_ID 와 동일 ID 로 고정해
+        # 운영 DB 에서도 /api/demo/session 이 env 변경 없이 이 6명을 복제한다.
+        from services import demo_service
+        fixed_id = demo_service.SOURCE_PROJECT_ID
+        print(f"[IMPORT] 데모 소스 모드 — 고정 project_id={fixed_id} 로 적재")
+
     if args.reuse_project:
         project_id = args.reuse_project
         print(f"[IMPORT] 기존 프로젝트 재사용: {project_id[:8]}…")
@@ -258,8 +297,8 @@ async def main_async(args) -> None:
         project_id = "00000000-0000-0000-0000-000000000000"
         print("[IMPORT] dry-run — 프로젝트 생성 생략")
     else:
-        project_id = await create_project(user.id, args.project_title)
-        print(f"[IMPORT] 신규 프로젝트 생성: '{args.project_title}' (id={project_id})")
+        project_id = await create_project(user.id, args.project_title, project_id=fixed_id)
+        print(f"[IMPORT] 프로젝트 확보: '{args.project_title}' (id={project_id})")
 
     ok = 0
     for pid in pids:
@@ -291,6 +330,11 @@ def main():
     p.add_argument("--project-title", default="agent_package PoC (6명)", help="신규 프로젝트 제목")
     p.add_argument("--pids", default=None, help="쉼표구분 pid (기본: manifest 전체)")
     p.add_argument("--reuse-project", default=None, help="기존 프로젝트 UUID 에 추가 적재")
+    p.add_argument("--project-id", default=None, help="이 UUID 로 프로젝트를 멱등 생성(이미 있으면 재사용)")
+    p.add_argument("--as-demo-source", action="store_true",
+                   help="데모 소스로 적재 — demo_service.SOURCE_PROJECT_ID 고정 ID 사용 (운영 데모용)")
+    p.add_argument("--ensure-owner", action="store_true",
+                   help="소유자 유저가 없으면 생성(운영 DB 에 해당 계정 미로그인 시)")
     p.add_argument("--synthetic", action="store_true", help="임베딩 강제 합성 (OPENAI 키 없이)")
     p.add_argument("--dry-run", action="store_true", help="DB INSERT 없이 검증만")
     args = p.parse_args()
