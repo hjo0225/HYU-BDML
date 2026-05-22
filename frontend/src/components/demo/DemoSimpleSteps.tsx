@@ -12,13 +12,27 @@ import {
   DEMO_COLLECTION,
   DEMO_INTERVIEW,
   DEMO_SURVEYS,
+  SURVEY_LENS_LABELS,
 } from '@/lib/demoScenario';
 import type { FGIReport } from '@/lib/types';
 
 type SurveyDef = (typeof DEMO_SURVEYS)[number];
+type SurveyItemDef = SurveyDef['items'][number];
 
-// 설문 카드 (범용/도메인 공용) — 렌즈 태그 + 척도 + 발췌 문항.
+// 문항을 렌즈(L1~L6·통제)별로 묶는다. 첫 등장 순서 보존.
+function groupSurveyItems(items: readonly SurveyItemDef[]): [string, SurveyItemDef[]][] {
+  const map = new Map<string, SurveyItemDef[]>();
+  for (const it of items) {
+    const k = it.lens || '기타';
+    const arr = map.get(k);
+    if (arr) arr.push(it); else map.set(k, [it]);
+  }
+  return Array.from(map.entries());
+}
+
+// 설문 카드 (범용/도메인 공용) — 렌즈별 접기 + 척도 + 실제 적용 문항 전체.
 function SurveyCard({ survey, generated }: { survey: SurveyDef; generated?: boolean }) {
+  const openByDefault = survey.items.length <= 24;
   return (
     <Card>
       <div className="mb-1 flex items-start justify-between gap-2">
@@ -26,18 +40,30 @@ function SurveyCard({ survey, generated }: { survey: SurveyDef; generated?: bool
         <Badge variant={generated ? 'success' : 'violet'} size="sm">{generated ? '✨ 자동 생성' : '설문'}</Badge>
       </div>
       <p className="text-xs text-text-muted">{survey.desc}</p>
-      <p className="mb-3 mt-1 text-2xs text-text-muted">{survey.note}</p>
-      <ul className="space-y-2 text-sm text-text-secondary">
-        {survey.items.map((it, i) => (
-          <li key={i} className="rounded-lg border border-border bg-bg p-2.5">
-            <div className="mb-1 flex items-center gap-1.5">
-              <Badge variant="indigo" size="sm">{it.lens}</Badge>
-              <span className="text-2xs text-text-muted">{it.scale}</span>
-            </div>
-            <span>{it.q}</span>
-          </li>
+      <p className="mb-1 mt-1 text-2xs text-text-muted">{survey.note}</p>
+      <p className="mb-3 text-2xs text-text-muted">총 {survey.items.length}문항 · 렌즈별로 펼쳐 보세요.</p>
+      <div className="space-y-2">
+        {groupSurveyItems(survey.items).map(([lensKey, items]) => (
+          <details key={lensKey} open={openByDefault} className="group rounded-lg border border-border bg-bg/40">
+            <summary className="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-sm font-semibold text-text-primary">
+              <span className="text-text-muted transition-transform group-open:rotate-90">▸</span>
+              {SURVEY_LENS_LABELS[lensKey] ?? lensKey}
+              <span className="text-2xs font-normal text-text-muted">({items.length}문항)</span>
+            </summary>
+            <ul className="space-y-2 px-3 pb-3 text-sm text-text-secondary">
+              {items.map((it, i) => (
+                <li key={i} className="rounded-lg border border-border bg-surface p-2.5">
+                  <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {it.scaleName && <span className="text-2xs font-medium text-text-secondary">{it.scaleName}</span>}
+                    {it.scale && <span className="text-2xs text-text-muted">· {it.scale}</span>}
+                  </div>
+                  <span>{it.q}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
         ))}
-      </ul>
+      </div>
     </Card>
   );
 }

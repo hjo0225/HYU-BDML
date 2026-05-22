@@ -9,14 +9,25 @@ import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { useAuth } from '@/contexts/AuthContext';
-import { DEMO_SURVEYS, DEMO_INTERVIEW, DEMO_BRIEF } from '@/lib/demoScenario';
+import { DEMO_SURVEYS, DEMO_INTERVIEW, DEMO_BRIEF, SURVEY_LENS_LABELS } from '@/lib/demoScenario';
 
-interface SurveyItem { id: string; lens?: string; scale?: string; q: string }
+interface SurveyItem { id: string; lens?: string; scaleName?: string; scale?: string; q: string }
 interface Survey { key: string; title: string; desc?: string; items: SurveyItem[] }
 interface SurveyInfo { title: string; objective: string; target: string; types: string[] }
 
 const uid = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+
+// 문항을 렌즈(L1~L6·통제 / 인터뷰 Part)별로 묶는다. 첫 등장 순서 보존.
+function groupByLens(items: SurveyItem[]): [string, SurveyItem[]][] {
+  const map = new Map<string, SurveyItem[]>();
+  for (const it of items) {
+    const k = it.lens || '기타';
+    const arr = map.get(k);
+    if (arr) arr.push(it); else map.set(k, [it]);
+  }
+  return Array.from(map.entries());
+}
 
 // 포함 가능한 질문지 종류 (초기 설정에서 선택).
 const TYPE_OPTIONS = [
@@ -30,12 +41,13 @@ function seedSurveys(types: string[]): Survey[] {
   const out: Survey[] = [];
   for (const s of DEMO_SURVEYS) {
     if (!types.includes(s.key)) continue;
-    out.push({ key: s.key, title: s.title, desc: s.desc, items: s.items.map((it) => ({ id: uid(), lens: it.lens, scale: it.scale, q: it.q })) });
+    out.push({ key: s.key, title: s.title, desc: s.desc, items: s.items.map((it) => ({ id: uid(), lens: it.lens, scaleName: (it as { scaleName?: string }).scaleName, scale: it.scale, q: it.q })) });
   }
   if (types.includes('interview')) {
     out.push({
       key: 'interview',
-      title: DEMO_INTERVIEW.title,
+      // 질문지 탭에서는 제목 뒤 괄호(예: "(1종, 약 60분)")를 떼고 간결하게 표시.
+      title: DEMO_INTERVIEW.title.replace(/\s*\([^)]*\)\s*$/, ''),
       desc: DEMO_INTERVIEW.desc,
       items: DEMO_INTERVIEW.parts.flatMap((p) => p.questions.map((q) => ({ id: uid(), lens: `Part ${p.part}`, q }))),
     });
@@ -118,8 +130,8 @@ export function SurveyManager({ projectId }: { projectId: string }) {
     persist(surveys.map((s) => s.key !== sk ? s : { ...s, items: s.items.map((it) => it.id === id ? { ...it, q } : it) }));
   const removeItem = (sk: string, id: string) =>
     persist(surveys.map((s) => s.key !== sk ? s : { ...s, items: s.items.filter((it) => it.id !== id) }));
-  const addItem = (sk: string) => {
-    const it: SurveyItem = { id: uid(), q: '' };
+  const addItem = (sk: string, lens?: string) => {
+    const it: SurveyItem = { id: uid(), lens, q: '' };
     persist(surveys.map((s) => s.key !== sk ? s : { ...s, items: [...s.items, it] }));
     setEditing(it.id);
     setDraft('');
@@ -239,44 +251,62 @@ export function SurveyManager({ projectId }: { projectId: string }) {
             subtitle={active.desc}
             action={<Badge variant="neutral" size="sm">{active.items.length}문항</Badge>}
           />
-          <ul className="mt-3 space-y-2">
-            {active.items.map((it) => (
-              <li key={it.id} className="rounded-lg border border-border bg-bg p-2.5">
-                <div className="mb-1 flex items-center gap-1.5">
-                  {it.lens && <Badge variant="indigo" size="sm">{it.lens}</Badge>}
-                  {it.scale && <span className="text-2xs text-text-muted">{it.scale}</span>}
-                </div>
-                {editing === it.id ? (
-                  <div className="space-y-2">
-                    <Textarea name={`q_${it.id}`} value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} autoFocus />
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" onClick={() => saveEdit(active.key, it.id)}>저장</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setEditing(null); setDraft(''); }}>취소</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm text-text-secondary">{it.q || <span className="text-text-muted">(빈 문항)</span>}</p>
-                    <div className="flex shrink-0 gap-1">
-                      <button onClick={() => startEdit(it)} className="text-2xs text-text-muted hover:text-ditto-indigo">수정</button>
-                      <button onClick={() => removeItem(active.key, it.id)} className="text-2xs text-text-muted hover:text-error">삭제</button>
-                    </div>
-                  </div>
-                )}
-              </li>
-            ))}
-            {active.items.length === 0 && (
-              <li className="rounded-lg border border-dashed border-border p-3 text-center text-xs text-text-muted">
-                이 종류에는 아직 문항이 없습니다.
-              </li>
-            )}
-          </ul>
-          <button
-            onClick={() => addItem(active.key)}
-            className="mt-2 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-text-muted hover:border-ditto-indigo hover:text-ditto-indigo"
-          >
-            + 문항 추가
-          </button>
+          {active.items.length === 0 ? (
+            <p className="mt-3 rounded-lg border border-dashed border-border p-3 text-center text-xs text-text-muted">
+              이 종류에는 아직 문항이 없습니다.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {groupByLens(active.items).map(([lensKey, items]) => (
+                <details
+                  key={lensKey}
+                  open={active.items.length <= 24}
+                  className="group rounded-lg border border-border bg-bg/40"
+                >
+                  <summary className="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-sm font-semibold text-text-primary">
+                    <span className="text-text-muted transition-transform group-open:rotate-90">▸</span>
+                    {SURVEY_LENS_LABELS[lensKey] ?? lensKey}
+                    <span className="text-2xs font-normal text-text-muted">({items.length}문항)</span>
+                  </summary>
+                  <ul className="space-y-2 px-3 pb-3">
+                    {items.map((it) => (
+                      <li key={it.id} className="rounded-lg border border-border bg-surface p-2.5">
+                        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          {it.scaleName && <span className="text-2xs font-medium text-text-secondary">{it.scaleName}</span>}
+                          {it.scale && <span className="text-2xs text-text-muted">· {it.scale}</span>}
+                        </div>
+                        {editing === it.id ? (
+                          <div className="space-y-2">
+                            <Textarea name={`q_${it.id}`} value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} autoFocus />
+                            <div className="flex items-center gap-2">
+                              <Button size="sm" onClick={() => saveEdit(active.key, it.id)}>저장</Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setEditing(null); setDraft(''); }}>취소</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-text-secondary">{it.q || <span className="text-text-muted">(빈 문항)</span>}</p>
+                            <div className="flex shrink-0 gap-1">
+                              <button onClick={() => startEdit(it)} className="text-2xs text-text-muted hover:text-ditto-indigo">수정</button>
+                              <button onClick={() => removeItem(active.key, it.id)} className="text-2xs text-text-muted hover:text-error">삭제</button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                    <li>
+                      <button
+                        onClick={() => addItem(active.key, lensKey === '기타' ? undefined : lensKey)}
+                        className="rounded-lg border border-dashed border-border px-3 py-1.5 text-2xs font-medium text-text-muted hover:border-ditto-indigo hover:text-ditto-indigo"
+                      >
+                        + {SURVEY_LENS_LABELS[lensKey] ?? lensKey}에 문항 추가
+                      </button>
+                    </li>
+                  </ul>
+                </details>
+              ))}
+            </div>
+          )}
         </Card>
       )}
 
