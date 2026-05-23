@@ -12,11 +12,22 @@
 scratch_key 매핑은 seed_service 가 record.qualitative 의 평면 키 그대로
 agent.scratch 에 저장하므로 일치한다.
 
-Phase 5 에서 실데이터(Twin-2K-500 raw 234답변) 적재 시 hold-out 자극 풀을
-더 늘릴 수 있다. (EVAL_SPEC.md §1, §5)
+V1 자극 셋은 두 갈래:
+- **V1_HOLDOUT_STIMULI (기본):** 진짜 hold-out — 패키지 인터뷰 답변을 ground
+  truth 로 쓰고 페르소나 프롬프트에서 그 답변을 제거. Park(2024) 인터뷰
+  가이드 Part A·B 6개. package 에이전트(jeongoheo 6명)에 적용.
+- **V1_SYNTHETIC_STIMULI (옛 30개):** LLM 으로 합성한 답변과 같은 LLM의
+  재답변을 비교 — 사실상 "모델 일관성" 측정. Twin mock 30명에는 유효하지만
+  package 에이전트에는 진짜 hold-out 이 아님. 호환성을 위해 보존.
+
+기본 진입점은 v1_questions() — 환경변수 EVAL_V1_MODE 로 'holdout'(기본) /
+'synthetic' / 'both' 선택. all_stimuli() 는 LLM 호출 1회로 V1+V3 모두 채점하기
+위한 합집합이라 의미상 V3 자극만 포함하면 충분(V1 은 별도 generate).
 """
+
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -35,15 +46,67 @@ class Question:
     scratch_key: str | None
 
 
-# ── V1 hold-out 자극 ─────────────────────────────────────────────────────
-# 페르소나 프롬프트에 들어가지 않는 정성 답변. agent.scratch.holdout_* 와
-# 매핑되며 mock 생성기 / 실데이터 적재기가 모두 채워준다.
+# ── V1 진짜 hold-out 자극 (인터뷰 Part A·B 기반) ─────────────────────────
+# 패키지 6명 인터뷰의 공통 Q6/Q7/Q8/Q11/Q12/Q13 답변이 ground truth.
+# DEMO_INTERVIEW (frontend/src/lib/demoScenario.ts) 와 매칭되는 6개 — Part A
+# 소비 인생사 3개 + Part B 자기 인식 3개. 포토부스 도메인(Part C·D)은 일반
+# V1 으로는 도메인 편향 커서 제외.
 #
-# EVAL_SPEC.md §1 기준 기본 N=30 — 6-Lens(L1 경제·L2 의사결정·L3 신뢰·L4 사회·
-# L5 정체성·L6 시간)에 고루 분포시켜 한 자극의 노이즈가 평균을 끌어내리지 않게.
-# qid 는 backward compatible 하게 기존 3개(recent_purchase/info_source/lifestyle)
-# 를 그대로 유지하고 신규는 L<n>_ 접두사로 구분.
+# 평가 시 페르소나 프롬프트에서 인터뷰 섹션을 제거(rebuild_holdouts_from_interview)
+# 한 상태로 동일 질문을 던지므로 "안 보고 재현" 가능.
+#
+# scratch_key 는 holdout_iv_<part><n> 형식 — 백필 스크립트가 채움.
 V1_HOLDOUT_STIMULI: list[Question] = [
+    Question(
+        qid="iv_a1_regret_satisfy",
+        question_ko="최근 1년 사이에 본인이 한 구매 중 가장 후회한 것과 가장 만족한 것을 각각 떠올려서, 무엇을 샀고 왜 그랬는지 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_a1",
+    ),
+    Question(
+        qid="iv_a2_spend_categories",
+        question_ko="본인의 소비 중 '돈 쓰기 가장 아까운 영역' 과 '돈 안 아까운 영역' 을 각각 떠올려서, 그게 왜 그렇게 갈리는지 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_a2",
+    ),
+    Question(
+        qid="iv_a3_buy_priority",
+        question_ko="물건이나 서비스를 살 때 '친환경 · 가격 · 품질 · 브랜드' 중 본인에게 가장 중요한 요소는 무엇이고, 그 이유는 무엇인지 4~6문장으로 답해 주세요.",
+        scratch_key="holdout_iv_a3",
+    ),
+    Question(
+        qid="iv_b1_decision_style",
+        question_ko="본인이 결정을 내릴 때 어떤 스타일이라고 생각하세요? '빠르게 직감' 인지 '충분히 비교' 인지, 본인의 평소 모습을 사례와 함께 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_b1",
+    ),
+    Question(
+        qid="iv_b2_influence_source",
+        question_ko="본인이 무언가를 결정할 때 가장 영향을 많이 받는 사람이나 정보원은 누구·무엇이고, 왜 그 사람·매체의 영향을 받는지 4~6문장으로 답해 주세요.",
+        scratch_key="holdout_iv_b2",
+    ),
+    Question(
+        qid="iv_b3_waiting_tolerance",
+        question_ko="본인은 기다림에 강한 편인가요, 약한 편인가요? 예를 들어 할인 기다리기·배송 기다리기 같은 상황에서 본인이 보이는 패턴을 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_b3",
+    ),
+]
+
+# 패키지 인터뷰 Q번호 ↔ V1 자극 매핑 — rebuild_holdouts_from_interview 가 사용.
+# 6명 모두 같은 Q5~Q29 답변을 가짐 (Park 2024 Expert Reflection 인터뷰 가이드).
+HOLDOUT_INTERVIEW_MAPPING: dict[str, str] = {
+    "holdout_iv_a1": "6",   # 후회/만족 구매
+    "holdout_iv_a2": "7",   # 돈 아까운/안 아까운 영역
+    "holdout_iv_a3": "8",   # 친환경·가격·품질·브랜드
+    "holdout_iv_b1": "11",  # 결정 스타일
+    "holdout_iv_b2": "12",  # 영향 받는 사람·정보원
+    "holdout_iv_b3": "13",  # 기다림 강한/약한
+}
+
+
+# ── V1 합성 자극 (구버전 30개 · 호환용) ───────────────────────────────────
+# Slice 2.6 PoC → V1 자극 30개 확장 시도에서 만든 합성 풀.
+# scratch.holdout_* 에 LLM 생성 답변을 저장하므로 진짜 hold-out 이 아님.
+# Twin mock 30명에는 archetype 일관성 측정용으로 의미 있지만, package 6명에는
+# 인터뷰 답변(V1_HOLDOUT_STIMULI) 을 쓰는 게 정확.
+V1_SYNTHETIC_STIMULI: list[Question] = [
     # 기존 3개 (Slice 2.6 PoC) — qid·scratch_key 변경 금지(이미 시드된 데이터)
     Question(
         qid="recent_purchase",
@@ -242,7 +305,19 @@ V3_DIVERSITY_STIMULI: list[Question] = [
 
 
 def v1_questions() -> list[Question]:
-    """V1 평가용 — hold-out 자극만 (scratch_key 가 있는 항목)."""
+    """V1 평가용 자극.
+
+    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'holdout'):
+    - 'holdout'   : V1_HOLDOUT_STIMULI 만 — 진짜 hold-out (인터뷰 답변 ground truth).
+                    package 에이전트(jeongoheo 6명)용 권장.
+    - 'synthetic' : V1_SYNTHETIC_STIMULI 만 — LLM 합성 답변. Twin mock 30 호환용.
+    - 'both'      : 두 셋 합집합 — 마이그레이션 기간 비교용.
+    """
+    mode = os.getenv("EVAL_V1_MODE", "holdout").lower()
+    if mode == "synthetic":
+        return list(V1_SYNTHETIC_STIMULI)
+    if mode == "both":
+        return [*V1_HOLDOUT_STIMULI, *V1_SYNTHETIC_STIMULI]
     return list(V1_HOLDOUT_STIMULI)
 
 
@@ -251,6 +326,7 @@ def v3_questions() -> list[Question]:
 
     V3 는 답변 임베딩 평균으로 페르소나 벡터를 만들기 때문에 자극이 많을수록
     노이즈에 강하다. V1 hold-out 답변도 페르소나 차이를 드러내므로 함께 활용.
+    EVAL_V1_MODE 와 무관하게 V1 hold-out 6개 + V3 anchor 3개 = 9개 사용.
     """
     return [*V1_HOLDOUT_STIMULI, *V3_DIVERSITY_STIMULI]
 
