@@ -103,12 +103,6 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
-
-        <p className="text-center mt-5">
-          <Link href="/demo" className="text-sm text-white/90 underline underline-offset-4 hover:text-white">
-            ✨ 로그인 없이 데모 이용해보기
-          </Link>
-        </p>
       </div>
     </div>
   );

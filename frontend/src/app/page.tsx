@@ -28,10 +28,8 @@ function HeaderActions() {
           </button>
         </>
       ) : (
-        <>
-          <HeaderLink href="/register">회원가입</HeaderLink>
-          <HeaderLink href="/login">로그인</HeaderLink>
-        </>
+        // 회원가입은 별도 노출하지 않음 — 로그인 페이지에서 "계정이 없으신가요? 회원가입" 링크로 이어짐.
+        <HeaderLink href="/login">로그인</HeaderLink>
       )}
       <Link
         href="/demo"
@@ -250,7 +248,7 @@ export default function LandingPage() {
       <nav className="fixed inset-x-0 top-0 z-50 backdrop-blur-md bg-white/90 border-b border-border">
         <div className="max-w-[1200px] mx-auto h-14 px-6 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <Logo height={28} wordmarkClassName="text-lg text-ditto-indigo" />
+            <Logo height={28} wordmarkClassName="text-lg bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent" />
           </Link>
           <HeaderActions />
         </div>
@@ -313,7 +311,8 @@ export default function LandingPage() {
         {/* ── Features ─────────────────────────────────────────────── */}
         <section className="max-w-[1200px] mx-auto px-6 py-20">
           <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-[32px] font-extrabold tracking-[-0.5px] mb-3">
+            <h2 className="text-3xl md:text-[32px] font-extrabold tracking-[-0.5px] mb-3
+                           bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
               리서치 한 사이클을 한 화면에서
             </h2>
             <p className="text-text-muted text-[18px]">
@@ -342,7 +341,8 @@ export default function LandingPage() {
 
         {/* ── V1~V5 Evaluation ─────────────────────────────────────── */}
         <section className="max-w-[1000px] mx-auto px-6 py-20">
-          <h2 className="text-center text-3xl md:text-[32px] font-extrabold tracking-[-0.5px] mb-3">
+          <h2 className="text-center text-3xl md:text-[32px] font-extrabold tracking-[-0.5px] mb-3
+                         bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
             5가지 지표로 검증된 에이전트
           </h2>
           <p className="text-center text-text-muted text-[18px] mb-12">
