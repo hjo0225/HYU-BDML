@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Agent, AsyncSessionLocal, EvaluationSnapshot, ResearchProject
 from services.llm_client import chat_completion
 
-from .stimuli import Question, v3_questions
+from .stimuli import Question, v1_questions, v3_questions
 from .v1_response_sync import compute_v1
 from .v3_persona_diversity import build_persona_vector, compute_v3
 
@@ -107,7 +107,20 @@ async def run_v1_v3(
     if not agents:
         return {"status": "skipped", "reason": "프로젝트에 에이전트가 없음"}
 
-    questions = v3_questions()  # V1 ⊆ V3 자극이므로 V3 자극을 한 번 생성하면 V1 도 커버
+    # 생성할 자극 = V1·V3 자극의 합집합.
+    # 2026-05-24 V1 기본이 객관식 12개로 바뀌면서 V1 자극이 더는 V3 자극의
+    # 부분집합이 아니다. compute_v1 이 보는 v1_questions() 와, V3 벡터가 보는
+    # v3_questions() 의 qid 가 다르므로 둘 다 생성해야 한다(과거엔 v3 만 생성해
+    # V1 답변 qid 가 비어 sync 가 항상 0 이었다). qid 중복은 제거.
+    v1_qs = v1_questions() if "v1" in metrics else []
+    v3_qs = v3_questions() if "v3" in metrics else []
+    gen_questions: list[Question] = []
+    _seen_qids: set[str] = set()
+    for q in (*v1_qs, *v3_qs):
+        if q.qid not in _seen_qids:
+            _seen_qids.add(q.qid)
+            gen_questions.append(q)
+
     if on_event:
         await on_event({"type": "start", "total": len(agents), "metrics": metrics})
 
@@ -121,7 +134,7 @@ async def run_v1_v3(
             await on_event({"type": "agent_start", "current": idx, "total": len(agents), "agent_id": agent.id})
 
         try:
-            answers = await _generate_answers(agent=agent, questions=questions, mock_llm=mock_llm)
+            answers = await _generate_answers(agent=agent, questions=gen_questions, mock_llm=mock_llm)
             per_agent_answers[agent.id] = answers
 
             if "v1" in metrics:
@@ -129,13 +142,14 @@ async def run_v1_v3(
                 v1 = compute_v1(
                     agent_answers=answers,
                     scratch=scratch,
+                    questions=v1_qs,
                     synthetic_embeddings=synthetic_embeddings,
                 )
                 per_agent_v1[agent.id] = v1
 
             if "v3" in metrics:
                 vec = build_persona_vector(
-                    answers=[answers[q.qid] for q in questions if q.qid in answers],
+                    answers=[answers[q.qid] for q in v3_qs if q.qid in answers],
                     synthetic_embeddings=synthetic_embeddings,
                 )
                 persona_vectors[agent.id] = vec
@@ -175,6 +189,7 @@ async def run_v1_v3(
                 identity["v1_n_eval"] = v1["n_eval"]
             if v3_result:
                 identity["distinct"] = v3_result["distinct"]
+                identity["distinct_norm"] = v3_result.get("distinct_norm")
                 identity["v3_n_agents"] = v3_result["n_agents"]
                 xy = v3_xy.get(agent.id)
                 if xy:

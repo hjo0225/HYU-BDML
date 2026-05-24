@@ -24,7 +24,17 @@ from database import (
     engine,
 )
 from evaluation.runner import run_v1_v3
-from evaluation.stimuli import v1_questions, v3_questions
+from evaluation.stimuli import (
+    V1_HOLDOUT_STIMULI,
+    V1_OBJECTIVE_STIMULI,
+    V1_SYNTHETIC_STIMULI,
+    v1_questions,
+    v3_questions,
+)
+
+# compute_v1 직접 단위 테스트용 — 합성 자극 앞 3개(recent_purchase / info_source
+# / lifestyle). EVAL_V1_MODE 기본값(객관식)과 무관하게 동작하도록 명시 전달한다.
+_SYNTH3 = list(V1_SYNTHETIC_STIMULI[:3])
 from evaluation.v1_response_sync import compute_v1, cosine_similarity
 from evaluation.v3_persona_diversity import build_persona_vector, compute_v3
 from services.auth_service import hash_password
@@ -58,7 +68,7 @@ def test_compute_v1_identical_text_high_sync():
         "lifestyle": "라이프스타일 한 단어 텍스트 C",
     }
     result = compute_v1(
-        agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
+        agent_answers=agent_answers, scratch=scratch, questions=_SYNTH3, synthetic_embeddings=True,
     )
     assert result["n_eval"] == 3
     assert result["sync"] >= 0.99  # 동일 텍스트 → 동일 합성 임베딩 → cosine 1
@@ -77,7 +87,7 @@ def test_compute_v1_different_text_lower_sync():
         "lifestyle": "한 단어로 얼리어답터 — 새 서비스를 가장 먼저 시도합니다.",
     }
     result = compute_v1(
-        agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
+        agent_answers=agent_answers, scratch=scratch, questions=_SYNTH3, synthetic_embeddings=True,
     )
     assert result["n_eval"] == 3
     # 합성 임베딩은 텍스트 sha256 기반이라 서로 다른 텍스트는 거의 직교 (~0)
@@ -89,7 +99,7 @@ def test_compute_v1_skips_missing():
     scratch = {"holdout_recent_purchase": "A"}
     agent_answers = {"recent_purchase": "A", "info_source": "B"}  # lifestyle 누락
     result = compute_v1(
-        agent_answers=agent_answers, scratch=scratch, synthetic_embeddings=True,
+        agent_answers=agent_answers, scratch=scratch, questions=_SYNTH3, synthetic_embeddings=True,
     )
     assert result["n_eval"] == 1
     assert set(result["skipped"]) == {"info_source", "lifestyle"}
@@ -105,6 +115,7 @@ def test_compute_v3_diversity_positive():
     r = compute_v3(agent_persona_vectors=vecs)
     assert r["n_agents"] == 3
     assert r["distinct"] > 1.0  # 직교 단위 벡터 페어와이즈 = sqrt(2) ≈ 1.414
+    assert r["distinct_norm"] == 1.0  # 상한(0.47) 초과 → 1.0 으로 클램프
     assert len(r["scatter"]) == 3
 
 
@@ -138,6 +149,17 @@ async def _seed_project_with_agents(n: int = 3) -> tuple[str, list[str]]:
         for i in range(n):
             aid = str(uuid.uuid4())
             ids.append(aid)
+            # V3 anchor + V1 hold-out ground truth(객관식·인터뷰) 를 모두 시드.
+            # hold-out 키가 있어야 compute_v1 이 자극을 skip 하지 않고 채점한다
+            # (runner 가 v1 자극 답변을 생성하는지 검증하기 위함).
+            scratch = {
+                "self_aspire": f"agent {i} 의 이상적 삶",
+                "self_ought": f"agent {i} 의 의무감",
+                "self_actual": f"agent {i} 의 실제 성격",
+            }
+            for q in (*V1_OBJECTIVE_STIMULI, *V1_HOLDOUT_STIMULI):
+                if q.scratch_key:
+                    scratch[q.scratch_key] = f"agent {i} · {q.qid} · 3 - 보통이다"
             session.add(Agent(
                 id=aid,
                 project_id=project.id,
@@ -145,11 +167,7 @@ async def _seed_project_with_agents(n: int = 3) -> tuple[str, list[str]]:
                 source_ref=f"r{i}",
                 display_name=f"A{i}",
                 persona_full_prompt=f"당신은 archetype #{i} 의 한국 소비자입니다.",
-                scratch={
-                    "self_aspire": f"agent {i} 의 이상적 삶",
-                    "self_ought": f"agent {i} 의 의무감",
-                    "self_actual": f"agent {i} 의 실제 성격",
-                },
+                scratch=scratch,
             ))
         await session.commit()
         return project.id, ids
@@ -185,6 +203,10 @@ def test_runner_v1_only():
             for s in snaps:
                 stats = s.identity_stats
                 assert "sync" in stats
+                # runner 가 v1 자극 답변을 생성했는지 — qid 불일치 회귀 가드.
+                # hold-out 시드가 있는데 n_eval==0 이면 runner 가 v1 자극을
+                # 생성하지 않고 전부 skip 한 것(과거 sync 항상 0 버그).
+                assert stats["v1_n_eval"] > 0
                 assert "distinct" not in stats  # V3 미실행
 
         # event 시퀀스
@@ -220,6 +242,7 @@ def test_runner_v1_and_v3():
                 stats = s.identity_stats
                 assert "sync" in stats
                 assert "distinct" in stats
+                assert "distinct_norm" in stats  # 정규화 점수도 stamp
                 # V3 distinct 는 모든 agent snapshot 에 동일 값으로 stamp
                 assert stats["distinct"] == result["distinct"]
     asyncio.run(run())

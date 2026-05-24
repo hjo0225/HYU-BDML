@@ -115,8 +115,8 @@ export function QualityPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="다양성 (V3 distinct)" value={scatter.distinct != null ? scatter.distinct.toFixed(2) : '—'}
-              hint="30명이 서로 얼마나 다른 인격인지" />
+        <Stat label="다양성 (V3)" value={pct(scatter.distinct_norm)}
+              hint={scatter.distinct != null ? `거리 ${scatter.distinct.toFixed(2)} / 최대 0.47 · 서로 다른 인격 정도` : '서로 다른 인격 정도'} />
         <Stat label="평균 닮음 (V1)" value={pct(avgSync)} hint="진짜 사람과의 평균 일치도" />
         <Stat label="평가 완료" value={`${evaluated} / ${agents.length}`} hint="평가된 에이전트 수" />
         <Stat label="군집 수" value={String(clusters || '—')} hint="성향 클러스터 개수" />
@@ -124,7 +124,7 @@ export function QualityPanel({
 
       <Card padding="md">
         <CardHeader title="에이전트 다양성 분포" subtitle="가까울수록 비슷한 인격 · 멀수록 다양" />
-        <V3Scatter points={scatter.points} distinct={scatter.distinct} height={360} />
+        <V3Scatter points={scatter.points} distinct={scatter.distinct} distinctNorm={scatter.distinct_norm} height={360} />
       </Card>
 
       <Card padding="md">

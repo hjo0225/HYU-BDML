@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Agent, EvaluationSnapshot, ResearchProject, User, get_db
 from evaluation.runner import run_v1_v3
+from evaluation.v3_persona_diversity import normalize_distinct
 from models.schemas import EvaluationSnapshotOut
 from services.auth_service import get_current_user
 
@@ -188,7 +189,7 @@ async def project_scatter(
 ):
     """프로젝트 내 모든 agent 의 최신 V3 산점 좌표.
 
-    응답: {distinct, points: [{agent_id, display_name, emoji, x, y, sync}]}
+    응답: {distinct, distinct_norm, n_points, points: [{agent_id, display_name, emoji, x, y, sync}]}
     """
     await _verify_owned_project(project_id, current_user, db)
 
@@ -226,4 +227,9 @@ async def project_scatter(
             distinct_vals.append(stats["distinct"])
 
     distinct = max(distinct_vals) if distinct_vals else None
-    return {"distinct": distinct, "n_points": len(points), "points": points}
+    return {
+        "distinct": distinct,
+        "distinct_norm": normalize_distinct(distinct),
+        "n_points": len(points),
+        "points": points,
+    }

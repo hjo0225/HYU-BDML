@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Agent, FGISession, FGITurn
 from fgi import cascade, config, engagement, memory, reflection, report
 from fgi.prompts import moderator as mod_prompts
-from fgi.prompts.utterance import AGENT_TURN, FGI_GOAL_PREAMBLE, PASS_INSTRUCTION, STANCE_INSTRUCTION
+from fgi.prompts.utterance import AGENT_REPLY, AGENT_TURN, FGI_GOAL_PREAMBLE, PASS_INSTRUCTION, STANCE_INSTRUCTION
 from services.llm_client import chat_completion, stream_chat
 
 
@@ -160,16 +160,21 @@ def _others_recent(history: list[dict], self_id: str, k: int = 4) -> str:
 
 
 async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moderator_msg, history, mock,
-                        stance=None, allow_pass=False):
+                        stance=None, allow_pass=False, reply_to=None):
     """에이전트 1발화 — 토큰 스트리밍 yield + 저장 + 기억 기록. 마지막에 ('end', turn, content).
 
     stance('critical'|'positive')가 주어지면 라운드 진영 지시를 앞에 덧붙인다(v0.3, 자유토론 전용).
     allow_pass=True 면 '새로 더할 게 없으면 [PASS]' 지침을 주고, 응답이 패스면 토큰을 흘리지 않고
     ('pass', None, None) 만 내보낸 뒤 종료(발언으로 저장하지 않음, v0.3.2).
+    reply_to=(이름, 발언)이 주어지면 그 화자에게 직접 답글을 다는 AGENT_REPLY 를 쓴다(v0.4 교차 대화).
     """
     refl = reflection.context_for(session.id, agent.id)
     others = _others_recent(history, agent.id)
-    user = AGENT_TURN.format(moderator_message=moderator_msg, others_summary=others)
+    if reply_to is not None:
+        target_name, target_content = reply_to
+        user = AGENT_REPLY.format(moderator_message=moderator_msg, target_name=target_name, target_content=target_content)
+    else:
+        user = AGENT_TURN.format(moderator_message=moderator_msg, others_summary=others)
     if allow_pass:
         user = PASS_INSTRUCTION + "\n\n" + user
     if stance and stance in STANCE_INSTRUCTION:
@@ -183,7 +188,7 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
     async for delta in stream_chat(
         system=system_prompt,
         messages=[{"role": "user", "content": user}],
-        model=config.CHAT_MODEL, temperature=0.85, max_tokens=240, mock=mock,
+        model=config.CHAT_MODEL, temperature=0.9, max_tokens=240, mock=mock,
     ):
         parts.append(delta)
         if not allow_pass:           # 패스 판정을 위해 패스 모드에선 토큰을 흘리지 않고 모은다
@@ -250,12 +255,13 @@ async def run_fgi(
     _holder = {"content": ""}
 
     async def _agent_says(agent: Agent, moderator_msg: str, order_no: int, round_no: int,
-                          stance: str | None = None, allow_pass: bool = False):
+                          stance: str | None = None, allow_pass: bool = False,
+                          reply_to: tuple[str, str] | None = None):
         spoke = False
         async for kind, a, b in _stream_agent(
             db, session=session, agent_ids=agent_ids, agent=agent, round_no=round_no,
             order=order_no, moderator_msg=moderator_msg, history=history, mock=mock,
-            stance=stance, allow_pass=allow_pass,
+            stance=stance, allow_pass=allow_pass, reply_to=reply_to,
         ):
             if kind == "delta":
                 yield {"type": "agent_delta", "agent_id": agent.id, "delta": a}
@@ -363,7 +369,15 @@ async def run_fgi(
                     if seg_utter >= config.PROBE_MAX_UTTER or c_total >= config.MAX_TIKITAKA_UTTER or _session_over():
                         break
                     # 자유토론: 진영 부여 + 같은 말이면 패스(발언 안 함).
-                    async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id], allow_pass=True):
+                    # 직전에 누가 말했으면 그 발언에 '직접 답글'을 달게 해 교차 대화를 만든다(v0.4).
+                    # 세그먼트 첫 발화자(직전 화자 없음)는 쟁점에 답(reply_to=None).
+                    reply_to = (
+                        (name_by[last_speaker_id], last_text)
+                        if last_speaker_id and last_speaker_id != agent.id
+                        else None
+                    )
+                    async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id],
+                                                allow_pass=True, reply_to=reply_to):
                         yield ev
                     if _holder.get("passed"):
                         continue  # 새로 더할 게 없어 패스 → 발언으로 치지 않음

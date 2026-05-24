@@ -1,8 +1,9 @@
 """V3 페르소나 독립성 — 페어와이즈 유클리드 거리 평균.
 
-EVAL_SPEC.md §3 정합. 임계 ≥3.0 high / 1.5~3.0 moderate / <1.5 mode collapse 의심.
-프로젝트 단위 지표 — 개별 agent snapshot 의 identity_stats.distinct 에
-같은 값을 stamp.
+EVAL_SPEC.md §3 정합. raw distinct 를 V3_DISTINCT_CEILING 로 정규화한 0~1
+distinct_norm 으로 판정한다 (≥0.85 high / 0.50~0.85 moderate / 0.20~0.50 low
+/ <0.20 collapse 의심). 프로젝트 단위 지표 — 개별 agent snapshot 의
+identity_stats.{distinct, distinct_norm} 에 같은 값을 stamp.
 """
 from __future__ import annotations
 
@@ -10,6 +11,19 @@ import math
 from typing import Any
 
 from embedding.embedder import average_embedding, embed
+
+# 정규화 상한 — L2 정규화 임베딩 9개 평균의 페어와이즈 유클리드 거리는
+# 답변이 완전 무관(직교)할 때도 ~0.47 이 한계(실측 2026-05-24, EVAL_SPEC §3).
+# raw distinct 를 이 값으로 나눠 0~1 점수로 만든다. 자극 수·임베딩 모델이
+# 바뀌면 재측정 필요.
+V3_DISTINCT_CEILING = 0.47
+
+
+def normalize_distinct(distinct: float | None) -> float | None:
+    """raw distinct → 0~1 정규화 점수. None 은 그대로 통과."""
+    if distinct is None:
+        return None
+    return round(min(1.0, distinct / V3_DISTINCT_CEILING), 4)
 
 
 def _euclidean(a: list[float], b: list[float]) -> float:
@@ -53,7 +67,12 @@ def compute_v3(
     n = len(ids)
 
     if n < 2:
-        return {"distinct": 0.0, "n_agents": n, "scatter": [{"agent_id": i, "x": 0.0, "y": 0.0} for i in ids]}
+        return {
+            "distinct": 0.0,
+            "distinct_norm": 0.0,
+            "n_agents": n,
+            "scatter": [{"agent_id": i, "x": 0.0, "y": 0.0} for i in ids],
+        }
 
     total = 0.0
     pairs = 0
@@ -61,13 +80,14 @@ def compute_v3(
         for j in range(i + 1, n):
             total += _euclidean(vecs[i], vecs[j])
             pairs += 1
-    distinct = total / pairs if pairs else 0.0
+    distinct = round(total / pairs if pairs else 0.0, 4)
 
     coords = _pca_2d(vecs)
     scatter = [{"agent_id": ids[k], "x": round(coords[k][0], 4), "y": round(coords[k][1], 4)} for k in range(n)]
 
     return {
-        "distinct": round(distinct, 4),
+        "distinct": distinct,
+        "distinct_norm": normalize_distinct(distinct),
         "n_agents": n,
         "scatter": scatter,
     }

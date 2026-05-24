@@ -160,6 +160,8 @@ export interface ScatterPoint {
 
 export interface ScatterResponse {
   distinct: number | null;
+  /** 0~1 정규화 다양성 점수 (distinct / 0.47 상한). 대시보드 표기용. */
+  distinct_norm: number | null;
   n_points: number;
   points: ScatterPoint[];
 }

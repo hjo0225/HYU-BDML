@@ -15,6 +15,8 @@ import type { ScatterPoint } from '@/lib/types';
 interface V3ScatterProps {
   points: ScatterPoint[];
   distinct: number | null;
+  /** 0~1 정규화 다양성 점수 (distinct / 0.47). 라벨·밴드 판정에 사용. */
+  distinctNorm?: number | null;
   height?: number;
   /** cluster 별 색 분류. 같은 cluster=같은 색. */
   colorByCluster?: boolean;
@@ -31,9 +33,9 @@ const CLUSTER_COLORS = [
 
 /**
  * V3 페르소나 독립성 산점도 (PCA 2D 투영).
- * EVAL_SPEC.md §3 임계: ≥3.0 high / 1.5~3.0 moderate / <1.5 mode collapse.
+ * EVAL_SPEC.md §3 임계(정규화): ≥0.85 다양 / 0.50~0.85 보통 / 0.20~0.50 낮음 / <0.20 collapse.
  */
-export function V3Scatter({ points, distinct, height = 320, colorByCluster = true }: V3ScatterProps) {
+export function V3Scatter({ points, distinct, distinctNorm, height = 320, colorByCluster = true }: V3ScatterProps) {
   if (points.length === 0) {
     return (
       <div className="flex items-center justify-center border border-dashed border-border rounded-xl bg-bg" style={{ height }}>
@@ -47,11 +49,13 @@ export function V3Scatter({ points, distinct, height = 320, colorByCluster = tru
     ? Array.from(new Set(points.map(p => p.cluster ?? -1))).sort((a, b) => a - b)
     : [-1];
 
+  const norm = distinctNorm ?? null;
   const distinctLabel =
-    distinct == null ? '—' :
-    distinct >= 3.0 ? `${distinct.toFixed(2)} · 다양한 사람들` :
-    distinct >= 1.5 ? `${distinct.toFixed(2)} · 보통` :
-    `${distinct.toFixed(2)} · 서로 비슷비슷`;
+    norm == null ? '—' :
+    norm >= 0.85 ? `${Math.round(norm * 100)}% · 다양한 사람들` :
+    norm >= 0.50 ? `${Math.round(norm * 100)}% · 보통` :
+    norm >= 0.20 ? `${Math.round(norm * 100)}% · 서로 비슷` :
+    `${Math.round(norm * 100)}% · 거의 동일 (경고)`;
 
   return (
     <div>
@@ -117,7 +121,7 @@ export function V3Scatter({ points, distinct, height = 320, colorByCluster = tru
         </ResponsiveContainer>
       </div>
       <p className="text-2xs text-text-muted mt-2">
-        3.0 이상이면 다양 · 1.5~3.0 보통 · 1.5 미만은 비슷한 사람만 모인 경고 신호
+        85% 이상이면 다양 · 50~85% 보통 · 20% 미만은 비슷한 사람만 모인 경고 신호
       </p>
     </div>
   );
