@@ -73,18 +73,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto py-4">
           {sections.map(({ section, items }) => (
             <div key={section} className="mb-4">
-              <p className="px-5 mb-1 text-2xs font-semibold uppercase tracking-wider text-text-muted">
+              <p className="px-5 mb-1 text-2xs font-medium uppercase tracking-wider
+                            bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
                 {section}
               </p>
               {items.map(({ label, href, icon, disabled, indent, disabledReason }) => {
                 const pad = indent ? 'pl-10 pr-5' : 'px-5';
                 // 비활성(프로젝트 미선택 또는 FGI 진행 중) 항목은 클릭 불가 회색 표시.
+                // 그라데이션 비적용 — disabled 시각 위계 보존.
                 if (disabled) {
                   return (
                     <div
                       key={label}
                       title={disabledReason ?? '먼저 프로젝트를 선택하세요'}
-                      className={`flex items-center gap-2.5 ${pad} py-2 text-sm text-text-muted/50 cursor-not-allowed select-none`}
+                      className={`flex items-center gap-2.5 ${pad} py-2 text-sm font-medium text-text-muted/50 cursor-not-allowed select-none`}
                     >
                       <span className="text-base leading-none">{icon}</span>
                       {label}
@@ -93,19 +95,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   );
                 }
                 // 가장 긴 일치 href 만 활성 → '개요'(/projects/{id})가 하위 라우트에서 계속 켜지지 않게.
+                // 활성/비활성 모두 라벨에는 인디고→바이올렛 그라데이션 적용.
+                // 위계는 배경(bg-ditto-indigo-light)+오른쪽 보더로 유지.
                 const active = href === activeHref;
                 return (
                   <Link
                     key={href}
                     href={href}
-                    className={`flex items-center gap-2.5 ${pad} py-2 text-sm transition-colors duration-100 ${
+                    className={`flex items-center gap-2.5 ${pad} py-2 text-sm font-medium transition-colors duration-100 ${
                       active
-                        ? 'bg-ditto-indigo-light text-ditto-indigo font-medium border-r-2 border-ditto-indigo'
-                        : 'text-text-secondary hover:bg-ditto-indigo-light/50 hover:text-ditto-indigo'
+                        ? 'bg-ditto-indigo-light border-r-2 border-ditto-indigo'
+                        : 'hover:bg-ditto-indigo-light/40'
                     }`}
                   >
-                    <span className="text-base leading-none">{icon}</span>
-                    {label}
+                    <span className={`text-base leading-none ${active ? 'text-ditto-indigo' : 'text-text-secondary'}`}>{icon}</span>
+                    <span className="bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
+                      {label}
+                    </span>
                   </Link>
                 );
               })}
@@ -120,8 +126,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {user?.email?.[0]?.toUpperCase() ?? 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-text-primary truncate">{user?.name || user?.email}</p>
-              <p className="text-2xs text-text-muted capitalize">{user?.role}</p>
+              <p className="text-xs font-medium truncate
+                            bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
+                {user?.name || user?.email}
+              </p>
+              <p className="text-2xs font-medium capitalize
+                            bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent">
+                {user?.role}
+              </p>
             </div>
           </div>
           <Button variant="ghost" size="sm" onClick={logout} className="w-full">
