@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from database import Agent, AsyncSessionLocal
-from evaluation.stimuli import HOLDOUT_INTERVIEW_MAPPING
+from evaluation.stimuli import HOLDOUT_INTERVIEW_MAPPING, HOLDOUT_OBJECTIVE_MAPPING
 
 # 기본 패키지 경로 (import_agent_package.py 와 동일)
 _DEFAULT_PACKAGE_DIR = r"C:/Users/ABC/Desktop/agent_package (1)"
@@ -47,6 +47,71 @@ _INTERVIEW_SECTION_RE = re.compile(
 # 6-Lens 분석 안 "근거 발언:" 으로 시작하는 라인(들). 동일 라인이 ' "..." ' 따옴표로
 # 끝나므로 라인 단위 매칭.
 _EVIDENCE_LINE_RE = re.compile(r"^\s*근거\s*발언:\s*.*$\n?", re.MULTILINE)
+
+# 객관식 척도 섹션 안 'Answer: ...' 라인 - mask 대상.
+_ANSWER_LINE_RE = re.compile(r"^(\s*)Answer:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def find_objective_answer(
+    persona_text: str, section_re: str, statement_keyword: str
+) -> tuple[str | None, tuple[int, int] | None]:
+    """섹션 헤더 안에서 진술문 키워드를 포함한 Q 블록의 Answer 추출.
+
+    Returns:
+        (answer_text, (start, end) of the Answer line in persona_text)
+        매칭 실패 시 (None, None).
+    """
+    sec_m = re.search(section_re, persona_text)
+    if not sec_m:
+        return None, None
+    # 섹션 본문 = 헤더 시작부터 다음 ### 직전까지
+    section_start = sec_m.start()
+    next_sec = re.search(r"^### ", persona_text[sec_m.end():], re.MULTILINE)
+    section_end = sec_m.end() + next_sec.start() if next_sec else len(persona_text)
+    section = persona_text[section_start:section_end]
+
+    # 진술문 키워드를 포함한 라인 찾기
+    kw_m = re.search(re.escape(statement_keyword), section)
+    if not kw_m:
+        return None, None
+    # 그 위치 이후 첫 'Answer:' 라인
+    ans_m = _ANSWER_LINE_RE.search(section, pos=kw_m.end())
+    if not ans_m:
+        return None, None
+    answer = ans_m.group(2).strip()
+    # persona_text 전체 기준 절대 좌표
+    abs_start = section_start + ans_m.start()
+    abs_end = section_start + ans_m.end()
+    return answer, (abs_start, abs_end)
+
+
+def mask_objective_answers(
+    persona_text: str, mapping: dict[str, tuple[str, str]]
+) -> tuple[str, dict[str, str]]:
+    """매핑된 객관식 Answer 라인을 'Answer: [평가용으로 가림]' 으로 치환.
+
+    Returns:
+        (수정된 persona_text, {scratch_key: 원본_answer})
+    """
+    extracted: dict[str, str] = {}
+    # 여러 치환을 동시에 수행하기 위해 위치를 모은 뒤 뒤에서부터 치환
+    replacements: list[tuple[int, int, str]] = []
+    for scratch_key, (section_re, kw) in mapping.items():
+        answer, span = find_objective_answer(persona_text, section_re, kw)
+        if answer is None or span is None:
+            continue
+        extracted[scratch_key] = answer
+        # 들여쓰기 보존을 위해 원본 라인의 leading whitespace 유지
+        orig_line = persona_text[span[0]:span[1]]
+        m = re.match(r"^(\s*)Answer:", orig_line)
+        indent = m.group(1) if m else ""
+        replacements.append((span[0], span[1], f"{indent}Answer: [평가용으로 가림]"))
+
+    # 뒤에서부터 치환 (인덱스 유지)
+    new_text = persona_text
+    for start, end, repl in sorted(replacements, key=lambda x: -x[0]):
+        new_text = new_text[:start] + repl + new_text[end:]
+    return new_text, extracted
 
 
 def parse_interview_qa(persona_text: str) -> dict[str, str]:
@@ -138,7 +203,7 @@ async def process_one(
         return "skipped:no-interview-section"
 
     scratch = dict(agent.scratch or {})
-    holdout_updates = 0
+    iv_updates = 0
     for scratch_key, qnum in HOLDOUT_INTERVIEW_MAPPING.items():
         ans = qa.get(qnum)
         if not ans:
@@ -146,10 +211,21 @@ async def process_one(
         if scratch.get(scratch_key) and not force:
             continue
         scratch[scratch_key] = ans
-        holdout_updates += 1
+        iv_updates += 1
 
-    # ② persona_full_prompt 재구성 (인터뷰 섹션 + 근거 발언 라인 제거)
+    # ② persona_text 정제 — 인터뷰 섹션 + 근거 발언 라인 제거
     cleaned = strip_interview_and_evidence(persona_text)
+
+    # ③ 객관식 hold-out — 진술문 Answer 라인을 마스킹하고 ground truth 저장
+    cleaned, obj_extracted = mask_objective_answers(cleaned, HOLDOUT_OBJECTIVE_MAPPING)
+    obj_updates = 0
+    for scratch_key, ans in obj_extracted.items():
+        if scratch.get(scratch_key) and not force:
+            continue
+        scratch[scratch_key] = ans
+        obj_updates += 1
+
+    # ④ persona_full_prompt 재구성
     new_prompt = rebuild_full_prompt(
         system_message=system_message,
         persona_header=persona_header,
@@ -159,14 +235,16 @@ async def process_one(
 
     if dry_run:
         tag = []
-        if holdout_updates:
-            tag.append(f"holdout+{holdout_updates}")
+        if iv_updates:
+            tag.append(f"iv+{iv_updates}")
+        if obj_updates:
+            tag.append(f"obj+{obj_updates}")
         if prompt_changed:
             tag.append(f"prompt:{len(agent.persona_full_prompt or '')}→{len(new_prompt)}")
         return "dry:" + (",".join(tag) if tag else "noop")
 
     changed = False
-    if holdout_updates:
+    if iv_updates or obj_updates:
         agent.scratch = scratch
         flag_modified(agent, "scratch")
         changed = True
@@ -176,7 +254,7 @@ async def process_one(
 
     if not changed:
         return "noop"
-    return f"updated(holdout+{holdout_updates},prompt_chars={len(new_prompt)})"
+    return f"updated(iv+{iv_updates},obj+{obj_updates},prompt_chars={len(new_prompt)})"
 
 
 async def run(*, project_id: str, package_dir: Path, force: bool, dry_run: bool) -> None:

@@ -101,6 +101,106 @@ HOLDOUT_INTERVIEW_MAPPING: dict[str, str] = {
 }
 
 
+# ── V1 공통 객관식 hold-out (MindLens 5점/6점/7점/9점 자기서술 척도) ────────
+# 6-Lens 각 1개씩 6개. 답변 형식이 짧은 "<점수> - <라벨>" 이라 cosine 매칭에
+# 인터뷰 자유서술보다 노이즈가 적음. 페르소나에게 같은 진술문을 던지고 동일
+# 점수·라벨로 답하도록 질문 본문에 선택지 명시.
+#
+# Ground truth = 패키지 persona_text 안 해당 척도 섹션의 'Answer:' 라인.
+# 평가 시 그 Answer 라인만 마스킹 (척도 진술문은 노출돼도 OK — 그게 자극이므로).
+def _obj_q(statement: str, scale_lines: list[str]) -> str:
+    bullets = " / ".join(scale_lines)
+    return (
+        f"다음 진술문에 본인이 얼마나 동의하는지 척도에서 한 점수를 골라 "
+        f"'<점수> - <라벨>' 형식으로 짧게 답해 주세요 (예: '3 - 보통이다').\n\n"
+        f"진술문: \"{statement}\"\n선택지: {bullets}"
+    )
+
+
+_SCALE_5_AGREE = [
+    "1 = 전혀 동의하지 않는다", "2 = 별로 동의하지 않는다", "3 = 보통이다",
+    "4 = 어느 정도 동의한다", "5 = 강하게 동의한다",
+]
+_SCALE_5_FREQ = [
+    "1 = 전혀", "2 = 거의", "3 = 가끔", "4 = 자주", "5 = 항상",
+]
+_SCALE_6_SM = [
+    "1 = 명백히 거짓", "2 = 일반적으로 거짓", "3 = 어느 정도 거짓",
+    "4 = 어느 정도 사실", "5 = 일반적으로 사실", "6 = 명백히 사실",
+]
+_SCALE_7_RF = [
+    "1 = 전혀 동의하지 않는다", "2 = 동의하지 않는다", "3 = 약간 동의하지 않는다",
+    "4 = 보통이다", "5 = 약간 동의한다", "6 = 동의한다", "7 = 강하게 동의한다",
+]
+_SCALE_9_CON = [
+    "1 = 매우 부정확함", "5 = 정확하지도 부정확하지도 않음", "9 = 매우 정확함",
+    "(척도 범위: 1 ~ 9)",
+]
+
+V1_OBJECTIVE_STIMULI: list[Question] = [
+    Question(
+        qid="obj_l1_tightwad",
+        question_ko=_obj_q(
+            "어떤 사람들은 지출을 절제하기 어려워합니다. 옷·외식·여행 같은 데 안 쓰는 게 더 나은 상황에서도 종종 돈을 씁니다. 이 설명이 본인에게 얼마나 잘 맞나요? (즉, 지출을 절제하기 어렵나요?)",
+            _SCALE_5_FREQ,
+        ),
+        scratch_key="holdout_obj_l1_tightwad",
+    ),
+    Question(
+        qid="obj_l2_maximization",
+        question_ko=_obj_q(
+            "무엇을 하든 나는 스스로에게 가장 높은 기준을 적용한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l2_maximization",
+    ),
+    Question(
+        qid="obj_l3_regulatory_focus",
+        question_ko=_obj_q(
+            "다른 사람의 지시 없이 일하는 걸 더 좋아한다.",
+            _SCALE_7_RF,
+        ),
+        scratch_key="holdout_obj_l3_regulatory_focus",
+    ),
+    Question(
+        qid="obj_l4_self_monitoring",
+        question_ko=_obj_q(
+            "사회적 상황에서, 다른 행동이 필요하다고 느끼면 내 행동을 바꿀 수 있다.",
+            _SCALE_6_SM,
+        ),
+        scratch_key="holdout_obj_l4_self_monitoring",
+    ),
+    Question(
+        qid="obj_l5_minimalism",
+        question_ko=_obj_q(
+            "물건을 많이 쌓아두는 걸 피한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l5_minimalism",
+    ),
+    Question(
+        qid="obj_l6_conscientiousness",
+        question_ko=_obj_q(
+            "다음 단어가 본인을 얼마나 정확하게 묘사하는지 답해 주세요: 효율적인 (Efficient)",
+            _SCALE_9_CON,
+        ),
+        scratch_key="holdout_obj_l6_conscientiousness",
+    ),
+]
+
+# 객관식 ground truth 추출 매핑 — (섹션 헤더 정규식, 진술문 부분 매칭 키워드).
+# rebuild_holdouts_from_interview.py 가 사용. 진술문 키워드를 포함한 라인을
+# 찾아 다음 'Answer:' 라인까지의 Q 블록을 ground truth 로 추출.
+HOLDOUT_OBJECTIVE_MAPPING: dict[str, tuple[str, str]] = {
+    "holdout_obj_l1_tightwad":         (r"### Section 1-4: Tightwad",       "지출을 절제하기 어렵나요"),
+    "holdout_obj_l2_maximization":     (r"### Section 2-1: Maximization",   "가장 높은 기준을 적용"),
+    "holdout_obj_l3_regulatory_focus": (r"### Section 3-1: Regulatory",     "지시 없이 일하는 걸 더 좋아"),
+    "holdout_obj_l4_self_monitoring":  (r"### Section 4-1: Self-Monitoring", "다른 행동이 필요하다고 느끼면"),
+    "holdout_obj_l5_minimalism":       (r"### Section 5-1: Consumer Minimalism", "물건을 많이 쌓아두는 걸 피한다"),
+    "holdout_obj_l6_conscientiousness": (r"### Section 6-3: Conscientiousness", "효율적인"),
+}
+
+
 # ── V1 합성 자극 (구버전 30개 · 호환용) ───────────────────────────────────
 # Slice 2.6 PoC → V1 자극 30개 확장 시도에서 만든 합성 풀.
 # scratch.holdout_* 에 LLM 생성 답변을 저장하므로 진짜 hold-out 이 아님.
@@ -307,18 +407,25 @@ V3_DIVERSITY_STIMULI: list[Question] = [
 def v1_questions() -> list[Question]:
     """V1 평가용 자극.
 
-    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'holdout'):
-    - 'holdout'   : V1_HOLDOUT_STIMULI 만 — 진짜 hold-out (인터뷰 답변 ground truth).
-                    package 에이전트(jeongoheo 6명)용 권장.
-    - 'synthetic' : V1_SYNTHETIC_STIMULI 만 — LLM 합성 답변. Twin mock 30 호환용.
-    - 'both'      : 두 셋 합집합 — 마이그레이션 기간 비교용.
+    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'default' = 인터뷰 6 + 객관식 6 = 12):
+    - 'default' (기본) : V1_HOLDOUT_STIMULI(인터뷰 6) + V1_OBJECTIVE_STIMULI(객관식 6).
+                        package 에이전트 진짜 hold-out + 척도 매칭의 균형.
+    - 'interview_only' : 인터뷰 6개만 — 자유서술 위주.
+    - 'objective_only' : 객관식 6개만 — 짧은 척도 매칭 위주.
+    - 'synthetic'      : V1_SYNTHETIC_STIMULI 만 — LLM 합성 답변(Twin mock 호환).
+    - 'all'            : 모두 합집합 (인터뷰+객관식+합성).
     """
-    mode = os.getenv("EVAL_V1_MODE", "holdout").lower()
+    mode = os.getenv("EVAL_V1_MODE", "default").lower()
     if mode == "synthetic":
         return list(V1_SYNTHETIC_STIMULI)
-    if mode == "both":
-        return [*V1_HOLDOUT_STIMULI, *V1_SYNTHETIC_STIMULI]
-    return list(V1_HOLDOUT_STIMULI)
+    if mode == "interview_only":
+        return list(V1_HOLDOUT_STIMULI)
+    if mode == "objective_only":
+        return list(V1_OBJECTIVE_STIMULI)
+    if mode == "all":
+        return [*V1_HOLDOUT_STIMULI, *V1_OBJECTIVE_STIMULI, *V1_SYNTHETIC_STIMULI]
+    # default
+    return [*V1_HOLDOUT_STIMULI, *V1_OBJECTIVE_STIMULI]
 
 
 def v3_questions() -> list[Question]:
