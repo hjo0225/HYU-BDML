@@ -138,14 +138,25 @@ _SCALE_9_CON = [
 ]
 
 V1_OBJECTIVE_STIMULI: list[Question] = [
+    # L1 경제 — Tightwad-Spendthrift 두 면 (지출 절제 어려움 / 지출 자체 불안)
     Question(
-        qid="obj_l1_tightwad",
+        qid="obj_l1_tightwad_spend",
         question_ko=_obj_q(
             "어떤 사람들은 지출을 절제하기 어려워합니다. 옷·외식·여행 같은 데 안 쓰는 게 더 나은 상황에서도 종종 돈을 씁니다. 이 설명이 본인에게 얼마나 잘 맞나요? (즉, 지출을 절제하기 어렵나요?)",
             _SCALE_5_FREQ,
         ),
-        scratch_key="holdout_obj_l1_tightwad",
+        scratch_key="holdout_obj_l1_tightwad_spend",
     ),
+    Question(
+        qid="obj_l1_tightwad_save",
+        question_ko=_obj_q(
+            "어떤 사람들은 돈 쓰는 것 자체를 어려워합니다. 돈 쓰는 게 불안해서, 써야 할 곳에도 종종 쓰지 못합니다. 이 설명이 본인에게 얼마나 잘 맞나요? (즉, 돈 쓰는 게 어려운가요?)",
+            _SCALE_5_FREQ,
+        ),
+        scratch_key="holdout_obj_l1_tightwad_save",
+    ),
+
+    # L2 의사결정 — Maximization + Need for Cognition (다른 척도, lens 내 다양성)
     Question(
         qid="obj_l2_maximization",
         question_ko=_obj_q(
@@ -155,6 +166,16 @@ V1_OBJECTIVE_STIMULI: list[Question] = [
         scratch_key="holdout_obj_l2_maximization",
     ),
     Question(
+        qid="obj_l2_nfc",
+        question_ko=_obj_q(
+            "단순한 문제보다 복잡한 문제를 더 좋아한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l2_nfc",
+    ),
+
+    # L3 동기 — Regulatory Focus + Need for Uniqueness
+    Question(
         qid="obj_l3_regulatory_focus",
         question_ko=_obj_q(
             "다른 사람의 지시 없이 일하는 걸 더 좋아한다.",
@@ -162,6 +183,16 @@ V1_OBJECTIVE_STIMULI: list[Question] = [
         ),
         scratch_key="holdout_obj_l3_regulatory_focus",
     ),
+    Question(
+        qid="obj_l3_uniqueness",
+        question_ko=_obj_q(
+            "복제할 수 없는 나만의 이미지를 만들기 위해 소유물들을 자주 조합해서 쓴다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l3_uniqueness",
+    ),
+
+    # L4 사회 — Self-Monitoring + Individualism/Collectivism
     Question(
         qid="obj_l4_self_monitoring",
         question_ko=_obj_q(
@@ -171,6 +202,16 @@ V1_OBJECTIVE_STIMULI: list[Question] = [
         scratch_key="holdout_obj_l4_self_monitoring",
     ),
     Question(
+        qid="obj_l4_individualism",
+        question_ko=_obj_q(
+            "다른 사람에게 의지하기보다 나 자신에게 의지하는 게 더 좋다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l4_individualism",
+    ),
+
+    # L5 가치 — Consumer Minimalism + Green Values
+    Question(
         qid="obj_l5_minimalism",
         question_ko=_obj_q(
             "물건을 많이 쌓아두는 걸 피한다.",
@@ -179,12 +220,30 @@ V1_OBJECTIVE_STIMULI: list[Question] = [
         scratch_key="holdout_obj_l5_minimalism",
     ),
     Question(
-        qid="obj_l6_conscientiousness",
+        qid="obj_l5_green",
+        question_ko=_obj_q(
+            "내가 쓰는 제품이 환경에 해를 끼치지 않는 게 내게 중요하다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l5_green",
+    ),
+
+    # L6 시간/성실성 — Conscientiousness 두 형용사 (Efficient + Practical)
+    Question(
+        qid="obj_l6_efficient",
         question_ko=_obj_q(
             "다음 단어가 본인을 얼마나 정확하게 묘사하는지 답해 주세요: 효율적인 (Efficient)",
             _SCALE_9_CON,
         ),
-        scratch_key="holdout_obj_l6_conscientiousness",
+        scratch_key="holdout_obj_l6_efficient",
+    ),
+    Question(
+        qid="obj_l6_practical",
+        question_ko=_obj_q(
+            "다음 단어가 본인을 얼마나 정확하게 묘사하는지 답해 주세요: 실용적인 (Practical)",
+            _SCALE_9_CON,
+        ),
+        scratch_key="holdout_obj_l6_practical",
     ),
 ]
 
@@ -192,12 +251,24 @@ V1_OBJECTIVE_STIMULI: list[Question] = [
 # rebuild_holdouts_from_interview.py 가 사용. 진술문 키워드를 포함한 라인을
 # 찾아 다음 'Answer:' 라인까지의 Q 블록을 ground truth 로 추출.
 HOLDOUT_OBJECTIVE_MAPPING: dict[str, tuple[str, str]] = {
-    "holdout_obj_l1_tightwad":         (r"### Section 1-4: Tightwad",       "지출을 절제하기 어렵나요"),
+    # L1 (2)
+    "holdout_obj_l1_tightwad_spend":    (r"### Section 1-4: Tightwad",       "지출을 절제하기 어렵나요"),
+    "holdout_obj_l1_tightwad_save":     (r"### Section 1-4: Tightwad",       "돈 쓰는 게 어려운가요"),
+    # L2 (2)
     "holdout_obj_l2_maximization":     (r"### Section 2-1: Maximization",   "가장 높은 기준을 적용"),
+    "holdout_obj_l2_nfc":              (r"### Section 2-3: Need for Cognition", "단순한 문제보다 복잡한 문제"),
+    # L3 (2)
     "holdout_obj_l3_regulatory_focus": (r"### Section 3-1: Regulatory",     "지시 없이 일하는 걸 더 좋아"),
+    "holdout_obj_l3_uniqueness":       (r"### Section 3-3: Need for Uniqueness", "복제할 수 없는 나만의 이미지"),
+    # L4 (2)
     "holdout_obj_l4_self_monitoring":  (r"### Section 4-1: Self-Monitoring", "다른 행동이 필요하다고 느끼면"),
+    "holdout_obj_l4_individualism":    (r"### Section 4-2: Individualism",  "다른 사람에게 의지하기보다"),
+    # L5 (2)
     "holdout_obj_l5_minimalism":       (r"### Section 5-1: Consumer Minimalism", "물건을 많이 쌓아두는 걸 피한다"),
-    "holdout_obj_l6_conscientiousness": (r"### Section 6-3: Conscientiousness", "효율적인"),
+    "holdout_obj_l5_green":            (r"### Section 5-2: Green Values",   "내가 쓰는 제품이 환경에 해를 끼치지 않는 게 내게 중요"),
+    # L6 (2)
+    "holdout_obj_l6_efficient":        (r"### Section 6-3: Conscientiousness", "효율적인"),
+    "holdout_obj_l6_practical":        (r"### Section 6-3: Conscientiousness", "실용적인"),
 }
 
 
@@ -407,25 +478,26 @@ V3_DIVERSITY_STIMULI: list[Question] = [
 def v1_questions() -> list[Question]:
     """V1 평가용 자극.
 
-    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'default' = 인터뷰 6 + 객관식 6 = 12):
-    - 'default' (기본) : V1_HOLDOUT_STIMULI(인터뷰 6) + V1_OBJECTIVE_STIMULI(객관식 6).
-                        package 에이전트 진짜 hold-out + 척도 매칭의 균형.
-    - 'interview_only' : 인터뷰 6개만 — 자유서술 위주.
-    - 'objective_only' : 객관식 6개만 — 짧은 척도 매칭 위주.
+    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'default' = 객관식 12 = 6-Lens × 2):
+    - 'default' (기본) : V1_OBJECTIVE_STIMULI 12개 — 6-Lens 각 2개의 척도 점수
+                        매칭. 자유서술 표현양식 노이즈가 적어 sync 가 안정.
+    - 'interview_only' : V1_HOLDOUT_STIMULI 인터뷰 6개만 — 자유서술.
+    - 'with_interview' : 객관식 12 + 인터뷰 6 = 18 — 더 풍부하지만 인터뷰
+                        cosine 의 표현양식 노이즈가 포함됨.
     - 'synthetic'      : V1_SYNTHETIC_STIMULI 만 — LLM 합성 답변(Twin mock 호환).
-    - 'all'            : 모두 합집합 (인터뷰+객관식+합성).
+    - 'all'            : 모두 합집합 (객관식+인터뷰+합성).
     """
     mode = os.getenv("EVAL_V1_MODE", "default").lower()
     if mode == "synthetic":
         return list(V1_SYNTHETIC_STIMULI)
     if mode == "interview_only":
         return list(V1_HOLDOUT_STIMULI)
-    if mode == "objective_only":
-        return list(V1_OBJECTIVE_STIMULI)
+    if mode == "with_interview":
+        return [*V1_OBJECTIVE_STIMULI, *V1_HOLDOUT_STIMULI]
     if mode == "all":
-        return [*V1_HOLDOUT_STIMULI, *V1_OBJECTIVE_STIMULI, *V1_SYNTHETIC_STIMULI]
-    # default
-    return [*V1_HOLDOUT_STIMULI, *V1_OBJECTIVE_STIMULI]
+        return [*V1_OBJECTIVE_STIMULI, *V1_HOLDOUT_STIMULI, *V1_SYNTHETIC_STIMULI]
+    # default — 객관식 12개
+    return list(V1_OBJECTIVE_STIMULI)
 
 
 def v3_questions() -> list[Question]:

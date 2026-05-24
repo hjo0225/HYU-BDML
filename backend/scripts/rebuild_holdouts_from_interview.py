@@ -51,6 +51,32 @@ _EVIDENCE_LINE_RE = re.compile(r"^\s*근거\s*발언:\s*.*$\n?", re.MULTILINE)
 # 객관식 척도 섹션 안 'Answer: ...' 라인 - mask 대상.
 _ANSWER_LINE_RE = re.compile(r"^(\s*)Answer:\s*(.+?)\s*$", re.MULTILINE)
 
+# Conscientiousness 9점 척도 라벨 보간 — anchor 1·5·9 만 명세돼 있어
+# 중간 점수 답 ("7" 등) 은 가까운 anchor 의 라벨로 보강. 다른 lens 자극은
+# 모두 "<점수> - <라벨>" 형식이라 형평성을 위해 L6 도 같은 형식으로 통일.
+_CON_LABEL_BY_RANGE = [
+    (1, 1, "매우 부정확함"),
+    (2, 4, "부정확함"),
+    (5, 5, "정확하지도 부정확하지도 않음"),
+    (6, 8, "정확함"),
+    (9, 9, "매우 정확함"),
+]
+
+def normalize_objective_answer(raw: str) -> str:
+    """ground truth 가 숫자만 ("9") 인 경우 라벨을 보강.
+
+    이미 "9 - 매우 정확함" 같이 라벨이 있으면 그대로. 형식 통일 목적이라
+    채점 편의 제공이 아니라 자극 간 동일 매칭 조건 보장.
+    """
+    a = (raw or "").strip()
+    if "-" in a or not a.isdigit():
+        return a  # 이미 라벨 있음 또는 비숫자
+    n = int(a)
+    for lo, hi, lab in _CON_LABEL_BY_RANGE:
+        if lo <= n <= hi:
+            return f"{a} - {lab}"
+    return a
+
 
 def find_objective_answer(
     persona_text: str, section_re: str, statement_keyword: str
@@ -100,7 +126,8 @@ def mask_objective_answers(
         answer, span = find_objective_answer(persona_text, section_re, kw)
         if answer is None or span is None:
             continue
-        extracted[scratch_key] = answer
+        # 형평성 — 다른 자극과 동일한 "<점수> - <라벨>" 형식으로 통일
+        extracted[scratch_key] = normalize_objective_answer(answer)
         # 들여쓰기 보존을 위해 원본 라인의 leading whitespace 유지
         orig_line = persona_text[span[0]:span[1]]
         m = re.match(r"^(\s*)Answer:", orig_line)
