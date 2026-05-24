@@ -18,9 +18,13 @@ interface LogoProps {
  * Mind-Bridge 브랜드 로고 — 마크 이미지 + 워드마크.
  * 사이드바·랜딩·인증 페이지에서 공용으로 사용한다.
  */
+// 기본 워드마크 스타일 — 인디고→바이올렛 그라데이션. 어두운 배경(login/register)에서는
+// 호출 측에서 text-white 등으로 override.
+const DEFAULT_WORDMARK = 'text-lg bg-gradient-to-br from-ditto-indigo to-ditto-violet bg-clip-text text-transparent';
+
 export function Logo({
   height = 24,
-  wordmarkClassName = 'text-lg text-ditto-indigo',
+  wordmarkClassName = DEFAULT_WORDMARK,
   className = '',
 }: LogoProps) {
   const width = Math.round((LOGO_W / LOGO_H) * height);

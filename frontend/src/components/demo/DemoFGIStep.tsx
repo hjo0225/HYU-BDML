@@ -277,6 +277,42 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             <div ref={bottomRef} />
           </div>
 
+          {/* 개입 패널 — 채팅 박스 바로 아래 인라인. 팝업 대신 같은 Card 안에 두어
+              위쪽 대화를 자유롭게 스크롤하며 개입 여부를 결정할 수 있게 한다.
+              (팀 피드백 2026-05-23 — 빠른 토론 + 팝업 조합 때문에 내용 재확인 불가 문제 해소) */}
+          {phase === 'running' && (interveneAsking || interveneActive) && (
+            <div className="mb-3 rounded-xl border border-ditto-indigo/40 bg-ditto-indigo-light/40 p-4">
+              {interveneAsking ? (
+                <>
+                  <h4 className="mb-1 text-sm font-bold text-text-primary">✍️ 라운드가 끝났어요</h4>
+                  <p className="mb-3 text-sm text-text-secondary">
+                    위 대화를 천천히 읽어보시고 개입 여부를 결정하세요. 선택하실 때까지 회의는 기다립니다.
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={declineIntervention}
+                      className="rounded-lg px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-surface hover:text-text-primary"
+                    >
+                      아니요, 계속
+                    </button>
+                    <Button size="sm" onClick={() => { setInterveneAsking(false); setInterveneActive(true); }}>
+                      네, 개입할게요
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h4 className="mb-2 text-sm font-bold text-text-primary">✍️ 개입 발언 입력</h4>
+                  <FGIInterventionInput
+                    active={interveneActive}
+                    onSubmit={submitIntervention}
+                    onYield={declineIntervention}
+                  />
+                </>
+              )}
+            </div>
+          )}
+
           {phase === 'done' && (
             <p className="text-sm text-success">✓ 회의가 종료되었습니다. 다음 단계에서 인사이트 보고서를 확인하세요.</p>
           )}
@@ -284,46 +320,6 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       )}
 
       {error && <p className="text-sm text-error">{error}</p>}
-
-      {/* 개입 여부 선택 — 주변을 어둡게 덮는 백드롭 모달. 선택할 때까지 회의는 대기한다. */}
-      {phase === 'running' && (interveneAsking || interveneActive) && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl">
-            {interveneAsking ? (
-              <>
-                <h4 className="mb-1 text-base font-bold text-text-primary">라운드가 끝났어요</h4>
-                <p className="mb-4 text-sm text-text-secondary">
-                  지금 토론에 직접 개입하시겠어요? 선택하실 때까지 회의는 기다립니다.
-                </p>
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    onClick={declineIntervention}
-                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg hover:text-text-primary"
-                  >
-                    아니요, 계속
-                  </button>
-                  <Button size="sm" onClick={() => { setInterveneAsking(false); setInterveneActive(true); }}>
-                    네, 개입할게요
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h4 className="mb-2 text-base font-bold text-text-primary">개입 발언 입력</h4>
-                <FGIInterventionInput
-                  active={interveneActive}
-                  onSubmit={submitIntervention}
-                  onYield={declineIntervention}
-                />
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

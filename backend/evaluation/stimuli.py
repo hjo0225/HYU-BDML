@@ -12,11 +12,22 @@
 scratch_key 매핑은 seed_service 가 record.qualitative 의 평면 키 그대로
 agent.scratch 에 저장하므로 일치한다.
 
-Phase 5 에서 실데이터(Twin-2K-500 raw 234답변) 적재 시 hold-out 자극 풀을
-더 늘릴 수 있다. (EVAL_SPEC.md §1, §5)
+V1 자극 셋은 두 갈래:
+- **V1_HOLDOUT_STIMULI (기본):** 진짜 hold-out — 패키지 인터뷰 답변을 ground
+  truth 로 쓰고 페르소나 프롬프트에서 그 답변을 제거. Park(2024) 인터뷰
+  가이드 Part A·B 6개. package 에이전트(jeongoheo 6명)에 적용.
+- **V1_SYNTHETIC_STIMULI (옛 30개):** LLM 으로 합성한 답변과 같은 LLM의
+  재답변을 비교 — 사실상 "모델 일관성" 측정. Twin mock 30명에는 유효하지만
+  package 에이전트에는 진짜 hold-out 이 아님. 호환성을 위해 보존.
+
+기본 진입점은 v1_questions() — 환경변수 EVAL_V1_MODE 로 'holdout'(기본) /
+'synthetic' / 'both' 선택. all_stimuli() 는 LLM 호출 1회로 V1+V3 모두 채점하기
+위한 합집합이라 의미상 V3 자극만 포함하면 충분(V1 은 별도 generate).
 """
+
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -35,10 +46,239 @@ class Question:
     scratch_key: str | None
 
 
-# ── V1 hold-out 자극 ─────────────────────────────────────────────────────
-# 페르소나 프롬프트에 들어가지 않는 정성 답변. agent.scratch.holdout_* 와
-# 매핑되며 mock 생성기 / 실데이터 적재기가 모두 채워준다.
+# ── V1 진짜 hold-out 자극 (인터뷰 Part A·B 기반) ─────────────────────────
+# 패키지 6명 인터뷰의 공통 Q6/Q7/Q8/Q11/Q12/Q13 답변이 ground truth.
+# DEMO_INTERVIEW (frontend/src/lib/demoScenario.ts) 와 매칭되는 6개 — Part A
+# 소비 인생사 3개 + Part B 자기 인식 3개. 포토부스 도메인(Part C·D)은 일반
+# V1 으로는 도메인 편향 커서 제외.
+#
+# 평가 시 페르소나 프롬프트에서 인터뷰 섹션을 제거(rebuild_holdouts_from_interview)
+# 한 상태로 동일 질문을 던지므로 "안 보고 재현" 가능.
+#
+# scratch_key 는 holdout_iv_<part><n> 형식 — 백필 스크립트가 채움.
 V1_HOLDOUT_STIMULI: list[Question] = [
+    Question(
+        qid="iv_a1_regret_satisfy",
+        question_ko="최근 1년 사이에 본인이 한 구매 중 가장 후회한 것과 가장 만족한 것을 각각 떠올려서, 무엇을 샀고 왜 그랬는지 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_a1",
+    ),
+    Question(
+        qid="iv_a2_spend_categories",
+        question_ko="본인의 소비 중 '돈 쓰기 가장 아까운 영역' 과 '돈 안 아까운 영역' 을 각각 떠올려서, 그게 왜 그렇게 갈리는지 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_a2",
+    ),
+    Question(
+        qid="iv_a3_buy_priority",
+        question_ko="물건이나 서비스를 살 때 '친환경 · 가격 · 품질 · 브랜드' 중 본인에게 가장 중요한 요소는 무엇이고, 그 이유는 무엇인지 4~6문장으로 답해 주세요.",
+        scratch_key="holdout_iv_a3",
+    ),
+    Question(
+        qid="iv_b1_decision_style",
+        question_ko="본인이 결정을 내릴 때 어떤 스타일이라고 생각하세요? '빠르게 직감' 인지 '충분히 비교' 인지, 본인의 평소 모습을 사례와 함께 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_b1",
+    ),
+    Question(
+        qid="iv_b2_influence_source",
+        question_ko="본인이 무언가를 결정할 때 가장 영향을 많이 받는 사람이나 정보원은 누구·무엇이고, 왜 그 사람·매체의 영향을 받는지 4~6문장으로 답해 주세요.",
+        scratch_key="holdout_iv_b2",
+    ),
+    Question(
+        qid="iv_b3_waiting_tolerance",
+        question_ko="본인은 기다림에 강한 편인가요, 약한 편인가요? 예를 들어 할인 기다리기·배송 기다리기 같은 상황에서 본인이 보이는 패턴을 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_iv_b3",
+    ),
+]
+
+# 패키지 인터뷰 Q번호 ↔ V1 자극 매핑 — rebuild_holdouts_from_interview 가 사용.
+# 6명 모두 같은 Q5~Q29 답변을 가짐 (Park 2024 Expert Reflection 인터뷰 가이드).
+HOLDOUT_INTERVIEW_MAPPING: dict[str, str] = {
+    "holdout_iv_a1": "6",   # 후회/만족 구매
+    "holdout_iv_a2": "7",   # 돈 아까운/안 아까운 영역
+    "holdout_iv_a3": "8",   # 친환경·가격·품질·브랜드
+    "holdout_iv_b1": "11",  # 결정 스타일
+    "holdout_iv_b2": "12",  # 영향 받는 사람·정보원
+    "holdout_iv_b3": "13",  # 기다림 강한/약한
+}
+
+
+# ── V1 공통 객관식 hold-out (MindLens 5점/6점/7점/9점 자기서술 척도) ────────
+# 6-Lens 각 1개씩 6개. 답변 형식이 짧은 "<점수> - <라벨>" 이라 cosine 매칭에
+# 인터뷰 자유서술보다 노이즈가 적음. 페르소나에게 같은 진술문을 던지고 동일
+# 점수·라벨로 답하도록 질문 본문에 선택지 명시.
+#
+# Ground truth = 패키지 persona_text 안 해당 척도 섹션의 'Answer:' 라인.
+# 평가 시 그 Answer 라인만 마스킹 (척도 진술문은 노출돼도 OK — 그게 자극이므로).
+def _obj_q(statement: str, scale_lines: list[str]) -> str:
+    bullets = " / ".join(scale_lines)
+    return (
+        f"다음 진술문에 본인이 얼마나 동의하는지 척도에서 한 점수를 골라 "
+        f"'<점수> - <라벨>' 형식으로 짧게 답해 주세요 (예: '3 - 보통이다').\n\n"
+        f"진술문: \"{statement}\"\n선택지: {bullets}"
+    )
+
+
+_SCALE_5_AGREE = [
+    "1 = 전혀 동의하지 않는다", "2 = 별로 동의하지 않는다", "3 = 보통이다",
+    "4 = 어느 정도 동의한다", "5 = 강하게 동의한다",
+]
+_SCALE_5_FREQ = [
+    "1 = 전혀", "2 = 거의", "3 = 가끔", "4 = 자주", "5 = 항상",
+]
+_SCALE_6_SM = [
+    "1 = 명백히 거짓", "2 = 일반적으로 거짓", "3 = 어느 정도 거짓",
+    "4 = 어느 정도 사실", "5 = 일반적으로 사실", "6 = 명백히 사실",
+]
+_SCALE_7_RF = [
+    "1 = 전혀 동의하지 않는다", "2 = 동의하지 않는다", "3 = 약간 동의하지 않는다",
+    "4 = 보통이다", "5 = 약간 동의한다", "6 = 동의한다", "7 = 강하게 동의한다",
+]
+_SCALE_9_CON = [
+    "1 = 매우 부정확함", "5 = 정확하지도 부정확하지도 않음", "9 = 매우 정확함",
+    "(척도 범위: 1 ~ 9)",
+]
+
+V1_OBJECTIVE_STIMULI: list[Question] = [
+    # L1 경제 — Tightwad-Spendthrift 두 면 (지출 절제 어려움 / 지출 자체 불안)
+    Question(
+        qid="obj_l1_tightwad_spend",
+        question_ko=_obj_q(
+            "어떤 사람들은 지출을 절제하기 어려워합니다. 옷·외식·여행 같은 데 안 쓰는 게 더 나은 상황에서도 종종 돈을 씁니다. 이 설명이 본인에게 얼마나 잘 맞나요? (즉, 지출을 절제하기 어렵나요?)",
+            _SCALE_5_FREQ,
+        ),
+        scratch_key="holdout_obj_l1_tightwad_spend",
+    ),
+    Question(
+        qid="obj_l1_tightwad_save",
+        question_ko=_obj_q(
+            "어떤 사람들은 돈 쓰는 것 자체를 어려워합니다. 돈 쓰는 게 불안해서, 써야 할 곳에도 종종 쓰지 못합니다. 이 설명이 본인에게 얼마나 잘 맞나요? (즉, 돈 쓰는 게 어려운가요?)",
+            _SCALE_5_FREQ,
+        ),
+        scratch_key="holdout_obj_l1_tightwad_save",
+    ),
+
+    # L2 의사결정 — Maximization + Need for Cognition (다른 척도, lens 내 다양성)
+    Question(
+        qid="obj_l2_maximization",
+        question_ko=_obj_q(
+            "무엇을 하든 나는 스스로에게 가장 높은 기준을 적용한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l2_maximization",
+    ),
+    Question(
+        qid="obj_l2_nfc",
+        question_ko=_obj_q(
+            "단순한 문제보다 복잡한 문제를 더 좋아한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l2_nfc",
+    ),
+
+    # L3 동기 — Regulatory Focus + Need for Uniqueness
+    Question(
+        qid="obj_l3_regulatory_focus",
+        question_ko=_obj_q(
+            "다른 사람의 지시 없이 일하는 걸 더 좋아한다.",
+            _SCALE_7_RF,
+        ),
+        scratch_key="holdout_obj_l3_regulatory_focus",
+    ),
+    Question(
+        qid="obj_l3_uniqueness",
+        question_ko=_obj_q(
+            "복제할 수 없는 나만의 이미지를 만들기 위해 소유물들을 자주 조합해서 쓴다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l3_uniqueness",
+    ),
+
+    # L4 사회 — Self-Monitoring + Individualism/Collectivism
+    Question(
+        qid="obj_l4_self_monitoring",
+        question_ko=_obj_q(
+            "사회적 상황에서, 다른 행동이 필요하다고 느끼면 내 행동을 바꿀 수 있다.",
+            _SCALE_6_SM,
+        ),
+        scratch_key="holdout_obj_l4_self_monitoring",
+    ),
+    Question(
+        qid="obj_l4_individualism",
+        question_ko=_obj_q(
+            "다른 사람에게 의지하기보다 나 자신에게 의지하는 게 더 좋다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l4_individualism",
+    ),
+
+    # L5 가치 — Consumer Minimalism + Green Values
+    Question(
+        qid="obj_l5_minimalism",
+        question_ko=_obj_q(
+            "물건을 많이 쌓아두는 걸 피한다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l5_minimalism",
+    ),
+    Question(
+        qid="obj_l5_green",
+        question_ko=_obj_q(
+            "내가 쓰는 제품이 환경에 해를 끼치지 않는 게 내게 중요하다.",
+            _SCALE_5_AGREE,
+        ),
+        scratch_key="holdout_obj_l5_green",
+    ),
+
+    # L6 시간/성실성 — Conscientiousness 두 형용사 (Efficient + Practical)
+    Question(
+        qid="obj_l6_efficient",
+        question_ko=_obj_q(
+            "다음 단어가 본인을 얼마나 정확하게 묘사하는지 답해 주세요: 효율적인 (Efficient)",
+            _SCALE_9_CON,
+        ),
+        scratch_key="holdout_obj_l6_efficient",
+    ),
+    Question(
+        qid="obj_l6_practical",
+        question_ko=_obj_q(
+            "다음 단어가 본인을 얼마나 정확하게 묘사하는지 답해 주세요: 실용적인 (Practical)",
+            _SCALE_9_CON,
+        ),
+        scratch_key="holdout_obj_l6_practical",
+    ),
+]
+
+# 객관식 ground truth 추출 매핑 — (섹션 헤더 정규식, 진술문 부분 매칭 키워드).
+# rebuild_holdouts_from_interview.py 가 사용. 진술문 키워드를 포함한 라인을
+# 찾아 다음 'Answer:' 라인까지의 Q 블록을 ground truth 로 추출.
+HOLDOUT_OBJECTIVE_MAPPING: dict[str, tuple[str, str]] = {
+    # L1 (2)
+    "holdout_obj_l1_tightwad_spend":    (r"### Section 1-4: Tightwad",       "지출을 절제하기 어렵나요"),
+    "holdout_obj_l1_tightwad_save":     (r"### Section 1-4: Tightwad",       "돈 쓰는 게 어려운가요"),
+    # L2 (2)
+    "holdout_obj_l2_maximization":     (r"### Section 2-1: Maximization",   "가장 높은 기준을 적용"),
+    "holdout_obj_l2_nfc":              (r"### Section 2-3: Need for Cognition", "단순한 문제보다 복잡한 문제"),
+    # L3 (2)
+    "holdout_obj_l3_regulatory_focus": (r"### Section 3-1: Regulatory",     "지시 없이 일하는 걸 더 좋아"),
+    "holdout_obj_l3_uniqueness":       (r"### Section 3-3: Need for Uniqueness", "복제할 수 없는 나만의 이미지"),
+    # L4 (2)
+    "holdout_obj_l4_self_monitoring":  (r"### Section 4-1: Self-Monitoring", "다른 행동이 필요하다고 느끼면"),
+    "holdout_obj_l4_individualism":    (r"### Section 4-2: Individualism",  "다른 사람에게 의지하기보다"),
+    # L5 (2)
+    "holdout_obj_l5_minimalism":       (r"### Section 5-1: Consumer Minimalism", "물건을 많이 쌓아두는 걸 피한다"),
+    "holdout_obj_l5_green":            (r"### Section 5-2: Green Values",   "내가 쓰는 제품이 환경에 해를 끼치지 않는 게 내게 중요"),
+    # L6 (2)
+    "holdout_obj_l6_efficient":        (r"### Section 6-3: Conscientiousness", "효율적인"),
+    "holdout_obj_l6_practical":        (r"### Section 6-3: Conscientiousness", "실용적인"),
+}
+
+
+# ── V1 합성 자극 (구버전 30개 · 호환용) ───────────────────────────────────
+# Slice 2.6 PoC → V1 자극 30개 확장 시도에서 만든 합성 풀.
+# scratch.holdout_* 에 LLM 생성 답변을 저장하므로 진짜 hold-out 이 아님.
+# Twin mock 30명에는 archetype 일관성 측정용으로 의미 있지만, package 6명에는
+# 인터뷰 답변(V1_HOLDOUT_STIMULI) 을 쓰는 게 정확.
+V1_SYNTHETIC_STIMULI: list[Question] = [
+    # 기존 3개 (Slice 2.6 PoC) — qid·scratch_key 변경 금지(이미 시드된 데이터)
     Question(
         qid="recent_purchase",
         question_ko=(
@@ -62,6 +302,153 @@ V1_HOLDOUT_STIMULI: list[Question] = [
             "본인을 잘 설명하는지 4~6문장으로 풀어주세요."
         ),
         scratch_key="holdout_lifestyle",
+    ),
+
+    # L1 경제 — 가격 민감도·예산·저축·할인·프리미엄 (5)
+    Question(
+        qid="l1_price_pain",
+        question_ko="지난 한 달 동안 '이건 좀 비싸다'고 느낀 구매가 있었나요? 어떤 상황이었고 결국 어떻게 결정했는지 4~6문장으로.",
+        scratch_key="holdout_l1_price_pain",
+    ),
+    Question(
+        qid="l1_budget_top",
+        question_ko="본인의 한 달 지출 중 가장 큰 비중을 차지하는 항목 두 가지와, 그게 그 위치에 있는 이유를 4~6문장으로 설명해 주세요.",
+        scratch_key="holdout_l1_budget_top",
+    ),
+    Question(
+        qid="l1_saving_rule",
+        question_ko="저축이나 자산 관리에 대해 평소 어떤 원칙을 가지고 있는지, 그 원칙이 어떤 경험에서 비롯됐는지 4~6문장으로.",
+        scratch_key="holdout_l1_saving_rule",
+    ),
+    Question(
+        qid="l1_discount_react",
+        question_ko="할인이나 프로모션을 봤을 때 본인이 보이는 전형적인 반응은 어떤가요? 자제하는지 자주 흔들리는지 구체적인 예와 함께 4~6문장.",
+        scratch_key="holdout_l1_discount_react",
+    ),
+    Question(
+        qid="l1_premium_zone",
+        question_ko="본인이 '돈을 더 내고서라도 이건 사고 싶다'고 생각하는 종류의 물건이나 서비스가 있나요? 그 이유까지 4~6문장.",
+        scratch_key="holdout_l1_premium_zone",
+    ),
+
+    # L2 의사결정 — 속도·정보수집·후회·비교·리스크 (5)
+    Question(
+        qid="l2_decision_speed",
+        question_ko="큰 구매 결정을 내릴 때 본인은 빨리 결정하는 편인가요, 오래 고민하는 편인가요? 최근 사례 하나를 들어 4~6문장으로.",
+        scratch_key="holdout_l2_decision_speed",
+    ),
+    Question(
+        qid="l2_info_threshold",
+        question_ko="새 제품을 살 때 어디까지 정보를 모으고 결정하는지 — 본인의 '충분히 알아봤다'라는 기준을 4~6문장으로.",
+        scratch_key="holdout_l2_info_threshold",
+    ),
+    Question(
+        qid="l2_regret_handle",
+        question_ko="구매 후 후회한 경험이 있다면 어떻게 다뤘는지(반품·그냥 씀·다음에 반영) 4~6문장.",
+        scratch_key="holdout_l2_regret_handle",
+    ),
+    Question(
+        qid="l2_compare_axis",
+        question_ko="두 가지 옵션 중 하나를 골라야 할 때 주로 쓰는 비교 기준은 무엇이고, 그게 본인에게 중요한 이유 4~6문장.",
+        scratch_key="holdout_l2_compare_axis",
+    ),
+    Question(
+        qid="l2_new_brand_try",
+        question_ko="검증되지 않은 새 브랜드나 제품을 시도해보는 데 본인은 적극적인 편인가요, 신중한 편인가요? 구체 사례 4~6문장.",
+        scratch_key="holdout_l2_new_brand_try",
+    ),
+
+    # L3 신뢰 — 리뷰·추천·광고·브랜드·전문가 (5)
+    Question(
+        qid="l3_review_trust",
+        question_ko="온라인 리뷰를 보면 어떤 리뷰가 본인에게 가장 신뢰가 가나요? 무엇 때문에 그렇게 느끼는지 4~6문장.",
+        scratch_key="holdout_l3_review_trust",
+    ),
+    Question(
+        qid="l3_recommender",
+        question_ko="주변 사람의 추천을 얼마나 신뢰하는 편이고, 그 사람이 어떤 사람일 때 더 신뢰가 가는지 4~6문장.",
+        scratch_key="holdout_l3_recommender",
+    ),
+    Question(
+        qid="l3_ad_effect",
+        question_ko="광고를 보고 실제로 무언가를 구매한 적이 최근에 있었나요? 어떤 종류의 광고가 본인에게 효과가 있는지 4~6문장.",
+        scratch_key="holdout_l3_ad_effect",
+    ),
+    Question(
+        qid="l3_brand_loyalty",
+        question_ko="본인이 오래 쓰고 있는 브랜드가 있다면 어떤 것이고, 계속 쓰는 이유가 무엇인지 4~6문장.",
+        scratch_key="holdout_l3_brand_loyalty",
+    ),
+    Question(
+        qid="l3_expert_opinion",
+        question_ko="전문가나 인플루언서의 의견을 본인은 얼마나 참고하는지, 어떤 분야에서 더 의지하는지 4~6문장.",
+        scratch_key="holdout_l3_expert_opinion",
+    ),
+
+    # L4 사회 — 그룹·선물·시선·관계·갈등 (5)
+    Question(
+        qid="l4_group_role",
+        question_ko="친구나 가족과 함께 무언가를 결정해야 할 때 본인은 어떤 역할을 주로 맡는지(주도·조율·따름) 사례와 함께 4~6문장.",
+        scratch_key="holdout_l4_group_role",
+    ),
+    Question(
+        qid="l4_gift_choice",
+        question_ko="선물을 고를 때 본인은 무엇을 가장 중요하게 생각하나요? 최근 선물 사례와 함께 4~6문장.",
+        scratch_key="holdout_l4_gift_choice",
+    ),
+    Question(
+        qid="l4_social_image",
+        question_ko="본인의 소비가 다른 사람의 시선에 얼마나 영향을 받는지 솔직하게 4~6문장으로 답해 주세요.",
+        scratch_key="holdout_l4_social_image",
+    ),
+    Question(
+        qid="l4_shared_activity",
+        question_ko="친구·가족과 함께 시간을 보낼 때 본인이 즐기는 활동 한 가지와 그게 본인에게 어떤 의미인지 4~6문장.",
+        scratch_key="holdout_l4_shared_activity",
+    ),
+    Question(
+        qid="l4_conflict_resolve",
+        question_ko="주변 사람과 소비 가치관이 부딪힐 때(예: 같이 사는 사람과 지출 우선순위가 다를 때) 본인은 어떻게 풀어가는지 4~6문장.",
+        scratch_key="holdout_l4_conflict_resolve",
+    ),
+
+    # L5 정체성 — 변화·자부심·길티플레저·이상 (4)
+    Question(
+        qid="l5_self_change",
+        question_ko="최근 1~2년 사이에 본인의 가치관이나 라이프스타일에서 달라진 점이 있다면 무엇이고, 왜 변했는지 4~6문장.",
+        scratch_key="holdout_l5_self_change",
+    ),
+    Question(
+        qid="l5_proud_choice",
+        question_ko="본인의 소비 선택 중 '잘 했다'고 가장 뿌듯하게 느낀 결정 하나를 사례와 함께 4~6문장.",
+        scratch_key="holdout_l5_proud_choice",
+    ),
+    Question(
+        qid="l5_guilty_pleasure",
+        question_ko="남들에게 자랑하긴 어렵지만 본인이 즐기는 작은 소비가 있다면 무엇이고 왜 좋아하는지 4~6문장.",
+        scratch_key="holdout_l5_guilty_pleasure",
+    ),
+    Question(
+        qid="l5_ideal_5yr",
+        question_ko="5년 뒤 본인의 모습을 한 장면으로 그린다면 어떤 모습이고, 거기 도달하기 위해 지금 하고 있는 일이 무엇인지 4~6문장.",
+        scratch_key="holdout_l5_ideal_5yr",
+    ),
+
+    # L6 시간 — 현재 vs 미래·기다림·계획 단위 (3)
+    Question(
+        qid="l6_now_vs_future",
+        question_ko="본인은 '지금의 만족'과 '미래의 안정' 중 어느 쪽에 더 비중을 두는지, 그게 본인의 소비에 어떻게 드러나는지 4~6문장.",
+        scratch_key="holdout_l6_now_vs_future",
+    ),
+    Question(
+        qid="l6_wait_pattern",
+        question_ko="할인을 기다려서 사는 편인지, 필요할 때 바로 사는 편인지, 본인의 패턴과 그 이유 4~6문장.",
+        scratch_key="holdout_l6_wait_pattern",
+    ),
+    Question(
+        qid="l6_planning_unit",
+        question_ko="한 달 / 6개월 / 1년 중 본인이 가장 자연스럽게 계획을 세우는 단위는 무엇이고, 왜 그 단위가 본인에게 맞는지 4~6문장.",
+        scratch_key="holdout_l6_planning_unit",
     ),
 ]
 
@@ -89,8 +476,28 @@ V3_DIVERSITY_STIMULI: list[Question] = [
 
 
 def v1_questions() -> list[Question]:
-    """V1 평가용 — hold-out 자극만 (scratch_key 가 있는 항목)."""
-    return list(V1_HOLDOUT_STIMULI)
+    """V1 평가용 자극.
+
+    EVAL_V1_MODE 환경변수로 셋 선택 (기본 'default' = 객관식 12 = 6-Lens × 2):
+    - 'default' (기본) : V1_OBJECTIVE_STIMULI 12개 — 6-Lens 각 2개의 척도 점수
+                        매칭. 자유서술 표현양식 노이즈가 적어 sync 가 안정.
+    - 'interview_only' : V1_HOLDOUT_STIMULI 인터뷰 6개만 — 자유서술.
+    - 'with_interview' : 객관식 12 + 인터뷰 6 = 18 — 더 풍부하지만 인터뷰
+                        cosine 의 표현양식 노이즈가 포함됨.
+    - 'synthetic'      : V1_SYNTHETIC_STIMULI 만 — LLM 합성 답변(Twin mock 호환).
+    - 'all'            : 모두 합집합 (객관식+인터뷰+합성).
+    """
+    mode = os.getenv("EVAL_V1_MODE", "default").lower()
+    if mode == "synthetic":
+        return list(V1_SYNTHETIC_STIMULI)
+    if mode == "interview_only":
+        return list(V1_HOLDOUT_STIMULI)
+    if mode == "with_interview":
+        return [*V1_OBJECTIVE_STIMULI, *V1_HOLDOUT_STIMULI]
+    if mode == "all":
+        return [*V1_OBJECTIVE_STIMULI, *V1_HOLDOUT_STIMULI, *V1_SYNTHETIC_STIMULI]
+    # default — 객관식 12개
+    return list(V1_OBJECTIVE_STIMULI)
 
 
 def v3_questions() -> list[Question]:
@@ -98,6 +505,7 @@ def v3_questions() -> list[Question]:
 
     V3 는 답변 임베딩 평균으로 페르소나 벡터를 만들기 때문에 자극이 많을수록
     노이즈에 강하다. V1 hold-out 답변도 페르소나 차이를 드러내므로 함께 활용.
+    EVAL_V1_MODE 와 무관하게 V1 hold-out 6개 + V3 anchor 3개 = 9개 사용.
     """
     return [*V1_HOLDOUT_STIMULI, *V3_DIVERSITY_STIMULI]
 
