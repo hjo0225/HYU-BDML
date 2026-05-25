@@ -29,6 +29,15 @@ interface UiTurn {
   content: string;
 }
 
+/** 발화자 선정 시점의 라이브 관심도 (plan 0022 · engagement 이벤트). */
+interface EngagementLive {
+  scores: Record<string, number>;   // agent_id → 추정 관심도 0~1
+  nextAgentId?: string;             // 다음 발화 후보
+  phase: 'C' | 'followup' | 'intervention';
+  probeIndex?: number;
+  probeTotal?: number;
+}
+
 export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const nameById: Record<string, string> = Object.fromEntries(
     agents.map((a) => [a.id, a.display_name ?? '참여자']),
@@ -44,6 +53,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const [interveneAsking, setInterveneAsking] = useState(false);  // 개입 여부 먼저 묻는 단계
   const [interveneActive, setInterveneActive] = useState(false);  // '네' 선택 후 채팅 입력 단계
   const [error, setError] = useState<string | null>(null);
+  const [engagement, setEngagement] = useState<EngagementLive | null>(null);
 
   const { setFgiRunning } = useProjectContext();
 
@@ -85,6 +95,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     setPhase('running');
     setError(null);
     setTurns([]);
+    setEngagement(null);
     try {
       const session = await fgiApi.create(token, projectId, {
         topic,
@@ -112,6 +123,16 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
           case 'agent_end':
             setStreaming(null);
             setTurns((p) => [...p, { id: ev.turn_id, role: 'agent', author: nameById[ev.agent_id] ?? '참여자', content: ev.content }]);
+            break;
+          case 'engagement':
+            // 발화자 선정 점수 라이브 갱신 — 우측 패널 막대에 반영.
+            setEngagement({
+              scores: ev.scores,
+              nextAgentId: ev.next_agent_id,
+              phase: ev.phase,
+              probeIndex: ev.probe_index,
+              probeTotal: ev.probe_total,
+            });
             break;
           case 'user_turn_required':
             // 먼저 개입 여부를 묻고(자동 진행 없음), '네'일 때만 채팅 입력을 연다.
@@ -243,6 +264,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       )}
 
       {phase !== 'idle' && (
+        <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
         <Card>
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -317,6 +339,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             <p className="text-sm text-success">✓ 회의가 종료되었습니다. 다음 단계에서 인사이트 보고서를 확인하세요.</p>
           )}
         </Card>
+        <FGILiveEngagementPanel agents={agents} engagement={engagement} running={phase === 'running'} />
+        </div>
       )}
 
       {error && <p className="text-sm text-error">{error}</p>}
@@ -373,6 +397,92 @@ function FGIAgentPanel({ agents }: { agents: Agent[] }) {
           );
         })}
       </div>
+    </Card>
+  );
+}
+
+// 진행 중 우측 패널 — 발화자 선정 점수(추정 관심도)를 막대로 라이브 표시 (plan 0022).
+// engagement 이벤트마다 갱신. Phase A/B(점수 없음) 구간엔 직전 값 유지 + 안내.
+function FGILiveEngagementPanel({
+  agents,
+  engagement,
+  running,
+}: {
+  agents: Agent[];
+  engagement: EngagementLive | null;
+  running: boolean;
+}) {
+  // 관심도 내림차순(점수 없으면 원래 순서 유지)
+  const ranked = [...agents].sort(
+    (a, b) => (engagement?.scores[b.id] ?? -1) - (engagement?.scores[a.id] ?? -1),
+  );
+
+  const contextLabel = (() => {
+    if (!engagement) return running ? '발화자 분석 대기 중…' : '토론 종료';
+    if (engagement.phase === 'C') {
+      const seg = engagement.probeIndex && engagement.probeTotal
+        ? ` · 쟁점 ${engagement.probeIndex}/${engagement.probeTotal}`
+        : '';
+      return `쟁점 토론${seg}`;
+    }
+    return engagement.phase === 'followup' ? '추가 질문 응답' : '개입 응답';
+  })();
+
+  return (
+    <Card className="lg:sticky lg:top-4">
+      <h3 className="flex items-center gap-2 text-sm font-bold text-text-primary">
+        실시간 관심도
+        <span className="rounded-full bg-ditto-violet px-2 py-0.5 text-2xs font-bold text-white">LIVE</span>
+      </h3>
+      <p className="mb-3 mt-0.5 text-2xs text-text-muted">
+        발화권은 소주제 관련성·관심도로 매 턴 동적 배분됩니다. (LLM 추정 관심도)
+      </p>
+      <div className="space-y-2">
+        {ranked.map((a) => {
+          const score = engagement?.scores[a.id];
+          const has = typeof score === 'number';
+          const value = has ? (score as number) : 0;
+          const pct = Math.round(value * 100);
+          const isNext = engagement?.nextAgentId === a.id;
+          return (
+            <div
+              key={a.id}
+              className={`rounded-xl border p-2.5 transition-colors ${
+                isNext ? 'border-ditto-indigo bg-ditto-indigo-light/50' : 'border-border bg-bg'
+              }`}
+            >
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <span className="text-base leading-none">{a.emoji ?? '👤'}</span>
+                <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
+                  {a.display_name ?? '참여자'}
+                </span>
+                {isNext ? (
+                  <span className="rounded-full bg-ditto-indigo px-1.5 py-0.5 text-2xs font-bold text-white">
+                    다음 발화
+                  </span>
+                ) : (
+                  has && (
+                    <span className="text-2xs font-semibold tabular-nums text-text-secondary">
+                      {value.toFixed(2)}
+                    </span>
+                  )
+                )}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/50">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    isNext ? 'bg-ditto-indigo' : 'bg-ditto-violet/70'
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 border-t border-border pt-2 text-2xs font-medium text-text-muted">
+        {contextLabel}
+      </p>
     </Card>
   );
 }
