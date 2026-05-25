@@ -6,7 +6,7 @@ POST  /api/fgi-sessions/{session_id}/intervene  사용자 개입 발언
 GET   /api/fgi-sessions/{session_id}            세션 메타 + 전체 turn (+ minutes_md)
 
 SSE 이벤트(api-spec.md): round_start / moderator / agent_delta / agent_end /
-user_turn_required / round_end / session_end / error
+engagement / user_turn_required / round_end / session_end / error
 """
 from __future__ import annotations
 

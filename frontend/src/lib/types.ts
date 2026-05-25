@@ -287,7 +287,16 @@ export type FGIStreamEvent =
       content: string;
       citations: MemoryCitation[];
       confidence: string;
-      engagement?: Record<string, number>;
+    }
+  | {
+      // 발화자 선정 시점의 참여자별 추정 관심도 라이브 송출 (plan 0022).
+      type: 'engagement';
+      round: number;
+      phase: 'C' | 'followup' | 'intervention';
+      scores: Record<string, number>;  // agent_id → 관심도(interest) 0~1
+      next_agent_id?: string;          // 다음 발화 후보
+      probe_index?: number;            // Phase C 쟁점 진행 (1-based)
+      probe_total?: number;
     }
   | { type: 'user_turn_required'; round: number; deadline_seconds: number; remaining?: number }
   | { type: 'round_end'; round: number; summary: string }

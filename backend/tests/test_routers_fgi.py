@@ -208,3 +208,55 @@ def test_ownership_enforced():
             assert r.status_code == 404, r.text
 
     asyncio.run(run())
+
+
+def test_engagement_events_emitted():
+    """plan 0022 — Phase C 발화자 선정 점수를 engagement 이벤트로 라이브 송출한다.
+
+    mock 기본은 FGI_LLM_ENGAGEMENT=0 이라 점수가 비어 이벤트가 생략된다(기존 계약 유지).
+    여기선 config.USE_LLM_ENGAGEMENT 와 llm_engagement 를 패치해 점수가 있을 때 이벤트가
+    올바른 스키마로 나오는지 검증한다.
+    """
+    from unittest.mock import patch
+
+    from fgi import config as fgi_config
+    from fgi import engagement as fgi_engagement
+
+    async def _fake_engagement(agents_meta, subtopic, last_utterance, *, mock=None):
+        # 참여자마다 구분되는 관심도 → 최상위가 next_agent_id 로 잡혀야 한다.
+        return {a["agent_id"]: {"interest": round(0.9 - 0.2 * i, 2), "reaction": 0.5}
+                for i, a in enumerate(agents_meta)}
+
+    async def run():
+        await _reset_db()
+        token, project_id, agent_ids = await _seed(3)
+        headers = {"Authorization": f"Bearer {token}"}
+        async with _client() as ac:
+            r = await ac.post(
+                f"/api/projects/{project_id}/fgi-sessions",
+                json={"topic": "관심도 송출 테스트", "agent_ids": agent_ids,
+                      "rounds": [{"round": 1, "subtopic": "경험", "goal_question": "최근 경험은?",
+                                  "probes": ["가격이 더 중요한가요, 품질이 더 중요한가요?"]}],
+                      "allow_user_intervention": False},
+                headers=headers,
+            )
+            sid = r.json()["id"]
+            with patch.object(fgi_config, "USE_LLM_ENGAGEMENT", True), \
+                 patch.object(fgi_engagement, "llm_engagement", _fake_engagement):
+                r = await ac.post(f"/api/fgi-sessions/{sid}/run", headers=headers)
+            assert r.status_code == 200, r.text
+            events = [json.loads(line[len("data: "):]) for line in r.text.splitlines()
+                      if line.startswith("data: ")]
+            eng = [e for e in events if e["type"] == "engagement"]
+            assert eng, "engagement 이벤트가 하나도 송출되지 않음"
+            ev = eng[0]
+            assert ev["phase"] in ("C", "followup", "intervention")
+            assert set(ev["scores"]) == set(agent_ids)          # 전원 점수 포함
+            assert all(0.0 <= v <= 1.0 for v in ev["scores"].values())
+            assert ev.get("next_agent_id") in agent_ids
+            # 기존 SSE 계약(첫·끝 이벤트)은 그대로 유지
+            types = [e["type"] for e in events]
+            assert types[0] == "round_start"
+            assert types[-1] == "session_end"
+
+    asyncio.run(run())
