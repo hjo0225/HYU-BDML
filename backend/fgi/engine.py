@@ -8,8 +8,8 @@
   5) Round 사이 사용자 개입 창(30초, Round당 최대 2회)
   6) 세션 종료 → 구조화 인사이트 보고서
 
-SSE 이벤트: round_start / moderator / agent_delta / agent_end / user_turn_required /
-round_end / session_end / error
+SSE 이벤트: round_start / moderator / agent_delta / agent_end / engagement /
+user_turn_required / round_end / session_end / error
 """
 from __future__ import annotations
 
@@ -99,6 +99,32 @@ def _is_pass(text: str) -> bool:
     """에이전트가 '새로 더할 게 없다'며 패스했는지 — 발언으로 치지 않는다 (v0.3.2)."""
     t = text.strip().strip("[]()*").strip().lower()
     return t in ("", "pass", "패스", "[pass]") or t.startswith("[pass]") or len(t) < 2
+
+
+def _engagement_payload(round_no, phase, scores, agents, *, next_agent_id=None,
+                        probe_index=None, probe_total=None):
+    """발화자 선정 점수를 라이브 SSE 이벤트 dict 로 만든다 (plan 0022).
+
+    scores 는 engagement.llm_engagement 결과({id:{interest,reaction}}). interest(0~1)만
+    노출한다. **추가 LLM 호출 없이** 발화자 선정에 이미 쓴 점수를 그대로 흘린다.
+    scores 가 비면(키 없음·LLM engagement off·파싱 실패) None 을 반환해 이벤트를 생략한다 —
+    의미 없는 균일값을 보내지 않고, 기존 SSE 계약(mock 테스트)도 깨지 않기 위함.
+    """
+    if not scores:
+        return None
+    payload = {
+        "type": "engagement",
+        "round": round_no,
+        "phase": phase,
+        "scores": {a.id: round(float(scores.get(a.id, {}).get("interest", 0.5)), 3) for a in agents},
+    }
+    if next_agent_id:
+        payload["next_agent_id"] = next_agent_id
+    if probe_index is not None:
+        payload["probe_index"] = probe_index
+    if probe_total is not None:
+        payload["probe_total"] = probe_total
+    return payload
 
 
 async def _save_turn(db, *, session_id, round_no, order, role, content, agent_id=None, meta=None) -> FGITurn:
@@ -319,7 +345,7 @@ async def run_fgi(
         spoke_in_c: set[str] = set()
         c_total = 0  # Phase C 전체 발화 수 (총상한 적용)
 
-        for seg_q in segments:
+        for seg_idx, seg_q in enumerate(segments):
             if ended_early or _session_over() or c_total >= config.MAX_TIKITAKA_UTTER:
                 break
             ctrl = _CONTROLS.get(session.id, {})
@@ -364,6 +390,11 @@ async def run_fgi(
                 cands.sort(key=lambda a: (seg_count[a.id], -_interest(a)))
                 if not cands:
                     break  # 이 쟁점에 더 말할 사람 없음(전원 발화 상한 도달) → 다음 쟁점으로
+                # 라이브 관심도 송출 (plan 0022) — 발화 전에 '누가 말할 차례인지'를 패널에 반영.
+                eng_ev = _engagement_payload(r, "C", scores, agents, next_agent_id=cands[0].id,
+                                             probe_index=seg_idx + 1, probe_total=len(segments))
+                if eng_ev:
+                    yield eng_ev
                 spoke_this_cycle = False
                 for agent in cands:
                     if seg_utter >= config.PROBE_MAX_UTTER or c_total >= config.MAX_TIKITAKA_UTTER or _session_over():
@@ -420,6 +451,10 @@ async def run_fgi(
                 # 관심도 높은 2명이 응답 (라운드당 1회 한정).
                 fscores = await engagement.llm_engagement(agents_meta, fq, fq, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
                 responders = sorted(agents, key=lambda a: fscores.get(a.id, {}).get("interest", 0.5), reverse=True)[:2]
+                eng_ev = _engagement_payload(r, "followup", fscores, agents,
+                                             next_agent_id=responders[0].id if responders else None)
+                if eng_ev:
+                    yield eng_ev
                 for ag in responders:
                     if _session_over():
                         break
@@ -459,6 +494,10 @@ async def run_fgi(
                 # 개입 질문에 참여자 전원이 우선 응답 (engagement 점수 순)
                 scores = await engagement.llm_engagement(agents_meta, user_msg, user_msg, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
                 ordered = sorted(agents, key=lambda ag: scores.get(ag.id, {}).get("interest", 0.5), reverse=True)
+                eng_ev = _engagement_payload(r, "intervention", scores, agents,
+                                             next_agent_id=ordered[0].id if ordered else None)
+                if eng_ev:
+                    yield eng_ev
                 for resp_agent in ordered:
                     async for kind, a, b in _stream_agent(db, session=session, agent_ids=agent_ids, agent=resp_agent, round_no=r, order=order,
                                                           moderator_msg=user_msg, history=history, mock=mock):
