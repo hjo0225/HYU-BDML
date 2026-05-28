@@ -323,7 +323,8 @@ export interface FGIReport {
 /** /api/fgi-sessions/{id}/run SSE 이벤트 (api-spec.md). */
 export type FGIStreamEvent =
   | { type: 'round_start'; round: number; subtopic?: string; goal_question?: string }
-  | { type: 'moderator'; round: number; content: string; follow_up?: boolean }
+  | { type: 'moderator_delta'; round: number; delta: string }
+  | { type: 'moderator_end'; round: number; content: string; phase?: string; follow_up?: boolean; probe?: boolean }
   | { type: 'agent_delta'; agent_id: string; delta: string }
   | {
       type: 'agent_end';

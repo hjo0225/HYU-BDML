@@ -57,6 +57,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const [round, setRound] = useState(0);
   const [turns, setTurns] = useState<UiTurn[]>([]);
   const [streaming, setStreaming] = useState<{ agentId: string; text: string } | null>(null);
+  // 모더레이터 토큰 SSE 누적 버블 (에이전트와 동일 메커니즘, role='user' 우측 표시).
+  const [modStreaming, setModStreaming] = useState<string | null>(null);
   const [interveneAsking, setInterveneAsking] = useState(false);  // 개입 여부 먼저 묻는 단계
   const [interveneActive, setInterveneActive] = useState(false);  // '네' 선택 후 채팅 입력 단계
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +71,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns, streaming]);
+  }, [turns, streaming, modStreaming]);
 
   // FGI 진행 중에는 전역 플래그를 켜 사이드바 'AI 소비자' 탭 이동을 잠근다(이탈 시 SSE 끊김 방지).
   // 페이지 이탈/언마운트 시 자동 해제.
@@ -83,7 +85,14 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     setPhase('running');
     setError(null);
     setTurns([]);
-    setEngagement(null);
+    setModStreaming(null);
+    setStreaming(null);
+    // 첫 engagement 이벤트가 오기 전에도 모든 에이전트가 게이지에 보이도록 baseline 0.5 로 초기화.
+    // 이후 'engagement' 이벤트가 오면 merge 로 실측치가 덮어쓴다.
+    setEngagement({
+      scores: Object.fromEntries(agents.map((a) => [a.id, 0.5])),
+      phase: 'C',
+    });
     try {
       const session = await fgiApi.create(token, projectId, {
         topic,
@@ -98,8 +107,17 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
           case 'round_start':
             setRound(ev.round);
             break;
-          case 'moderator':
-            setTurns((p) => [...p, { id: `mod-${ev.round}-${p.length}`, role: 'moderator', author: '모더레이터', content: ev.content }]);
+          case 'moderator_delta':
+            // 모더레이터도 에이전트와 동일하게 토큰 SSE 로 누적. role='user' 우측 버블로 표시되어
+            // 사용자가 개입 안 할 때 모더레이터가 '나'의 역할을 대신하는 것처럼 보인다(팀 피드백).
+            setModStreaming((s) => (s ?? '') + ev.delta);
+            break;
+          case 'moderator_end':
+            setModStreaming(null);
+            setTurns((p) => [
+              ...p,
+              { id: `mod-${ev.round}-${Date.now()}`, role: 'user', author: '모더레이터', content: ev.content },
+            ]);
             break;
           case 'agent_delta':
             setStreaming((s) =>
@@ -205,7 +223,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             </p>
 
             <ol className="space-y-2.5">
-              {suggested.map((r) => (
+              {DEMO_FGI_ROUNDS.map((r) => (
                 <li
                   key={r.round}
                   className="grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-lg border border-transparent bg-bg p-3.5 transition-colors hover:border-border"
@@ -215,8 +233,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-text-primary">{r.subtopic}</p>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
-                      목표: {r.goal_question}
+                    <p className="mt-0.5 truncate text-xs text-text-muted">
+                      목표: {r.goal_summary}
                     </p>
                   </div>
                   <span className="whitespace-nowrap rounded-full border border-border bg-surface px-2.5 py-1 text-2xs font-medium text-text-muted">
@@ -240,7 +258,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       )}
 
       {phase !== 'idle' && (
-        <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
+        <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <Card>
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -267,6 +285,11 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
                 {t.content}
               </ChatBubble>
             ))}
+            {modStreaming !== null && (
+              <ChatBubble role="user" author="모더레이터">
+                {modStreaming || '…'}
+              </ChatBubble>
+            )}
             {streaming && (
               <ChatBubble role="agent" author={nameById[streaming.agentId] ?? '참여자'}>
                 {streaming.text || '…'}
@@ -405,7 +428,7 @@ function FGILiveEngagementPanel({
   })();
 
   return (
-    <Card className="lg:sticky lg:top-4">
+    <Card className="flex h-full flex-col">
       <h3 className="flex items-center gap-2 text-sm font-bold text-text-primary">
         실시간 관심도
         <span className="rounded-full bg-ditto-violet px-2 py-0.5 text-2xs font-bold text-white">LIVE</span>
@@ -413,12 +436,15 @@ function FGILiveEngagementPanel({
       <p className="mb-3 mt-0.5 text-2xs text-text-muted">
         발화권은 소주제 관련성·관심도로 매 턴 동적 배분됩니다. (LLM 추정 관심도)
       </p>
-      <div className="space-y-2">
+      <div className="flex-1 space-y-2 overflow-y-auto">
         {ranked.map((a) => {
-          const score = engagement?.scores[a.id];
-          const has = typeof score === 'number';
-          const value = has ? (score as number) : 0;
-          const pct = Math.round(value * 100);
+          // 점수가 없으면 baseline 0.5 로 폴백 — 첫 engagement 이벤트 전이나 partial 응답
+          // 직후에도 막대가 사라지지 않게 한다. 비교/정렬에는 실측치 우선.
+          const raw = engagement?.scores[a.id];
+          const value = typeof raw === 'number' ? raw : 0.5;
+          // 표시 폭은 최소 15% 보장 — backend 가 0 에 가까운 점수를 보내도 막대가 보이게
+          // ("1등만 게이지 나옴" 방지). 숫자 칩은 실측치 그대로 노출해 혼동 방지.
+          const pct = Math.max(15, Math.round(value * 100));
           const isNext = engagement?.nextAgentId === a.id;
           return (
             <div
@@ -432,16 +458,13 @@ function FGILiveEngagementPanel({
                 <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
                   {a.display_name ?? '참여자'}
                 </span>
-                {isNext ? (
+                <span className="text-2xs font-semibold tabular-nums text-text-secondary">
+                  {value.toFixed(2)}
+                </span>
+                {isNext && (
                   <span className="rounded-full bg-ditto-indigo px-1.5 py-0.5 text-2xs font-bold text-white">
                     다음 발화
                   </span>
-                ) : (
-                  has && (
-                    <span className="text-2xs font-semibold tabular-nums text-text-secondary">
-                      {value.toFixed(2)}
-                    </span>
-                  )
                 )}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/50">

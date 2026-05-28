@@ -8,8 +8,8 @@
   5) Round 사이 사용자 개입 창(30초, Round당 최대 2회)
   6) 세션 종료 → 구조화 인사이트 보고서
 
-SSE 이벤트: round_start / moderator / agent_delta / agent_end / engagement /
-user_turn_required / round_end / session_end / error
+SSE 이벤트: round_start / moderator_delta / moderator_end / agent_delta / agent_end /
+engagement / user_turn_required / round_end / session_end / error
 """
 from __future__ import annotations
 
@@ -109,6 +109,13 @@ def _is_pass(text: str) -> bool:
     return t in ("", "pass", "패스", "[pass]") or t.startswith("[pass]") or len(t) < 2
 
 
+def _word_chunks(text: str):
+    """이미 계산된 텍스트(템플릿/외부 LLM 결과)를 어절 단위로 잘라 streaming 흉내를 낸다.
+    공백을 유지해 합치면 원문이 되도록 한다. 모더레이터 SSE(precomputed 경로)용."""
+    for tok in text.split(" "):
+        yield tok + " "
+
+
 def _engagement_payload(round_no, phase, scores, agents, *, next_agent_id=None,
                         probe_index=None, probe_total=None):
     """발화자 선정 점수를 라이브 SSE 이벤트 dict 로 만든다 (plan 0022).
@@ -172,22 +179,6 @@ async def _generate_plan(topic: str, n_rounds: int, mock: bool | None) -> list[d
     return generic[:n_rounds] if n_rounds <= len(generic) else generic + generic[: n_rounds - len(generic)]
 
 
-async def _frame_probe(subtopic: str, recent: str, probe: str, mock: bool | None) -> str:
-    """미리 준비된 쟁점을 직전 논의에 이어 자연스럽게 던지는 모더레이터 발언으로 재작성.
-
-    LLM 실패 또는 빈 응답 시 원본 쟁점 문구를 그대로 사용(폴백).
-    """
-    try:
-        text = _strip_quotes((await chat_completion(
-            system=mod_prompts.MODERATOR_SYSTEM,
-            user=mod_prompts.PROBE_INTRO.format(subtopic=subtopic, recent=recent, probe=probe),
-            model=config.CHAT_MODEL, temperature=0.6, max_tokens=160, mock=mock,
-        )).strip())
-        return text or probe
-    except Exception:  # noqa: BLE001 — 키 없음/네트워크 오류 시 원본 쟁점으로 폴백
-        return probe
-
-
 def _others_recent(history: list[dict], self_id: str, k: int = 4) -> str:
     lines = [f"- {t['name']}: {t['content']}" for t in history[-k - 1:] if t.get("agent_id") != self_id and t["role"] != "moderator"]
     return "\n".join(lines[-k:]) or "(아직 다른 참여자 발언 없음)"
@@ -222,22 +213,40 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
     persona = agent.persona_full_prompt or "당신은 소비자 페르소나입니다."
     system_prompt = v1_1_intro + "\n\n" + FGI_GOAL_PREAMBLE + "\n\n" + persona
     parts: list[str] = []
+    # allow_pass(Phase C 찬반토론) 일 때도 SSE 가 끊기지 않게 하기 위해 '머리 버퍼링' 전략 사용.
+    # 머리 ~8자만 silent 누적해 '[PASS]' 마커인지 결정 → 정상 발언이면 그동안 모은 버퍼를 한 번에
+    # flush 한 뒤 이후 토큰은 그대로 흘려보낸다. PASS 마커로 보이면 끝까지 silent (마지막에 확정 후
+    # ('pass', …) 만 송출). 이전 구현은 전체를 silent 로 모았다가 끝에 한 덩어리로 dump 했었다.
+    pass_buf = ""
+    pass_flushed = False
+    DECIDE_LEN = 8  # '[pass]' = 6자. 여유 두고 8자 모이면 분기.
     async for delta in stream_chat(
         system=system_prompt,
         messages=[{"role": "user", "content": user}],
         model=config.CHAT_MODEL, temperature=0.9, max_tokens=240, mock=mock,
     ):
         parts.append(delta)
-        if not allow_pass:           # 패스 판정을 위해 패스 모드에선 토큰을 흘리지 않고 모은다
+        if not allow_pass or pass_flushed:
             yield ("delta", delta, None)
+            continue
+        pass_buf += delta
+        head = pass_buf.strip().lower()
+        if len(head) >= DECIDE_LEN:
+            # '[pass' / 'pass' / '패스' 로 시작하면 패스 가능성 — 끝까지 silent 유지.
+            looks_pass = head.startswith("[pass") or head == "pass" or head.startswith("패스")
+            if not looks_pass:
+                yield ("delta", pass_buf, None)
+                pass_flushed = True
     name = agent.display_name or "참여자"
     # 따옴표 누출 + 본인 이름 라벨('최수아:') 누출을 본문에서 제거 — 버블 라벨과 중복 노출 방지.
     content = _strip_speaker_prefix(_strip_quotes("".join(parts)), name)
     if allow_pass and _is_pass(content):
         yield ("pass", None, None)   # 새로 더할 게 없음 → 발언하지 않음
         return
-    if allow_pass:
-        yield ("delta", content, None)  # 패스 아님 → 본문을 한 번에 표시
+    if allow_pass and not pass_flushed:
+        # 결정 임계 미달(짧은 정상 발언) — 모은 본문을 한 번에 노출. 진짜 streaming 은 아니지만
+        # PASS 아닌 게 확정된 시점이라 어쩔 수 없이 한 덩어리.
+        yield ("delta", content, None)
     turn = await _save_turn(db, session_id=session.id, round_no=round_no, order=order,
                             role="agent", content=content, agent_id=agent.id, meta={"display_name": name})
     history.append({"round": round_no, "order": order, "role": "agent", "agent_id": agent.id, "name": name, "content": content})
@@ -316,6 +325,56 @@ async def run_fgi(
         await _save_turn(db, session_id=session.id, round_no=round_no, order=order_no, role="moderator", content=text, meta=meta)
         history.append({"round": round_no, "order": order_no, "role": "moderator", "agent_id": None, "name": "모더레이터", "content": text})
 
+    # 모더레이터 발언도 에이전트와 동일하게 토큰 SSE 로 흘린다(moderator_delta* → moderator_end).
+    # 최종 텍스트는 _mod_holder["text"] 에 담아 호출부가 후속 발화 프롬프트로 재사용한다.
+    _mod_holder = {"text": ""}
+
+    async def _mod_emit(order_no: int, round_no: int, *, user: str | None = None,
+                        precomputed: str | None = None, system: str | None = None,
+                        phase: str | None = None, follow_up: bool = False, probe: bool = False,
+                        meta: dict | None = None, temperature: float = 0.6, max_tokens: int = 200,
+                        fallback: str | None = None):
+        parts: list[str] = []
+        if precomputed is not None:
+            # 템플릿/외부 LLM 결과 — 어절 단위로 흘려 streaming 흉내.
+            for chunk in _word_chunks(precomputed):
+                parts.append(chunk)
+                yield {"type": "moderator_delta", "round": round_no, "delta": chunk}
+                if config.STREAM_TOKEN_DELAY_MS > 0:
+                    await asyncio.sleep(config.STREAM_TOKEN_DELAY_MS / 1000)
+            text = precomputed.strip()
+        else:
+            try:
+                async for delta in stream_chat(
+                    system=system or mod_prompts.MODERATOR_SYSTEM,
+                    messages=[{"role": "user", "content": user or ""}],
+                    model=config.CHAT_MODEL, temperature=temperature, max_tokens=max_tokens, mock=mock,
+                ):
+                    parts.append(delta)
+                    yield {"type": "moderator_delta", "round": round_no, "delta": delta}
+                    if config.STREAM_TOKEN_DELAY_MS > 0:
+                        await asyncio.sleep(config.STREAM_TOKEN_DELAY_MS / 1000)
+            except Exception:  # noqa: BLE001 — 키 없음/네트워크 오류 시 fallback 으로
+                pass
+            text = _strip_quotes("".join(parts)).strip()
+            if not text and fallback:
+                # 스트림이 시작도 못 함 → fallback 을 한 번에 보내 빈 버블 방지.
+                text = fallback.strip()
+                yield {"type": "moderator_delta", "round": round_no, "delta": text}
+        if not text:
+            text = "..."
+        await _mod_record(text, order_no, round_no, meta=meta)
+        reflection.record(session.id, speaker_id=None, speaker_name="모더레이터", content=text, agent_ids=agent_ids)
+        _mod_holder["text"] = text
+        end_ev: dict[str, Any] = {"type": "moderator_end", "round": round_no, "content": text}
+        if phase:
+            end_ev["phase"] = phase
+        if follow_up:
+            end_ev["follow_up"] = True
+        if probe:
+            end_ev["probe"] = True
+        yield end_ev
+
     # 한 Round = Phase A(질문) → B(순서답변) → C(티키타카) → D(개입) → 종료 follow-up (v0.2 §03).
     for r, step in enumerate(plan, 1):
         if _session_over():
@@ -329,15 +388,13 @@ async def run_fgi(
         # 진영 부여 — 합창 방지(v0.3): 라운드마다 절반은 비판·우려, 절반은 긍정·옹호로 교대 배정.
         stance_by = {a.id: ("critical" if (i + r) % 2 == 0 else "positive") for i, a in enumerate(agents)}
 
-        # ── Phase A — 모더레이터가 Round 질문 제시 ──────────────────────────
-        mod_msg = await chat_completion(
-            system=mod_prompts.MODERATOR_SYSTEM,
+        # ── Phase A — 모더레이터가 Round 질문 제시 (토큰 SSE) ────────────────
+        async for ev in _mod_emit(
+            order, r, phase="A", max_tokens=200,
             user=mod_prompts.SUBTOPIC_OPENING.format(round_no=r, subtopic=subtopic, goal_question=goal_q),
-            model=config.CHAT_MODEL, temperature=0.6, max_tokens=200, mock=mock,
-        )
-        await _mod_record(mod_msg, order, r)
-        reflection.record(session.id, speaker_id=None, speaker_name="모더레이터", content=mod_msg, agent_ids=agent_ids)
-        yield {"type": "moderator", "round": r, "content": mod_msg, "phase": "A"}
+        ):
+            yield ev
+        mod_msg = _mod_holder["text"]
         order += 1
 
         # ── Phase B — 전원이 고정 순서대로 1차 답변 (자기 경험에 충실, 진영 없음) ──
@@ -370,9 +427,15 @@ async def run_fgi(
             if seg_q is not None:
                 recent_turns = [t for t in history if t["round"] == r and t["role"] == "agent"][-3:]
                 recent = "\n".join(f"- {t['name']}: {t['content']}" for t in recent_turns) or "(아직 이번 라운드 발언 없음)"
-                probe_msg = await _frame_probe(subtopic, recent, seg_q, mock)
-                await _mod_record(probe_msg, order, r, meta={"kind": "phase_c_probe", "probe_source": seg_q})
-                yield {"type": "moderator", "round": r, "content": probe_msg, "phase": "C", "probe": True}
+                # 쟁점을 직전 논의에 이어 자연스럽게 던지는 모더레이터 발언으로 재작성(토큰 SSE).
+                # LLM 실패/빈 응답 시 원본 쟁점 문구로 폴백.
+                async for ev in _mod_emit(
+                    order, r, phase="C", probe=True, temperature=0.6, max_tokens=160, fallback=seg_q,
+                    user=mod_prompts.PROBE_INTRO.format(subtopic=subtopic, recent=recent, probe=seg_q),
+                    meta={"kind": "phase_c_probe", "probe_source": seg_q},
+                ):
+                    yield ev
+                probe_msg = _mod_holder["text"]
                 order += 1
                 active_q = probe_msg
             else:
@@ -444,8 +507,10 @@ async def run_fgi(
                     ended_early = True
                     break
                 q = cascade.inactive_prompt(name_by[agent.id], idx=di)
-                await _mod_record(q, order, r, meta={"kind": "phase_d_pull"})
-                yield {"type": "moderator", "round": r, "content": q, "follow_up": True, "phase": "D"}
+                async for ev in _mod_emit(order, r, precomputed=q, phase="D", follow_up=True,
+                                          meta={"kind": "phase_d_pull"}):
+                    yield ev
+                q = _mod_holder["text"]
                 order += 1
                 async for ev in _agent_says(agent, q, order, r):  # 질문에 답하는 세션 — 진영 없음
                     yield ev
@@ -458,8 +523,10 @@ async def run_fgi(
             )
             fq = await cascade.dynamic_round_followup(goal_q, subtopic, round_lines, mock=mock)
             if fq:
-                await _mod_record(fq, order, r, meta={"kind": "follow_up_dynamic"})
-                yield {"type": "moderator", "round": r, "content": fq, "follow_up": True}
+                async for ev in _mod_emit(order, r, precomputed=fq, follow_up=True,
+                                          meta={"kind": "follow_up_dynamic"}):
+                    yield ev
+                fq = _mod_holder["text"]
                 order += 1
                 # 관심도 높은 2명이 응답 (라운드당 1회 한정).
                 fscores = await engagement.llm_engagement(agents_meta, fq, fq, mock=mock) if config.USE_LLM_ENGAGEMENT else {}

@@ -260,7 +260,7 @@ export const fgi = {
   get: (token: string, sessionId: string) =>
     apiFetch<FGISessionDetail>(`/api/fgi-sessions/${sessionId}`, { token }),
 
-  /** FGI 진행 SSE — round_start/moderator/agent_delta/agent_end/user_turn_required/round_end/session_end. */
+  /** FGI 진행 SSE — round_start/moderator_delta/moderator_end/agent_delta/agent_end/user_turn_required/round_end/session_end. */
   run(token: string, sessionId: string) {
     return streamFetch(
       `/api/fgi-sessions/${sessionId}/run`,

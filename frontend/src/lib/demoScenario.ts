@@ -464,11 +464,16 @@ export const DEMO_FGI_TOPIC =
 
 export const DEMO_FGI_MAX_ROUNDS = 3;
 
-/** 데모 FGI 라운드 (R1~R3 고정) — frontend 가 backend 에 그대로 보내는 SuggestedRound[]. */
+/** 데모 FGI 라운드 (R1~R3 고정) — frontend 가 backend 에 그대로 보내는 SuggestedRound[].
+ *
+ * goal_question 은 backend 가 모더레이터 프롬프트에 쓰는 풀텍스트, goal_summary 는
+ * UI 카드 한 줄용 요약. backend 페이로드에는 goal_summary 가 들어가지 않는다.
+ */
 export const DEMO_FGI_ROUNDS = [
   {
     round: 1,
     subtopic: '브랜드 선택 요인 · IP 프레임',
+    goal_summary: '포토이즘을 고르는 결정 요인과 IP 프레임의 역할 확인',
     goal_question:
       '셀프 사진관 브랜드들이 대부분 비슷한 가격대(2컷 5천원·4컷 1만원)인데, 어떤 기준으로 브랜드를 선택하시나요? 포토이즘을 선택하는 결정적 이유와 IP 프레임(캐릭터·아이돌 콜라보)의 역할을 말씀해주세요.',
     probes: [
@@ -480,6 +485,7 @@ export const DEMO_FGI_ROUNDS = [
   {
     round: 2,
     subtopic: '매장 환경 · 인스타 업로드 사이클',
+    goal_summary: '매장 분위기와 SNS 업로드가 재방문에 미치는 영향',
     goal_question:
       '포토이즘 매장 분위기·소품·조명이 재방문에 영향을 주나요? 그리고 찍은 사진을 SNS(특히 인스타)에 업로드한 경험이 다시 방문하게 만드는 데 어떤 작용을 했는지 구체적으로 말씀해주세요.',
     probes: [
@@ -491,6 +497,7 @@ export const DEMO_FGI_ROUNDS = [
   {
     round: 3,
     subtopic: '포토이즘 앱 · 리텐션 메커니즘',
+    goal_summary: '앱 사용 실태와 어떤 기능이 재방문을 유도하는지',
     goal_question:
       '포토이즘 앱을 설치해보신 적이 있나요? 있다면 어떤 기능을 주로 쓰고, 없다면 왜 안 깔았는지요. 앱에 "콜라보 캘린더", "사전 알림", "매장 예약" 같은 기능이 있다면 재방문에 도움이 될지 알고 싶어요.',
     probes: [
