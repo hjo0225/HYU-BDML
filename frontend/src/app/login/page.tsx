@@ -45,9 +45,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 auth-page-bg">
       <div className="w-full max-w-sm">
-        {/* 헤더 */}
+        {/* 헤더 — 로고 클릭 시 랜딩 페이지로 이동 */}
         <div className="flex flex-col items-center mb-8">
-          <Logo height={40} wordmarkClassName="text-3xl text-white" />
+          <Link href="/" className="transition-opacity hover:opacity-80" aria-label="홈으로">
+            <Logo height={40} wordmarkClassName="text-3xl text-white" />
+          </Link>
         </div>
 
         {/* 카드 */}

@@ -7,12 +7,19 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ChatBubble } from '@/components/chat/ChatBubble';
 import { FGIInterventionInput } from '@/components/chat/FGIInterventionInput';
-import { Spinner } from '@/components/ui/Spinner';
 import { fgi as fgiApi } from '@/lib/api';
 import { useProjectContext } from '@/contexts/ProjectContext';
 import { personaKeywords } from '@/lib/persona';
-import { DEMO_FGI_MAX_ROUNDS, DEMO_FGI_TOPIC } from '@/lib/demoScenario';
+import { DEMO_FGI_ROUNDS, DEMO_FGI_TOPIC } from '@/lib/demoScenario';
 import type { Agent, FGIReport, SuggestedRound } from '@/lib/types';
+
+// 데모 readonly 라운드 → 가변 SuggestedRound[] 로 변환 (백엔드 페이로드).
+const DEMO_ROUNDS_PAYLOAD: SuggestedRound[] = DEMO_FGI_ROUNDS.map((r) => ({
+  round: r.round,
+  subtopic: r.subtopic,
+  goal_question: r.goal_question,
+  probes: [...r.probes],
+}));
 
 interface Props {
   token: string;
@@ -43,9 +50,9 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     agents.map((a) => [a.id, a.display_name ?? '참여자']),
   );
 
-  const [topic, setTopic] = useState(DEMO_FGI_TOPIC);
-  const [suggested, setSuggested] = useState<SuggestedRound[] | null>(null);
-  const [suggesting, setSuggesting] = useState(false);
+  // 데모는 시나리오·라운드 hardcode — 사용자 입력·AI 동적 생성 제거.
+  const topic = DEMO_FGI_TOPIC;
+  const suggested = DEMO_ROUNDS_PAYLOAD;
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [round, setRound] = useState(0);
   const [turns, setTurns] = useState<UiTurn[]>([]);
@@ -71,27 +78,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     return () => setFgiRunning(false);
   }, [phase, setFgiRunning]);
 
-  const suggest = useCallback(async () => {
-    if (suggesting || !topic.trim()) return;
-    setSuggesting(true);
-    setError(null);
-    try {
-      const res = await fgiApi.suggestRounds(token, projectId, { topic, n_rounds: DEMO_FGI_MAX_ROUNDS });
-      setSuggested(res.rounds);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '질문 제안 실패');
-    } finally {
-      setSuggesting(false);
-    }
-  }, [suggesting, topic, token, projectId]);
-
   const start = useCallback(async () => {
     if (phase === 'running' || !agents.length) return;
-    // 라운드별 질문 제안을 먼저 확정해야 FGI 를 시작할 수 있다 (plan 0010).
-    if (!suggested || suggested.length === 0) {
-      setError('먼저 "라운드별 질문 AI 제안"을 눌러 토론 플랜을 만들어주세요.');
-      return;
-    }
     setPhase('running');
     setError(null);
     setTurns([]);
@@ -126,13 +114,16 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             break;
           case 'engagement':
             // 발화자 선정 점수 라이브 갱신 — 우측 패널 막대에 반영.
-            setEngagement({
-              scores: ev.scores,
+            // LLM engagement 응답이 partial (일부 agent 누락) 인 경우가 있어 매 이벤트마다
+            // 덮어쓰면 직전 이벤트에서 받은 다른 agent 점수가 사라져 "1명만 표시" 되는
+            // 버그가 생긴다. 직전 scores 와 merge 해서 누적 유지.
+            setEngagement((prev) => ({
+              scores: { ...(prev?.scores ?? {}), ...ev.scores },
               nextAgentId: ev.next_agent_id,
               phase: ev.phase,
               probeIndex: ev.probe_index,
               probeTotal: ev.probe_total,
-            });
+            }));
             break;
           case 'user_turn_required':
             // 먼저 개입 여부를 묻고(자동 진행 없음), '네'일 때만 채팅 입력을 연다.
@@ -193,73 +184,58 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     <div className="space-y-4">
       {phase === 'idle' && (
         <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
-        <Card>
-          <h3 className="mb-1 font-semibold text-text-primary">FGI 회의 설정</h3>
-          <p className="mb-3 text-xs text-text-muted">
-            {agents.length}명의 에이전트가 AI 모더레이터 진행으로 최대 {DEMO_FGI_MAX_ROUNDS}라운드 토론합니다.
-            라운드 사이에 기업 관계자(나)가 직접 개입할 수 있어요.
-          </p>
-          <label className="mb-1 block text-xs font-medium text-text-secondary">토론 주제</label>
-          <textarea
-            value={topic}
-            onChange={(e) => { setTopic(e.target.value); setSuggested(null); }}
-            rows={2}
-            className="mb-3 w-full resize-none rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-ditto-indigo focus:outline-none"
-          />
+          <Card>
+            <div className="mb-3 flex items-center gap-2">
+              <Badge variant="success" size="sm">플랜 생성 완료</Badge>
+              <span className="text-xs text-text-muted">예상 소요 시간: 25~30분 · 3라운드</span>
+            </div>
+            <h3 className="text-lg font-bold text-text-primary">포토이즘 재방문율 향상 요인 탐색</h3>
+            <p className="mb-4 mt-0.5 text-xs text-text-muted">AI 사회자가 생성한 토론 플랜</p>
 
-          {/* 라운드별 질문 AI 제안 (plan 0009 · item 6) */}
-          <div className="mb-3">
+            {/* 기업 핵심 질문 박스 */}
+            <div className="mb-4 rounded-r-lg border-l-[3px] border-ditto-indigo bg-ditto-indigo-light px-4 py-3">
+              <p className="mb-1 text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+                기업 관계자 궁금증
+              </p>
+              <p className="text-sm leading-relaxed text-text-primary">{topic}</p>
+            </div>
+
+            <p className="mb-2.5 text-2xs font-bold uppercase tracking-wider text-text-muted">
+              AI 사회자가 생성한 토론 플랜
+            </p>
+
+            <ol className="space-y-2.5">
+              {suggested.map((r) => (
+                <li
+                  key={r.round}
+                  className="grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-lg border border-transparent bg-bg p-3.5 transition-colors hover:border-border"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ditto-indigo text-2xs font-bold text-white">
+                    R{r.round}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-text-primary">{r.subtopic}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
+                      목표: {r.goal_question}
+                    </p>
+                  </div>
+                  <span className="whitespace-nowrap rounded-full border border-border bg-surface px-2.5 py-1 text-2xs font-medium text-text-muted">
+                    8~10분
+                  </span>
+                </li>
+              ))}
+            </ol>
+
             <button
-              onClick={suggest}
-              disabled={suggesting || !topic.trim()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-ditto-indigo/40 px-3 py-1.5 text-xs font-semibold text-ditto-indigo transition-colors hover:bg-ditto-indigo-light disabled:opacity-50"
+              onClick={start}
+              disabled={!agents.length}
+              className="mt-5 w-full rounded-lg bg-ditto-indigo px-4 py-3.5 text-base font-bold text-white transition-colors hover:bg-ditto-indigo-hover disabled:opacity-50"
             >
-              {suggesting ? <Spinner size="sm" /> : '✨'}
-              {suggested ? '질문 다시 제안' : '라운드별 질문 AI 제안'}
+              FGI 시작하기
             </button>
+          </Card>
 
-            {suggesting && (
-              <p className="mt-2 text-xs text-text-muted">주제에 맞춰 라운드별 질문을 설계하는 중…</p>
-            )}
-
-            {suggested && suggested.length > 0 && (
-              <ol className="mt-3 space-y-2">
-                {suggested.map((r) => (
-                  <li key={r.round} className="rounded-lg border border-border bg-bg p-2.5">
-                    <div className="mb-0.5 flex items-center gap-1.5">
-                      <Badge variant="indigo" size="sm">R{r.round}</Badge>
-                      <span className="text-xs font-semibold text-text-primary">{r.subtopic}</span>
-                    </div>
-                    <p className="text-sm text-text-secondary">{r.goal_question}</p>
-                    {r.probes && r.probes.length > 0 && (
-                      <ul className="mt-1.5 space-y-0.5 border-t border-border pt-1.5">
-                        {r.probes.map((p, i) => (
-                          <li key={i} className="flex gap-1.5 text-2xs text-text-muted">
-                            <span className="text-ditto-indigo">쟁점</span>
-                            <span>{p}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button onClick={start} disabled={!topic.trim() || !suggested || suggested.length === 0}>
-              FGI 시작
-            </Button>
-            {(!suggested || suggested.length === 0) && (
-              <span className="text-2xs text-text-muted">
-                라운드별 질문을 먼저 제안해야 시작할 수 있어요.
-              </span>
-            )}
-          </div>
-        </Card>
-
-        <FGIAgentPanel agents={agents} />
+          <FGIAgentPanel agents={agents} />
         </div>
       )}
 
