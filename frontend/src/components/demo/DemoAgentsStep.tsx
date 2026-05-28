@@ -1,17 +1,18 @@
 'use client';
 
-// 데모 4단계 (plan 0008): 실제 6 에이전트 + 성능 평가(V1·V3) + 1:1 대화 임베드.
-import { useCallback, useRef, useState } from 'react';
+// 데모 4단계 (plan 0008 → 0023 + v7): 실제 6 에이전트 + 자동 사전계산 v7 유사도 대시보드 + 1:1 대화.
+// V1Gauge/V3Scatter 시대를 끝내고, 사전계산된 holdout 결과로 각 에이전트의 "그 사람과 얼마나 닮았나" 를 즉시 보여준다.
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ChatBubble } from '@/components/chat/ChatBubble';
-import { V1Gauge } from '@/components/dashboard/V1Gauge';
-import { V3Scatter } from '@/components/dashboard/V3Scatter';
-import { conversations as convApi, evaluations as evalApi } from '@/lib/api';
+import { Spinner } from '@/components/ui/Spinner';
+import { SimilarityDashboard } from '@/components/dashboard/SimilarityDashboard';
+import { agents as agentsApi, conversations as convApi } from '@/lib/api';
 import { personaKeywords } from '@/lib/persona';
-import type { Agent, ConversationTurn, ScatterResponse } from '@/lib/types';
+import type { Agent, ConversationTurn, HoldoutResult } from '@/lib/types';
 
 interface Props {
   token: string;
@@ -19,109 +20,156 @@ interface Props {
   agents: Agent[];
 }
 
-export function DemoAgentsStep({ token, projectId, agents }: Props) {
-  // ── 평가 ──
-  const [evalRunning, setEvalRunning] = useState(false);
-  const [evalMsg, setEvalMsg] = useState<string | null>(null);
-  const [scatter, setScatter] = useState<ScatterResponse | null>(null);
-  const [v1byAgent, setV1byAgent] = useState<Record<string, number>>({});
+export function DemoAgentsStep({ token, projectId: _projectId, agents }: Props) {
+  // ── 사전계산된 v7 유사도 결과 (에이전트별) ──
+  const [holdoutByAgent, setHoldoutByAgent] = useState<Record<string, HoldoutResult>>({});
+  const [loadingHoldout, setLoadingHoldout] = useState(true);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
-  const runEval = useCallback(async () => {
-    if (!agents.length || evalRunning) return;
-    setEvalRunning(true);
-    setEvalMsg('평가 시작…');
-    try {
-      for await (const ev of evalApi.trigger(token, agents[0].id, { metrics: ['v1', 'v3'] })) {
-        if (ev.type === 'agent_done') setEvalMsg(`평가 중… (${ev.current}/${ev.total})`);
-        else if (ev.type === 'v3_done') setEvalMsg(`다양성(V3) 산출 완료 · ${ev.n_agents}명`);
-      }
-      const sc = await evalApi.scatter(token, projectId);
-      setScatter(sc);
-      const entries = await Promise.all(
+  // 마운트 시 6명 모두 fetch (parallel). 미적재 에이전트는 조용히 skip.
+  useEffect(() => {
+    if (agents.length === 0) {
+      setLoadingHoldout(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
         agents.map(async (a) => {
-          const latest = await evalApi.latest(token, a.id).catch(() => null);
-          return [a.id, latest?.identity_stats?.sync ?? 0] as const;
+          try {
+            const h = await agentsApi.holdout(token, a.id);
+            return [a.id, h] as const;
+          } catch {
+            return [a.id, null] as const;
+          }
         }),
       );
-      setV1byAgent(Object.fromEntries(entries));
-      setEvalMsg('평가 완료 — 아래 지표를 확인하세요.');
-    } catch (e) {
-      setEvalMsg(e instanceof Error ? e.message : '평가 실패');
-    } finally {
-      setEvalRunning(false);
-    }
-  }, [token, projectId, agents, evalRunning]);
+      if (cancelled) return;
+      const map: Record<string, HoldoutResult> = {};
+      for (const [id, h] of results) {
+        if (h) map[id] = h;
+      }
+      setHoldoutByAgent(map);
+      // 첫 번째 적재된 에이전트를 자동 선택
+      const first = agents.find((a) => map[a.id]);
+      if (first) setSelectedAgentId(first.id);
+      setLoadingHoldout(false);
+    })();
+    return () => { cancelled = true; };
+  }, [agents, token]);
 
   // ── 1:1 대화 ──
   const [chatAgent, setChatAgent] = useState<Agent | null>(null);
+
+  const selectedHoldout = selectedAgentId ? holdoutByAgent[selectedAgentId] : null;
+  const selectedAgent = selectedAgentId ? agents.find((a) => a.id === selectedAgentId) : null;
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-secondary">
         Twin-2K-500 한국화 6-Lens 설문·인터뷰 응답으로 <b>{agents.length}명의 AI 페르소나 에이전트</b>가
-        구성되었습니다. 성능 평가로 복제 충실도를 확인하고, 한 명과 1:1 대화를 나눠볼 수 있어요.
+        구성되었습니다. 각 에이전트가 실제 응답자와 얼마나 닮았는지 사전계산된 유사도 평가로 즉시 확인할 수 있어요.
       </p>
 
-      {/* 에이전트 그리드 */}
+      {/* 에이전트 그리드 — 닮은정도 % + Lens 미니막대 */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {agents.map((a) => (
-          <Card key={a.id} padding="sm">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">{a.emoji ?? '👤'}</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold text-text-primary">{a.display_name ?? '에이전트'}</p>
-                {[a.age_range, a.gender].filter(Boolean).length > 0 && (
-                  <div className="mt-0.5 flex flex-wrap gap-1">
-                    {([a.age_range, a.gender].filter(Boolean) as string[]).map((d) => (
-                      <Badge key={d} variant="neutral" size="sm">{d}</Badge>
+        {agents.map((a) => {
+          const h = holdoutByAgent[a.id];
+          const isSelected = a.id === selectedAgentId;
+          return (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => h && setSelectedAgentId(a.id)}
+              disabled={!h}
+              className={`block w-full rounded-xl border bg-surface p-3 text-left transition-all hover:shadow-card disabled:opacity-60 ${
+                isSelected
+                  ? 'border-ditto-indigo shadow-card ring-2 ring-ditto-indigo/20'
+                  : 'border-border'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">{a.emoji ?? '👤'}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-text-primary">{a.display_name ?? '에이전트'}</p>
+                  {[a.age_range, a.gender].filter(Boolean).length > 0 && (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {([a.age_range, a.gender].filter(Boolean) as string[]).map((d) => (
+                        <Badge key={d} variant="neutral" size="sm">{d}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {personaKeywords(a.persona_params, 3).map((k) => (
+                      <Badge key={k} variant="violet" size="sm">{k}</Badge>
                     ))}
                   </div>
-                )}
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {personaKeywords(a.persona_params, 3).map((k) => (
-                    <Badge key={k} variant="violet" size="sm">{k}</Badge>
-                  ))}
                 </div>
               </div>
-            </div>
-            <div className="mt-3 flex items-center justify-between">
-              {a.id in v1byAgent ? (
-                <Badge variant="indigo" size="sm">V1 {Math.round(v1byAgent[a.id] * 100)}%</Badge>
-              ) : (
-                <span className="text-2xs text-text-muted">평가 전</span>
-              )}
-              <Button variant="ghost" size="sm" onClick={() => setChatAgent(a)}>
-                1:1 대화
-              </Button>
-            </div>
-          </Card>
-        ))}
+
+              {/* 닮은정도 + Lens 미니바 */}
+              <div className="mt-3 border-t border-border pt-2.5">
+                {loadingHoldout ? (
+                  <div className="flex items-center gap-2 text-2xs text-text-muted">
+                    <Spinner size="sm" /> 평가 결과 불러오는 중…
+                  </div>
+                ) : h ? (
+                  <>
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-2xs font-medium text-text-muted">실제 사람과의 닮은 정도</span>
+                      <span className="text-base font-bold tabular-nums text-text-primary">
+                        {Math.round(h.agreement_score * 100)}<span className="text-2xs text-text-muted">%</span>
+                      </span>
+                    </div>
+                    <MiniLensBars by_lens={h.by_lens} />
+                  </>
+                ) : (
+                  <span className="text-2xs text-text-muted">평가 결과 없음 (사전계산 필요)</span>
+                )}
+              </div>
+
+              {/* 1:1 대화 버튼 */}
+              <div className="mt-2 flex justify-end">
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => { e.stopPropagation(); setChatAgent(a); }}
+                  className="cursor-pointer rounded-md border border-border bg-bg px-2.5 py-1 text-2xs font-medium text-text-secondary hover:border-ditto-indigo hover:text-ditto-indigo"
+                >
+                  1:1 대화 →
+                </span>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
-      {/* 성능 평가 */}
-      <Card>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-text-primary">성능 평가 (V1 응답 동기화 · V3 페르소나 다양성)</h3>
-            <p className="text-xs text-text-muted">{evalMsg ?? '에이전트가 실제 응답을 얼마나 충실히 복제하는지 측정합니다.'}</p>
+      {/* 선택된 에이전트의 v7 풀 대시보드 — 자동 노출 */}
+      {selectedHoldout && selectedAgent && (
+        <Card>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+              선택된 에이전트의 상세 평가
+            </span>
+            <Badge variant="indigo" size="sm">
+              {selectedAgent.emoji ?? '👤'} {selectedAgent.display_name ?? '에이전트'}
+            </Badge>
+            <span className="ml-auto text-2xs text-text-muted">
+              위 카드를 클릭하면 다른 에이전트의 대시보드로 전환됩니다
+            </span>
           </div>
-          <Button onClick={runEval} loading={evalRunning} disabled={evalRunning}>
-            성능 평가 실행
-          </Button>
-        </div>
-        {scatter && (
-          <div className="grid items-center gap-4 md:grid-cols-2">
-            <div>
-              <p className="mb-1 text-xs font-medium text-text-secondary">V3 페르소나 다양성 (산점도)</p>
-              <V3Scatter points={scatter.points} distinct={scatter.distinct} height={260} />
-            </div>
-            <div className="flex flex-col items-center">
-              <p className="mb-1 text-xs font-medium text-text-secondary">V1 동기화율 (에이전트 1)</p>
-              <V1Gauge sync={v1byAgent[agents[0]?.id] ?? 0} size={200} />
-            </div>
-          </div>
-        )}
-      </Card>
+          <SimilarityDashboard result={selectedHoldout} />
+        </Card>
+      )}
+
+      {!loadingHoldout && Object.keys(holdoutByAgent).length === 0 && (
+        <Card>
+          <p className="text-sm text-text-muted">
+            사전계산된 유사도 평가가 없습니다. 백엔드에서 <code className="rounded bg-bg px-1.5 py-0.5 font-mono text-xs">python -m scripts.run_holdout_eval</code>
+            을 실행하면 결과가 노출됩니다.
+          </p>
+        </Card>
+      )}
 
       {/* 1:1 대화 패널 */}
       {chatAgent && (
@@ -132,6 +180,36 @@ export function DemoAgentsStep({ token, projectId, agents }: Props) {
           onClose={() => setChatAgent(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ── 카드 내 미니 6-Lens 가로 막대 (3px) ─────────────────────────────────
+function MiniLensBars({ by_lens }: { by_lens: HoldoutResult['by_lens'] }) {
+  // L1~L6 순서로 정렬해 6칸 고정 — 시각적 안정성
+  const order = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'];
+  const byKey: Record<string, { agreement: number; n: number }> = {};
+  for (const b of by_lens) byKey[b.lens] = b;
+
+  return (
+    <div className="flex items-center gap-1">
+      {order.map((lens) => {
+        const b = byKey[lens];
+        const pct = b ? Math.round(b.agreement * 100) : 0;
+        const tone =
+          !b || b.n === 0 ? 'bg-border' :
+          b.agreement >= 0.8 ? 'bg-success' :
+          b.agreement >= 0.6 ? 'bg-warning' :
+          'bg-error';
+        return (
+          <div key={lens} className="flex flex-1 flex-col items-center gap-0.5" title={`${lens} ${pct}% (n=${b?.n ?? 0})`}>
+            <div className="h-6 w-full overflow-hidden rounded-sm bg-bg">
+              <div className={`w-full ${tone}`} style={{ height: `${Math.max(pct, 4)}%`, marginTop: `${100 - Math.max(pct, 4)}%` }} />
+            </div>
+            <span className="text-[9px] font-medium tracking-[0.04em] text-text-muted">{lens}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

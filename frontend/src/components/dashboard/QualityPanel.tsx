@@ -1,18 +1,19 @@
 'use client';
 
-// 품질 평가 탭 (plan 0013) — 모든 에이전트의 품질 통계 + 다양성 분포.
-// 집계는 클라이언트에서 scatter(에이전트별 닮음·클러스터) + 에이전트 목록으로 수행(서버 집계 API 불필요).
+// 품질 평가 탭 (plan 0013 → 0023 + v7): 프로젝트 전체 에이전트의 사전계산된 v7 유사도 대시보드.
+// V3 산점도/군집 시대를 끝내고, 각 에이전트의 "그 사람과 얼마나 닮았나" 를 자동 노출한다.
+// V1/V3 "품질 평가 실행" 버튼 제거 — 사전계산이 SSOT.
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
-import { Card, CardHeader } from '@/components/ui/Card';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { V3Scatter } from '@/components/dashboard/V3Scatter';
+import { Spinner } from '@/components/ui/Spinner';
+import { SimilarityDashboard } from '@/components/dashboard/SimilarityDashboard';
+import { agents as agentsApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { evaluations as evalApi } from '@/lib/api';
-import type { Agent, EvaluateEvent, ScatterResponse } from '@/lib/types';
+import type { Agent, HoldoutResult, ScatterResponse } from '@/lib/types';
 
-const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+const pctText = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`);
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -24,150 +25,248 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
+// Props 시그니처 유지 — quality/page.tsx 가 그대로 호출. scatter/onEvaluated 는 무시(레거시 호환).
 export function QualityPanel({
   projectId,
   agents,
-  scatter,
-  onEvaluated,
+  scatter: _scatter,
+  onEvaluated: _onEvaluated,
 }: {
   projectId: string;
   agents: Agent[];
   scatter: ScatterResponse | null;
-  onEvaluated?: () => void;  // 평가 완료 후 상위에서 scatter·agents 재로드
+  onEvaluated?: () => void;
 }) {
   const { token } = useAuth();
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [holdoutByAgent, setHoldoutByAgent] = useState<Record<string, HoldoutResult>>({});
+  const [loading, setLoading] = useState(true);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
-  // 한 에이전트로 트리거해도 프로젝트 전체가 함께 평가된다.
-  const runEval = useCallback(async () => {
-    const agentId = agents[0]?.id;
-    if (!token || !agentId || running) return;
-    setRunning(true); setProgress(null); setError(null);
-    try {
-      for await (const ev of evalApi.trigger(token, agentId, { metrics: ['v1', 'v3'] }) as AsyncGenerator<EvaluateEvent>) {
-        if (ev.type === 'start') setProgress({ current: 0, total: ev.total });
-        else if (ev.type === 'agent_done') setProgress({ current: ev.current, total: ev.total });
-        else if (ev.type === 'error') setError(ev.reason);
-      }
-      onEvaluated?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '평가 실행 실패');
-    } finally {
-      setRunning(false);
+  // 마운트 시 모든 에이전트의 사전계산 holdout 결과를 병렬 fetch. 미적재는 조용히 skip.
+  useEffect(() => {
+    if (!token || agents.length === 0) {
+      setLoading(false);
+      return;
     }
-  }, [token, agents, running, onEvaluated]);
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        agents.map(async (a) => {
+          try {
+            const h = await agentsApi.holdout(token, a.id);
+            return [a.id, h] as const;
+          } catch {
+            return [a.id, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const map: Record<string, HoldoutResult> = {};
+      for (const [id, h] of results) {
+        if (h) map[id] = h;
+      }
+      setHoldoutByAgent(map);
+      const first = agents.find((a) => map[a.id]);
+      if (first) setSelectedAgentId(first.id);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [agents, token]);
 
-  const runControls = (
-    <div className="flex items-center gap-3" data-tour="quality-run">
-      <Button onClick={runEval} loading={running} disabled={agents.length === 0}>
-        {running ? '평가 중…' : '품질 평가 실행'}
-      </Button>
-      {progress && (
-        <span className="text-2xs text-text-muted tabular-nums">
-          {progress.current}/{progress.total} · {Math.round((progress.current / Math.max(1, progress.total)) * 100)}%
-        </span>
-      )}
-      {error && <span className="text-2xs text-error">{error}</span>}
-    </div>
-  );
+  // 프로젝트 단위 집계 — 평균 닮음 / 최고 / 최저 / 평가 완료 수.
+  const stats = useMemo(() => {
+    const evaluated = Object.values(holdoutByAgent);
+    if (evaluated.length === 0) return null;
+    const scores = evaluated.map((h) => h.agreement_score);
+    const avg = scores.reduce((s, v) => s + v, 0) / scores.length;
+    const max = Math.max(...scores);
+    const min = Math.min(...scores);
+    const best = evaluated.find((h) => h.agreement_score === max);
+    const worst = evaluated.find((h) => h.agreement_score === min);
+    return { avg, max, min, evaluated: evaluated.length, best, worst };
+  }, [holdoutByAgent]);
 
-  const points = scatter?.points ?? [];
-  const syncByAgent = useMemo(
-    () => new Map(points.map((p) => [p.agent_id, p.sync])),
-    [points],
-  );
-  const clusterByAgent = useMemo(
-    () => new Map(points.map((p) => [p.agent_id, p.cluster])),
-    [points],
-  );
+  const select = useCallback((id: string) => {
+    if (holdoutByAgent[id]) setSelectedAgentId(id);
+  }, [holdoutByAgent]);
 
-  const syncs = points.map((p) => p.sync).filter((s): s is number => s != null);
-  const avgSync = syncs.length ? syncs.reduce((a, b) => a + b, 0) / syncs.length : null;
-  const evaluated = syncByAgent.size;
-  const clusters = new Set(points.map((p) => p.cluster).filter((c) => c != null)).size;
+  const selectedHoldout = selectedAgentId ? holdoutByAgent[selectedAgentId] : null;
+  const selectedAgent = selectedAgentId ? agents.find((a) => a.id === selectedAgentId) : null;
 
-  if (!scatter || scatter.n_points === 0) {
+  if (agents.length === 0) {
     return (
       <Card padding="lg" className="border-dashed">
-        <p className="text-sm text-text-secondary mb-1">아직 평가 결과가 없습니다.</p>
-        <p className="text-sm text-text-muted mb-4">
-          아래 &quot;품질 평가 실행&quot;을 누르면 이 프로젝트의 AI 소비자 전체가 함께 평가되어
-          닮음·다양성 통계와 분포도가 여기에 나타납니다.
-          {agents.length === 0 && ' 먼저 ‘AI 소비자’에서 소비자를 추가·저장하세요.'}
+        <p className="mb-1 text-sm text-text-secondary">이 프로젝트에 AI 소비자가 없습니다.</p>
+        <Link
+          href={`/projects/${projectId}/agents`}
+          className="mt-3 inline-block text-sm text-ditto-indigo hover:underline"
+        >
+          AI 소비자로 이동 →
+        </Link>
+      </Card>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Card padding="lg">
+        <div className="flex items-center gap-2 text-sm text-text-muted">
+          <Spinner size="sm" /> 사전계산된 평가 결과를 불러오는 중…
+        </div>
+      </Card>
+    );
+  }
+
+  if (stats == null) {
+    return (
+      <Card padding="lg" className="border-dashed">
+        <p className="mb-1 text-sm text-text-secondary">아직 사전계산된 평가 결과가 없습니다.</p>
+        <p className="mb-3 text-sm text-text-muted">
+          백엔드에서 아래 명령으로 평가를 사전계산하면 자동으로 표시됩니다.
         </p>
-        {runControls}
-        {agents.length === 0 && (
-          <Link href={`/projects/${projectId}/agents`} className="mt-3 inline-block text-sm text-ditto-indigo hover:underline">
-            AI 소비자로 이동 →
-          </Link>
-        )}
+        <pre className="rounded-lg bg-bg p-3 text-xs text-text-primary">
+          python -m scripts.run_holdout_eval --project-id {projectId}
+        </pre>
       </Card>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-text-secondary">이 프로젝트 AI 소비자의 품질 통계입니다.</p>
-        {runControls}
-      </div>
-
+      {/* 프로젝트 단위 집계 4개 카드 */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="다양성 (V3)" value={pct(scatter.distinct_norm)}
-              hint={scatter.distinct != null ? `거리 ${scatter.distinct.toFixed(2)} / 최대 0.47 · 서로 다른 인격 정도` : '서로 다른 인격 정도'} />
-        <Stat label="평균 닮음 (V1)" value={pct(avgSync)} hint="진짜 사람과의 평균 일치도" />
-        <Stat label="평가 완료" value={`${evaluated} / ${agents.length}`} hint="평가된 에이전트 수" />
-        <Stat label="군집 수" value={String(clusters || '—')} hint="성향 클러스터 개수" />
+        <Stat
+          label="평균 닮은 정도"
+          value={pctText(stats.avg)}
+          hint={`${stats.evaluated} / ${agents.length} 명 평가 완료`}
+        />
+        <Stat
+          label="가장 닮은 에이전트"
+          value={pctText(stats.max)}
+          hint={stats.best?.agent_display_name ?? '—'}
+        />
+        <Stat
+          label="가장 덜 닮은 에이전트"
+          value={pctText(stats.min)}
+          hint={stats.worst?.agent_display_name ?? '—'}
+        />
+        <Stat
+          label="평가 방식"
+          value="홀드아웃 유사도"
+          hint="실제 응답 vs AI 답변 LLM-Judge"
+        />
       </div>
 
-      <Card padding="md">
-        <CardHeader title="에이전트 다양성 분포" subtitle="가까울수록 비슷한 인격 · 멀수록 다양" />
-        <V3Scatter points={scatter.points} distinct={scatter.distinct} distinctNorm={scatter.distinct_norm} height={360} />
-      </Card>
+      {/* 에이전트 그리드 — 닮은정도 + Lens 미니막대 */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {agents.map((a) => {
+          const h = holdoutByAgent[a.id];
+          const isSelected = a.id === selectedAgentId;
+          const pct = h ? Math.round(h.agreement_score * 100) : null;
+          return (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => select(a.id)}
+              disabled={!h}
+              className={`block w-full rounded-xl border bg-surface p-3 text-left transition-all hover:shadow-card disabled:opacity-60 ${
+                isSelected
+                  ? 'border-ditto-indigo shadow-card ring-2 ring-ditto-indigo/20'
+                  : 'border-border'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">{a.emoji ?? '👤'}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-text-primary">
+                    {a.display_name || '(이름 없음)'}
+                  </p>
+                  {(a.age_range || a.gender) && (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {([a.age_range, a.gender].filter(Boolean) as string[]).map((d) => (
+                        <Badge key={d} variant="neutral" size="sm">{d}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
 
-      <Card padding="md">
-        <CardHeader title="에이전트별 품질" subtitle={`총 ${agents.length}명 · 평가 완료 ${evaluated}명`} />
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-2xs text-text-muted">
-                <th className="py-2 pr-3 font-medium">에이전트</th>
-                <th className="py-2 pr-3 font-medium">닮음 (V1)</th>
-                <th className="py-2 pr-3 font-medium">군집</th>
-                <th className="py-2 font-medium">상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((a) => {
-                const sync = syncByAgent.get(a.id);
-                const cluster = clusterByAgent.get(a.id);
-                const done = syncByAgent.has(a.id);
-                return (
-                  <tr key={a.id} className="border-b border-border/60">
-                    <td className="py-2 pr-3">
-                      <span className="font-medium text-text-primary">{a.display_name || '(이름 없음)'}</span>
-                      {(a.age_range || a.gender) && (
-                        <span className="ml-1.5 text-2xs text-text-muted">
-                          {[a.age_range, a.gender].filter(Boolean).join(' ')}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3 tabular-nums text-text-secondary">{pct(sync)}</td>
-                    <td className="py-2 pr-3 text-text-secondary">{cluster != null ? `C${cluster}` : '—'}</td>
-                    <td className="py-2">
-                      <Badge variant={done ? 'success' : 'neutral'} size="sm">
-                        {done ? '평가완료' : '미평가'}
-                      </Badge>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+              <div className="mt-3 border-t border-border pt-2.5">
+                {h ? (
+                  <>
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-2xs font-medium text-text-muted">실제 사람과의 닮은 정도</span>
+                      <span className="text-base font-bold tabular-nums text-text-primary">
+                        {pct}<span className="text-2xs text-text-muted">%</span>
+                      </span>
+                    </div>
+                    <MiniLensBars by_lens={h.by_lens} />
+                  </>
+                ) : (
+                  <span className="text-2xs text-text-muted">평가 결과 없음 (사전계산 필요)</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 선택된 에이전트의 v7 풀 대시보드 — 자동 노출 */}
+      {selectedHoldout && selectedAgent && (
+        <Card>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+              선택된 에이전트의 상세 평가
+            </span>
+            <Badge variant="indigo" size="sm">
+              {selectedAgent.emoji ?? '👤'} {selectedAgent.display_name ?? '에이전트'}
+            </Badge>
+            <span className="ml-auto text-2xs text-text-muted">
+              위 카드를 클릭하면 다른 에이전트의 대시보드로 전환됩니다
+            </span>
+          </div>
+          <SimilarityDashboard result={selectedHoldout} />
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── 카드 내 미니 6-Lens 가로 막대 (DemoAgentsStep 와 동일 패턴) ──────────
+function MiniLensBars({ by_lens }: { by_lens: HoldoutResult['by_lens'] }) {
+  const order = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'];
+  const byKey: Record<string, { agreement: number; n: number }> = {};
+  for (const b of by_lens) byKey[b.lens] = b;
+
+  return (
+    <div className="flex items-center gap-1">
+      {order.map((lens) => {
+        const b = byKey[lens];
+        const pct = b ? Math.round(b.agreement * 100) : 0;
+        const tone =
+          !b || b.n === 0 ? 'bg-border' :
+          b.agreement >= 0.8 ? 'bg-success' :
+          b.agreement >= 0.6 ? 'bg-warning' :
+          'bg-error';
+        return (
+          <div
+            key={lens}
+            className="flex flex-1 flex-col items-center gap-0.5"
+            title={`${lens} ${pct}% (n=${b?.n ?? 0})`}
+          >
+            <div className="h-6 w-full overflow-hidden rounded-sm bg-bg">
+              <div
+                className={`w-full ${tone}`}
+                style={{
+                  height: `${Math.max(pct, 4)}%`,
+                  marginTop: `${100 - Math.max(pct, 4)}%`,
+                }}
+              />
+            </div>
+            <span className="text-[9px] font-medium tracking-[0.04em] text-text-muted">{lens}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

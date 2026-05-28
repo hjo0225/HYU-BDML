@@ -104,6 +104,8 @@ docs/
 backend/raw/
 backend/personas/
 backend/.cache/
+# 홀드아웃 유사도 사전계산 결과 (plan 0023) — PII(원본 응답)+생성 응답 포함
+backend/data/holdout_eval/
 backend/rag/embedding_cache.json
 backend/embedding/embedding_cache.json
 docs/RAG/

@@ -130,6 +130,51 @@ export interface EvaluationSnapshot {
   evaluated_at: string;
 }
 
+// ── 홀드아웃 유사도 (plan 0023) ───────────────────────────────────────────
+
+export type HoldoutVerdict = 'match' | 'partial' | 'no_match';
+
+export interface HoldoutPair {
+  question_id: string;
+  lens: string;            // 'L1'~'L6'
+  section: string;         // '3-1' 등
+  section_label: string;   // 'Regulatory Focus Scale (조절초점 척도)'
+  domain: boolean;         // 포토이즘 도메인 반복 섹션 여부
+  qtype: string;           // 'Single Choice' | 'Text Entry' | 'Matrix' | ...
+  question: string;
+  human_answer: string;
+  agent_answer: string;
+  verdict: HoldoutVerdict;
+  confidence: number;      // 0~1
+  rationale: string;
+  score: number;           // 0 | 0.5 | 1
+}
+
+export interface HoldoutLensAgreement {
+  lens: string;
+  agreement: number;       // 0~1
+  n: number;
+}
+
+export interface HoldoutResult {
+  agent_id: string;
+  agent_display_name: string | null;
+  agent_source_ref: string | null;
+  agreement_score: number;
+  n_total: number;
+  n_match: number;
+  n_partial: number;
+  n_no_match: number;
+  by_lens: HoldoutLensAgreement[];
+  top_matches: HoldoutPair[];
+  top_mismatches: HoldoutPair[];
+  all_pairs?: HoldoutPair[];
+  judge_model: string;
+  holdout_ratio: number;
+  holdout_seed: number;
+  generated_at: string;
+}
+
 // ── 평가 트리거·산점도 ────────────────────────────────────────────────────
 
 export interface EvaluateRequest {

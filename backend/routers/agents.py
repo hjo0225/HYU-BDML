@@ -2,6 +2,7 @@
 
 Slice 1.2: GET /api/projects/{id}/agents, GET /api/agents/{id}.
 Slice 1.4: POST /api/projects/{id}/agents/seed-twin (NDJSON 진행 스트림).
+Plan 0023: GET /api/agents/{id}/holdout — 사전계산된 홀드아웃 유사도 결과 반환.
 평가 / 대화·FGI 엔드포인트는 후속 Slice 에서 추가.
 """
 from __future__ import annotations
@@ -28,6 +29,9 @@ from services.agent_service import (
 )
 from services.auth_service import get_current_user
 from services.seed_service import process_record, recluster_project
+
+# 홀드아웃 유사도 사전계산 캐시 위치 (plan 0023)
+_HOLDOUT_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "holdout_eval"
 
 router = APIRouter(tags=["agents"])
 
@@ -134,6 +138,50 @@ async def get_agent(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="에이전트를 찾을 수 없습니다.")
     await _verify_owned_project(agent.project_id, current_user, db)
     return _to_agent_detail(agent)
+
+
+# ── 홀드아웃 유사도 (plan 0023) ───────────────────────────────────────────
+
+@router.get("/api/agents/{agent_id}/holdout")
+async def get_agent_holdout(
+    agent_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """사전계산된 홀드아웃 유사도 결과 JSON 반환.
+
+    데모 세션의 임시 에이전트는 source(원본) 에이전트의 결과를 source_ref(pid) 로
+    fallback 조회한다 — 데모 복제본은 매번 새 id 라 캐시 적중이 안 되기 때문.
+
+    404 = 사전계산 결과 없음 (스크립트 미실행).
+    """
+    res = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = res.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="에이전트를 찾을 수 없습니다.")
+    await _verify_owned_project(agent.project_id, current_user, db)
+
+    # 1) 직접 매칭 (원본/이미 평가된 에이전트)
+    direct = _HOLDOUT_CACHE_DIR / f"{agent.id}.json"
+    if direct.exists():
+        return json.loads(direct.read_text(encoding="utf-8"))
+
+    # 2) source_ref 폴백 — 데모 복제본은 새 id 라 원본 결과를 share
+    if agent.source_ref:
+        for cand in _HOLDOUT_CACHE_DIR.glob("*.json"):
+            try:
+                data = json.loads(cand.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get("agent_source_ref") == agent.source_ref:
+                # 클라이언트 입장에서는 이 에이전트의 결과로 보이게 id 만 갱신
+                data["agent_id"] = agent.id
+                return data
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="홀드아웃 평가가 아직 실행되지 않았습니다. (scripts/run_holdout_eval.py 실행 필요)",
+    )
 
 
 # ── seed-twin ─────────────────────────────────────────────────────────────

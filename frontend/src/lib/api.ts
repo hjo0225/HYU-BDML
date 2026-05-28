@@ -14,6 +14,7 @@ import type {
   EvaluateEvent,
   EvaluateRequest,
   EvaluationSnapshot,
+  HoldoutResult,
   FGISession,
   FGISessionDetail,
   FGIStreamEvent,
@@ -199,6 +200,10 @@ export const agents = {
       token,
     );
   },
+
+  /** 사전계산된 홀드아웃 유사도 결과 (plan 0023). 미실행 시 404. */
+  holdout: (token: string, agentId: string) =>
+    apiFetch<HoldoutResult>(`/api/agents/${agentId}/holdout`, { token }),
 };
 
 export interface SeedTwinRequest {
