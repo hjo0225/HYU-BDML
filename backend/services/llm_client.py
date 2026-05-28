@@ -13,7 +13,7 @@ from typing import AsyncGenerator, Optional
 
 import openai
 
-_DEFAULT_MODEL = os.getenv("CHAT_MODEL", "gpt-4o-mini")
+_DEFAULT_MODEL = os.getenv("CHAT_MODEL", "gpt-4.1-mini")
 
 
 def _has_api_key() -> bool:

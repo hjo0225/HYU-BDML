@@ -16,10 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Agent, Conversation, ConversationTurn
+from fgi.prompts.utterance import build_v1_1_persona_intro
+from services.agent_service import demographics as _agent_demographics
 from services.llm_client import stream_chat
 
-# package 페르소나(~30k 토큰)는 long-context 모델 필요. gpt-4o-mini 도 128k 컨텍스트라 충분.
-_LONG_CONTEXT_MODEL = "gpt-4o-mini"
+# package 페르소나(~30k 토큰)는 long-context 모델 필요. gpt-4.1-mini 도 128k 컨텍스트라 충분.
+_LONG_CONTEXT_MODEL = "gpt-4.1-mini"
 
 
 async def create_conversation(
@@ -92,7 +94,11 @@ async def stream_reply(
     agent = res.scalar_one_or_none()
     if agent is None:
         raise ValueError("에이전트를 찾을 수 없습니다.")
-    system = agent.persona_full_prompt or "당신은 설문 응답에 기반한 페르소나입니다."
+    # Toubia v1.1(anti-RLHF·1인칭) 머리말을 페르소나 본문 앞에 결합 — FGI 와 동일 톤.
+    age_range, gender = _agent_demographics(agent)
+    v1_1_intro = build_v1_1_persona_intro(age_range, gender)
+    persona_body = agent.persona_full_prompt or "당신은 설문 응답에 기반한 페르소나입니다."
+    system = v1_1_intro + "\n\n" + persona_body
 
     yield {"type": "start", "conversation_id": conversation.id, "agent_id": conversation.agent_id}
 

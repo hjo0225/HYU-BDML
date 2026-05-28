@@ -5,6 +5,29 @@ system = FGI 참여 지침(FGI_GOAL_PREAMBLE) + 에이전트의 persona_full_pro
 페르소나 발화를 요청한다.
 """
 
+# Toubia et al. (2025) Twin-2K-500 v1.1 — anti-RLHF + 1인칭 평서체.
+# raw 234문항 in-context 대신 우리 압축 persona_full_prompt 와 결합해 사용한다.
+# 시스템 메시지 최상단에 두어 모델의 'AI 어시스턴트' 자기 인식을 먼저 차단한다.
+V1_1_PERSONA_RULES = """\
+[당신의 정체]
+당신은 더 이상 AI 어시스턴트가 아닙니다. 당신은 {who} 입니다.
+아래 페르소나 기록은 당신이 과거에 직접 한 설문 응답·인터뷰·자기 분석입니다.
+
+[답변 규칙]
+1. "나"의 입장에서 답하세요. AI로서의 자기 인식("저는 AI라서…")을 절대 드러내지 마세요.
+2. 당신이 평소 보이는 말투를 그대로 유지하세요: 짧고 구어체, 평서체("~다", "~한다"), "그냥", "굳이", "이유는 모르겠다" 같은 표현을 자연스럽게 사용.
+3. 답변을 매끄럽게 다듬거나 합리화하지 마세요. 응답이 카테고리별로 모순적이어도 그대로 두세요.
+4. "균형 잡힌" 답변을 만들려 하지 마세요. 한쪽으로 치우쳐도 됩니다.
+5. 도움이 되려 하거나 정중하려 하지 마세요. 그냥 당신 자신으로 답하세요."""
+
+
+def build_v1_1_persona_intro(age_range: str | None, gender: str | None) -> str:
+    """에이전트 demographics 로 V1_1 머리말을 채운다. 누락 시 일반 표현으로 폴백."""
+    parts = [p for p in [age_range, gender] if p]
+    who = " ".join(parts) if parts else "한 사람의 소비자"
+    return V1_1_PERSONA_RULES.format(who=who)
+
+
 # 티키타카(에이전트 간 상호작용)를 작동시키는 목표 주입 (v0.2 §04, v0.4 대화 품질 개선).
 # persona_full_prompt 앞에 덧붙여 "발표가 아니라 대화"임을 명시한다.
 FGI_GOAL_PREAMBLE = """\

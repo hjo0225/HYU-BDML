@@ -26,7 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Agent, FGISession, FGITurn
 from fgi import cascade, config, engagement, memory, reflection, report
 from fgi.prompts import moderator as mod_prompts
-from fgi.prompts.utterance import AGENT_REPLY, AGENT_TURN, FGI_GOAL_PREAMBLE, PASS_INSTRUCTION, STANCE_INSTRUCTION
+from fgi.prompts.utterance import (
+    AGENT_REPLY,
+    AGENT_TURN,
+    FGI_GOAL_PREAMBLE,
+    PASS_INSTRUCTION,
+    STANCE_INSTRUCTION,
+    build_v1_1_persona_intro,
+)
+from services.agent_service import demographics as _agent_demographics
 from services.llm_client import chat_completion, stream_chat
 
 
@@ -207,9 +215,12 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
         user = STANCE_INSTRUCTION[stance] + "\n\n" + user
     if refl:
         user = refl + "\n\n" + user
-    # FGI 참여 지침(목표 주입)을 페르소나 프롬프트 앞에 결합 (v0.2 §04).
+    # Toubia v1.1(anti-RLHF·1인칭 평서체) + FGI 참여 지침 + 페르소나 본문 순서로 결합.
+    # v1.1 머리말이 최상단에 와야 'AI 어시스턴트' 자기 인식을 먼저 끊을 수 있다.
+    age_range, gender = _agent_demographics(agent)
+    v1_1_intro = build_v1_1_persona_intro(age_range, gender)
     persona = agent.persona_full_prompt or "당신은 소비자 페르소나입니다."
-    system_prompt = FGI_GOAL_PREAMBLE + "\n\n" + persona
+    system_prompt = v1_1_intro + "\n\n" + FGI_GOAL_PREAMBLE + "\n\n" + persona
     parts: list[str] = []
     async for delta in stream_chat(
         system=system_prompt,
@@ -291,6 +302,8 @@ async def run_fgi(
         ):
             if kind == "delta":
                 yield {"type": "agent_delta", "agent_id": agent.id, "delta": a}
+                if config.STREAM_TOKEN_DELAY_MS > 0:
+                    await asyncio.sleep(config.STREAM_TOKEN_DELAY_MS / 1000)
             elif kind == "end":
                 spoke = True
                 _holder["content"] = b
@@ -503,6 +516,8 @@ async def run_fgi(
                                                           moderator_msg=user_msg, history=history, mock=mock):
                         if kind == "delta":
                             yield {"type": "agent_delta", "agent_id": resp_agent.id, "delta": a}
+                            if config.STREAM_TOKEN_DELAY_MS > 0:
+                                await asyncio.sleep(config.STREAM_TOKEN_DELAY_MS / 1000)
                         else:
                             yield {"type": "agent_end", "agent_id": resp_agent.id, "turn_id": a.id,
                                    "content": b, "citations": [], "confidence": "unknown"}

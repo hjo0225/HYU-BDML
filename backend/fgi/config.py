@@ -57,4 +57,8 @@ USE_MODERATOR_JUDGE = os.getenv("FGI_MODERATOR_JUDGE", "1") not in ("0", "false"
 INTERVENTION_TIMEOUT = _f("FGI_INTERVENTION_TIMEOUT", 600)  # 개입 여부 결정 대기(초) — 사용자가 정할 때까지 대기, 안전 상한
 INTERVENTION_MAX_PER_ROUND = _i("FGI_INTERVENTION_MAX", 2)
 
-CHAT_MODEL = os.getenv("FGI_CHAT_MODEL", "gpt-4o-mini")
+CHAT_MODEL = os.getenv("FGI_CHAT_MODEL", "gpt-4.1-mini")
+
+# 발화 토큰 SSE 송출 속도 — 토큰(델타) 사이 인위적 sleep(ms).
+# 0=즉시(LLM 도착 속도 그대로), >0=느리게. 데모 가독성용. plan 0024 follow-up.
+STREAM_TOKEN_DELAY_MS = _i("FGI_STREAM_TOKEN_DELAY_MS", 35)
