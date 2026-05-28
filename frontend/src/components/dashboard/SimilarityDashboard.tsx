@@ -167,7 +167,7 @@ export function SimilarityDashboard({ result }: Props) {
             {bigPct}
             <sup className="ml-1 align-super text-[0.3em] text-ditto-indigo">%</sup>
           </div>
-          <p className="mx-auto mb-7 max-w-md text-lg text-text-muted">
+          <p className="mb-7 whitespace-nowrap text-lg text-text-muted">
             에이전트 응답의 {bigPct}%가 실제 사람의 응답과 의미적으로 일치했습니다
           </p>
           <div className="inline-flex flex-wrap items-center justify-center gap-5 rounded-full border border-border px-5 py-2.5 text-xs text-text-muted">
