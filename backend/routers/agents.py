@@ -320,4 +320,6 @@ async def seed_twin(
     return StreamingResponse(
         _stream_seed(project_id, request),
         media_type="application/x-ndjson",
+        # 프록시(Cloud Run/nginx)가 응답을 버퍼링해 진행 상황이 한꺼번에 나오는 것을 방지.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )

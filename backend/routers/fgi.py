@@ -178,7 +178,12 @@ async def run_fgi_session(
             except Exception as e:  # noqa: BLE001
                 yield sse({"type": "error", "reason": str(e)})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        # 프록시(Cloud Run/nginx)가 응답을 버퍼링해 토큰이 한꺼번에 나오는 것을 방지.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/api/fgi-sessions/{session_id}/intervene")

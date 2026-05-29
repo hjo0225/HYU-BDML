@@ -34,6 +34,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 _COOKIE_NAME = "refresh_token"
 _COOKIE_MAX_AGE = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600
 _IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
+# 배포에서는 프론트엔드(다른 *.run.app 도메인)와 백엔드가 크로스사이트이므로
+# SameSite=Lax 쿠키는 fetch 에 실리지 않는다 → 세션 복원/refresh 실패.
+# 프로덕션은 SameSite=None(+Secure 필수)로 크로스사이트 전송을 허용한다.
+# 로컬(localhost)은 same-site 이므로 Lax 로 충분하고 Secure 없이도 동작한다.
+_COOKIE_SAMESITE = "none" if _IS_PROD else "lax"
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -43,13 +48,20 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         max_age=_COOKIE_MAX_AGE,
         httponly=True,
         secure=_IS_PROD,
-        samesite="lax",
+        samesite=_COOKIE_SAMESITE,
         path="/api/auth",
     )
 
 
 def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(key=_COOKIE_NAME, path="/api/auth")
+    # 삭제 쿠키도 설정 시와 동일한 속성(secure/samesite/path)을 줘야
+    # 브라우저가 대상 쿠키를 정확히 매칭해 만료시킨다.
+    response.delete_cookie(
+        key=_COOKIE_NAME,
+        path="/api/auth",
+        secure=_IS_PROD,
+        samesite=_COOKIE_SAMESITE,
+    )
 
 
 class RegisterRequest(BaseModel):
@@ -245,7 +257,7 @@ async def google_callback(code: str = "", error: str = "", db: AsyncSession = De
         max_age=_COOKIE_MAX_AGE,
         httponly=True,
         secure=_IS_PROD,
-        samesite="lax",
+        samesite=_COOKIE_SAMESITE,
         path="/api/auth",
     )
     return redirect_resp
