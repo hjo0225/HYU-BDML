@@ -39,6 +39,26 @@ from eval_holdout.runner import (
 _DEFAULT_PACKAGE_DIR = Path(r"C:/Users/ABC/Desktop/agent_package (1)")
 _CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "holdout_eval"
 _DEMO_SOURCE_PROJECT_ID = "61f78cf9-8329-4c24-912a-bd3eeac5bba8"
+# 결과를 영구 저장하는 scratch 키. 라우터(get_agent_holdout)가 1차로 이 키를 읽는다.
+# 배포(Cloud Run)는 파일시스템이 ephemeral 이라 DB(scratch) 저장이 SSOT.
+_HOLDOUT_SCRATCH_KEY = "holdout_eval"
+
+
+async def _persist_to_db(agent_id: str, result: dict) -> None:
+    """결과를 agent.scratch['holdout_eval'] 에 저장 (배포 영속성).
+
+    기존 scratch 키는 보존하고 holdout_eval 만 갱신. JSONB 변경 감지를 위해
+    새 dict 로 재할당한다.
+    """
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Agent).where(Agent.id == agent_id))
+        agent = res.scalar_one_or_none()
+        if agent is None:
+            return
+        scratch = dict(agent.scratch) if isinstance(agent.scratch, dict) else {}
+        scratch[_HOLDOUT_SCRATCH_KEY] = result
+        agent.scratch = scratch
+        await db.commit()
 
 
 def _pid_txt_path(package_dir: Path, source_ref: str) -> Path:
@@ -235,10 +255,12 @@ async def _run(args: argparse.Namespace) -> None:
 
         out_path = _CACHE_DIR / f"{agent.id}.json"
         out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 파일(로컬 폴백) + DB scratch(배포 SSOT) 양쪽 저장
+        await _persist_to_db(agent.id, result)
         print(
             f"  ✅ 일치율 {result['agreement_score']*100:.1f}% "
             f"(match {result['n_match']} / partial {result['n_partial']} / no_match {result['n_no_match']}) "
-            f"→ {out_path.name}"
+            f"→ {out_path.name} + DB scratch"
         )
 
 

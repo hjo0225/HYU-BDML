@@ -31,7 +31,19 @@ from services.auth_service import get_current_user
 from services.seed_service import process_record, recluster_project
 
 # 홀드아웃 유사도 사전계산 캐시 위치 (plan 0023)
+# 파일 캐시는 로컬 개발용 폴백. 배포(Cloud Run)는 파일시스템이 ephemeral 이라
+# 결과를 agents.scratch['holdout_eval'] (Cloud SQL) 에 영구 저장하고 그걸 1차로 읽는다.
 _HOLDOUT_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "holdout_eval"
+_HOLDOUT_SCRATCH_KEY = "holdout_eval"
+
+
+def _scratch_holdout(agent: Agent) -> dict | None:
+    """agent.scratch['holdout_eval'] 를 안전하게 dict 로 추출. 없으면 None."""
+    scratch = _parse_jsonish(agent.scratch) if agent.scratch else None
+    if not isinstance(scratch, dict):
+        return None
+    data = scratch.get(_HOLDOUT_SCRATCH_KEY)
+    return data if isinstance(data, dict) else None
 
 router = APIRouter(tags=["agents"])
 
@@ -150,10 +162,15 @@ async def get_agent_holdout(
 ):
     """사전계산된 홀드아웃 유사도 결과 JSON 반환.
 
-    데모 세션의 임시 에이전트는 source(원본) 에이전트의 결과를 source_ref(pid) 로
-    fallback 조회한다 — 데모 복제본은 매번 새 id 라 캐시 적중이 안 되기 때문.
+    조회 순서 (배포 영속성 우선):
+      1) DB — agent.scratch['holdout_eval'] (원본/이미 평가된 에이전트)
+      2) DB — 같은 source_ref 를 가진 에이전트의 scratch 폴백
+      3~4) 로컬 파일 캐시 (개발용 폴백, 배포에선 비어 있음)
 
-    404 = 사전계산 결과 없음 (스크립트 미실행).
+    데모 세션의 임시 에이전트는 source(원본) 에이전트의 결과를 source_ref(pid) 로
+    fallback 조회한다 — 데모 복제본은 매번 새 id 라 직접 적중이 안 되기 때문.
+
+    404 = 사전계산 결과 없음 (scripts/run_holdout_eval.py 또는 load_holdout_to_db.py 실행 필요).
     """
     res = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = res.scalar_one_or_none()
@@ -161,20 +178,39 @@ async def get_agent_holdout(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="에이전트를 찾을 수 없습니다.")
     await _verify_owned_project(agent.project_id, current_user, db)
 
-    # 1) 직접 매칭 (원본/이미 평가된 에이전트)
+    # 1) DB 직접 매칭 — 본인 scratch 에 저장된 결과
+    own = _scratch_holdout(agent)
+    if own is not None:
+        return own
+
+    # 2) DB source_ref 폴백 — 데모 복제본은 새 id 라 같은 source_ref 의 원본 결과를 share.
+    #    created_at 오름차순 → 가장 먼저 적재된 원본(데모 소스)이 우선.
+    if agent.source_ref:
+        cand_res = await db.execute(
+            select(Agent)
+            .where(Agent.source_ref == agent.source_ref, Agent.id != agent.id)
+            .order_by(Agent.created_at.asc())
+        )
+        for cand in cand_res.scalars().all():
+            data = _scratch_holdout(cand)
+            if data is not None:
+                # 클라이언트 입장에서는 이 에이전트의 결과로 보이게 id 만 갱신
+                data = {**data, "agent_id": agent.id}
+                return data
+
+    # 3) 로컬 파일 직접 매칭 (개발용 폴백)
     direct = _HOLDOUT_CACHE_DIR / f"{agent.id}.json"
     if direct.exists():
         return json.loads(direct.read_text(encoding="utf-8"))
 
-    # 2) source_ref 폴백 — 데모 복제본은 새 id 라 원본 결과를 share
+    # 4) 로컬 파일 source_ref 폴백 (개발용 폴백)
     if agent.source_ref:
-        for cand in _HOLDOUT_CACHE_DIR.glob("*.json"):
+        for cand_path in _HOLDOUT_CACHE_DIR.glob("*.json"):
             try:
-                data = json.loads(cand.read_text(encoding="utf-8"))
+                data = json.loads(cand_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
             if data.get("agent_source_ref") == agent.source_ref:
-                # 클라이언트 입장에서는 이 에이전트의 결과로 보이게 id 만 갱신
                 data["agent_id"] = agent.id
                 return data
 
