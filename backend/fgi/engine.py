@@ -392,8 +392,8 @@ async def run_fgi(
         yield {"type": "round_start", "round": r, "subtopic": subtopic, "goal_question": goal_q}
         order = 0
 
-        # 진영 부여 — 합창 방지(v0.3): 라운드마다 절반은 비판·우려, 절반은 긍정·옹호로 교대 배정.
-        stance_by = {a.id: ("critical" if (i + r) % 2 == 0 else "positive") for i, a in enumerate(agents)}
+        # (제거됨) 진영 부여 stance_by — 라운드마다 비판/긍정 진영을 강제하던 찬반 메커니즘.
+        # 사용자 요청으로 폐기: 참여자가 자기 경험을 말하는 대신 "~의견에 동의/반박"을 반복하게 만들어서.
 
         # ── Phase A — 모더레이터가 Round 질문 제시 (토큰 SSE) ────────────────
         async for ev in _mod_emit(
@@ -517,14 +517,9 @@ async def run_fgi(
 
                 # cycle = 한 사람 발화 (관심도 1위)
                 agent = cands[0]
-                last_speaker = recent_speakers[-1] if recent_speakers else None
-                reply_to = (
-                    (name_by[last_speaker], last_text)
-                    if last_speaker and last_speaker != agent.id
-                    else None
-                )
-                async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id],
-                                            allow_pass=True, reply_to=reply_to):
+                # (제거됨) 찬반 메커니즘 — stance(진영) + reply_to(직전 화자에 직접 동의/반박) 미사용.
+                # 사용자 요청: 토론처럼 동의/반박을 반복하지 말고 각자 사회자 질문에 자기 경험으로 답하게 한다.
+                async for ev in _agent_says(agent, active_q, order, r, allow_pass=True):
                     yield ev
                 if _holder.get("passed"):
                     # 패스 — 같은 사람이 다음 cycle 첫 후보로 다시 뽑히지 않게 lock 에 넣음
