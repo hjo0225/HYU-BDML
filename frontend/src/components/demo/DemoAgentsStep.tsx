@@ -12,6 +12,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { SimilarityDashboard } from '@/components/dashboard/SimilarityDashboard';
 import { agents as agentsApi, conversations as convApi } from '@/lib/api';
 import { personaKeywords } from '@/lib/persona';
+import { lensTone, LENS_TONE_TEXT } from '@/lib/lensTone';
 import type { Agent, ConversationTurn, HoldoutResult } from '@/lib/types';
 
 interface Props {
@@ -107,7 +108,7 @@ export function DemoAgentsStep({ token, projectId: _projectId, agents }: Props) 
                 </div>
               </div>
 
-              {/* 닮은정도 + Lens 미니바 */}
+              {/* 닮은정도 */}
               <div className="mt-3 border-t border-border pt-2.5">
                 {loadingHoldout ? (
                   <div className="flex items-center gap-2 text-2xs text-text-muted">
@@ -117,11 +118,10 @@ export function DemoAgentsStep({ token, projectId: _projectId, agents }: Props) 
                   <>
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-2xs font-medium text-text-muted">실제 사람과의 닮은 정도</span>
-                      <span className="text-base font-bold tabular-nums text-text-primary">
+                      <span className={`text-base font-bold tabular-nums ${LENS_TONE_TEXT[lensTone(h.agreement_score)]}`}>
                         {Math.round(h.agreement_score * 100)}<span className="text-2xs text-text-muted">%</span>
                       </span>
                     </div>
-                    <MiniLensBars by_lens={h.by_lens} />
                   </>
                 ) : (
                   <span className="text-2xs text-text-muted">평가 결과 없음 (사전계산 필요)</span>
@@ -185,35 +185,6 @@ export function DemoAgentsStep({ token, projectId: _projectId, agents }: Props) 
 }
 
 // ── 카드 내 미니 6-Lens 가로 막대 (3px) ─────────────────────────────────
-function MiniLensBars({ by_lens }: { by_lens: HoldoutResult['by_lens'] }) {
-  // L1~L6 순서로 정렬해 6칸 고정 — 시각적 안정성
-  const order = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'];
-  const byKey: Record<string, { agreement: number; n: number }> = {};
-  for (const b of by_lens) byKey[b.lens] = b;
-
-  return (
-    <div className="flex items-center gap-1">
-      {order.map((lens) => {
-        const b = byKey[lens];
-        const pct = b ? Math.round(b.agreement * 100) : 0;
-        const tone =
-          !b || b.n === 0 ? 'bg-border' :
-          b.agreement >= 0.8 ? 'bg-success' :
-          b.agreement >= 0.6 ? 'bg-warning' :
-          'bg-error';
-        return (
-          <div key={lens} className="flex flex-1 flex-col items-center gap-0.5" title={`${lens} ${pct}% (n=${b?.n ?? 0})`}>
-            <div className="h-6 w-full overflow-hidden rounded-sm bg-bg">
-              <div className={`w-full ${tone}`} style={{ height: `${Math.max(pct, 4)}%`, marginTop: `${100 - Math.max(pct, 4)}%` }} />
-            </div>
-            <span className="text-[9px] font-medium tracking-[0.04em] text-text-muted">{lens}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── 임베드 1:1 대화 패널 ─────────────────────────────────────────────────────
 function DemoChatPanel({ token, agent, onClose }: { token: string; agent: Agent; onClose: () => void }) {
   const [turns, setTurns] = useState<ConversationTurn[]>([]);

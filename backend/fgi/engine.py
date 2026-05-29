@@ -117,13 +117,14 @@ def _word_chunks(text: str):
 
 
 def _engagement_payload(round_no, phase, scores, agents, *, next_agent_id=None,
-                        probe_index=None, probe_total=None):
-    """발화자 선정 점수를 라이브 SSE 이벤트 dict 로 만든다 (plan 0022).
+                        probe_index=None, probe_total=None, excluded_ids=None):
+    """발화자 선정 점수를 라이브 SSE 이벤트 dict 로 만든다 (plan 0022 / 0026).
 
     scores 는 engagement.llm_engagement 결과({id:{interest,reaction}}). interest(0~1)만
-    노출한다. **추가 LLM 호출 없이** 발화자 선정에 이미 쓴 점수를 그대로 흘린다.
-    scores 가 비면(키 없음·LLM engagement off·파싱 실패) None 을 반환해 이벤트를 생략한다 —
-    의미 없는 균일값을 보내지 않고, 기존 SSE 계약(mock 테스트)도 깨지 않기 위함.
+    노출한다. excluded_ids 는 "이번 발화자 후보에서 빠진" agent id 목록(plan 0026 cooling
+    표시용) — Phase B 에서 이미 1차 답변 끝낸 사람, Phase C 에서 직전 N턴 lock 이거나
+    라운드 누적 발화 상한 도달한 사람. 프론트는 이 목록의 카드를 dim 처리한다.
+    scores 가 비면(키 없음·LLM engagement off·파싱 실패) None 을 반환해 이벤트를 생략한다.
     """
     if not scores:
         return None
@@ -139,6 +140,8 @@ def _engagement_payload(round_no, phase, scores, agents, *, next_agent_id=None,
         payload["probe_index"] = probe_index
     if probe_total is not None:
         payload["probe_total"] = probe_total
+    if excluded_ids:
+        payload["excluded"] = list(excluded_ids)
     return payload
 
 
@@ -220,6 +223,10 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
     pass_buf = ""
     pass_flushed = False
     DECIDE_LEN = 8  # '[pass]' = 6자. 여유 두고 8자 모이면 분기.
+    # plan 0025 v2 의 발화 중 listener_update(토큰 임계 송출) 는 plan 0026 에서 폐기.
+    # 이유: inline await llm_engagement 가 토큰 스트림에 200~500ms 정체를 끼워넣어
+    # 발화 텍스트와 막대 변동이 한 발화 안에서 뒤섞이는 UX 문제 + 개입 SSE race 의심.
+    # 이제 발화 중에는 토큰만 흐르고, engagement 는 다음 발화 cycle 시작 시점에 1회 송출.
     async for delta in stream_chat(
         system=system_prompt,
         messages=[{"role": "user", "content": user}],
@@ -397,38 +404,59 @@ async def run_fgi(
         mod_msg = _mod_holder["text"]
         order += 1
 
-        # ── Phase B — 전원이 고정 순서대로 1차 답변 (자기 경험에 충실, 진영 없음) ──
+        # ── Phase B — 관심도 순 1차 답변 (plan 0026): 매 발화 전 LLM 재호출 → 관심도 1위 발화 → remaining 에서 제거 ──
+        # 한 사람 1회씩 모두 답할 때까지 반복. 직전 발화는 lock 없음 (Phase B 는 1회 보장 = 자동 제외).
         last_text = ""
-        for agent in agents:
+        phase_b_remaining = set(a.id for a in agents)
+        while phase_b_remaining:
             if _session_over():
                 ended_early = True
                 break
+            scores = await engagement.llm_engagement(agents_meta, subtopic, last_text, mock=mock) if config.USE_LLM_ENGAGEMENT else {}
+
+            def _interest_b(a) -> float:
+                return scores.get(a.id, {}).get("interest", 0.5)
+
+            cands_b = sorted([a for a in agents if a.id in phase_b_remaining],
+                             key=lambda a: -_interest_b(a))
+            if not cands_b:
+                break
+            # 발화자 선정 시점 engagement SSE (phase="B"). 이미 1차 답변 끝낸 사람은
+            # phase_b_remaining 에 없으므로 excluded 로 전달 → 프론트 카드 dim.
+            eng_ev = _engagement_payload(
+                r, "B", scores, agents, next_agent_id=cands_b[0].id,
+                excluded_ids=[a.id for a in agents if a.id not in phase_b_remaining],
+            )
+            if eng_ev:
+                yield eng_ev
+            agent = cands_b[0]
             async for ev in _agent_says(agent, mod_msg, order, r):
                 yield ev
             last_text = _holder["content"]
+            phase_b_remaining.discard(agent.id)
             order += 1
 
-        # ── Phase C — 쟁점 주도 토론 (v0.3.1): 모더레이터가 쟁점을 제시 → 진영이 논쟁 → 다음 쟁점 ──
-        # novelty 수렴 감지 없음. 쟁점 개수가 Phase C 길이를 결정(예측 가능). 쟁점이 없으면 핵심 질문으로 1세그먼트.
+        # ── Phase C — 쟁점 주도 토론 (plan 0026 재설계) ───────────────────────
+        # cycle = 한 발화. 매 cycle 마다 LLM engagement 재호출 → 관심도 1위가 발화.
+        # 발화 후 recent_speakers 에 추가 → 다음 PHASE_C_RECENT_LOCK 턴 동안 후보 제외.
+        # 라운드 누적 발화는 ROUND_C_MAX_PER_AGENT 미만만 후보 (한 사람 독점 방지).
         probes_list: list[str] = list(step.get("probes") or [])
         segments: list[str | None] = probes_list if probes_list else [None]
         spoke_in_c: set[str] = set()
-        c_total = 0  # Phase C 전체 발화 수 (총상한 적용)
+        c_total = 0
+        # 라운드 누적 발화 카운터 (plan 0026) — Phase C 전체에서 한 사람 최대 ROUND_C_MAX_PER_AGENT 회.
+        round_c_count: dict[str, int] = {a.id: 0 for a in agents}
 
         for seg_idx, seg_q in enumerate(segments):
             if ended_early or _session_over() or c_total >= config.MAX_TIKITAKA_UTTER:
                 break
             ctrl = _CONTROLS.get(session.id, {})
-            if ctrl.get("next_round"):       # 수동 '다음 주제로'
+            if ctrl.get("next_round"):
                 ctrl["next_round"] = False
                 break
-            # 모더레이터가 쟁점 제시(쟁점이 있을 때). 없으면 핵심 질문으로 이어 논쟁.
-            # 쟁점은 그대로 읽어주지 않고, 직전 라운드 발언 흐름에 이어 자연스럽게 던진다(v0.3.3).
             if seg_q is not None:
                 recent_turns = [t for t in history if t["round"] == r and t["role"] == "agent"][-3:]
                 recent = "\n".join(f"- {t['name']}: {t['content']}" for t in recent_turns) or "(아직 이번 라운드 발언 없음)"
-                # 쟁점을 직전 논의에 이어 자연스럽게 던지는 모더레이터 발언으로 재작성(토큰 SSE).
-                # LLM 실패/빈 응답 시 원본 쟁점 문구로 폴백.
                 async for ev in _mod_emit(
                     order, r, phase="C", probe=True, temperature=0.6, max_tokens=160, fallback=seg_q,
                     user=mod_prompts.PROBE_INTRO.format(subtopic=subtopic, recent=recent, probe=seg_q),
@@ -442,7 +470,7 @@ async def run_fgi(
                 active_q = mod_msg
 
             seg_count: dict[str, int] = {a.id: 0 for a in agents}
-            last_speaker_id: str | None = None
+            recent_speakers: list[str] = []  # segment 내 직전 N턴 발화 lock 추적
             last_text = active_q
             seg_utter = 0
             while seg_utter < config.PROBE_MAX_UTTER and c_total < config.MAX_TIKITAKA_UTTER and not ended_early:
@@ -457,47 +485,59 @@ async def run_fgi(
                 def _interest(a) -> float:
                     return scores.get(a.id, {}).get("interest", 0.5)
 
-                # 발화 후보: 직전 발화자·발화 상한(MAX_C_PER_AGENT) 도달자만 제외하고 전원 후보로 둔다.
-                # engagement 점수는 '누가 먼저 말할지' 순서에만 쓰고, 후보를 걸러 죽이는 하드 게이트로는
-                # 쓰지 않는다 — 실모드에서 점수가 보수적(전원 τ 미만)이거나 JSON 파싱이 한 번 어긋나도
-                # Phase C 토론이 통째로 사라지지 않도록. 수렴은 allow_pass(할 말 없으면 [PASS]) +
-                # 세그먼트/에이전트 발화 상한으로 자연 종료된다.
-                cands = [a for a in agents if a.id != last_speaker_id and seg_count[a.id] < config.MAX_C_PER_AGENT]
-                cands.sort(key=lambda a: (seg_count[a.id], -_interest(a)))
+                # 후보 필터 (plan 0026):
+                # - 직전 PHASE_C_RECENT_LOCK 턴(default 2) 발화자 제외 → "내가 말했으면 다른 2명 말할 때까지 발화 못함"
+                # - 라운드 누적 발화 ROUND_C_MAX_PER_AGENT 미만 → "찬반토론 라운드 최대 2회"
+                # - 세그먼트 호환: MAX_C_PER_AGENT(default 2) 미만 (보통 recent_lock 이 더 엄격)
+                forbidden = set(recent_speakers[-config.PHASE_C_RECENT_LOCK:])
+                cands = [
+                    a for a in agents
+                    if a.id not in forbidden
+                    and seg_count[a.id] < config.MAX_C_PER_AGENT
+                    and round_c_count[a.id] < config.ROUND_C_MAX_PER_AGENT
+                ]
+                # 관심도 내림차순 (1순위 키). 발화 균등성은 위 필터로만 보장.
+                cands.sort(key=lambda a: -_interest(a))
                 if not cands:
-                    break  # 이 쟁점에 더 말할 사람 없음(전원 발화 상한 도달) → 다음 쟁점으로
-                # 라이브 관심도 송출 (plan 0022) — 발화 전에 '누가 말할 차례인지'를 패널에 반영.
+                    break  # 전원 lock 또는 라운드 상한 도달 → 다음 세그먼트로
+
+                # Phase C 에서 후보가 아닌 사람(직전 lock 또는 라운드 누적 상한 도달)은
+                # excluded 로 전달 → 프론트 카드 dim. seg_count 도달도 포함.
+                excluded = [
+                    a.id for a in agents
+                    if a.id in forbidden
+                    or seg_count[a.id] >= config.MAX_C_PER_AGENT
+                    or round_c_count[a.id] >= config.ROUND_C_MAX_PER_AGENT
+                ]
                 eng_ev = _engagement_payload(r, "C", scores, agents, next_agent_id=cands[0].id,
-                                             probe_index=seg_idx + 1, probe_total=len(segments))
+                                             probe_index=seg_idx + 1, probe_total=len(segments),
+                                             excluded_ids=excluded)
                 if eng_ev:
                     yield eng_ev
-                spoke_this_cycle = False
-                for agent in cands:
-                    if seg_utter >= config.PROBE_MAX_UTTER or c_total >= config.MAX_TIKITAKA_UTTER or _session_over():
-                        break
-                    # 자유토론: 진영 부여 + 같은 말이면 패스(발언 안 함).
-                    # 직전에 누가 말했으면 그 발언에 '직접 답글'을 달게 해 교차 대화를 만든다(v0.4).
-                    # 세그먼트 첫 발화자(직전 화자 없음)는 쟁점에 답(reply_to=None).
-                    reply_to = (
-                        (name_by[last_speaker_id], last_text)
-                        if last_speaker_id and last_speaker_id != agent.id
-                        else None
-                    )
-                    async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id],
-                                                allow_pass=True, reply_to=reply_to):
-                        yield ev
-                    if _holder.get("passed"):
-                        continue  # 새로 더할 게 없어 패스 → 발언으로 치지 않음
-                    spoke_this_cycle = True
-                    last_text = _holder["content"]
-                    last_speaker_id = agent.id
-                    spoke_in_c.add(agent.id)
-                    seg_count[agent.id] += 1
-                    order += 1
-                    seg_utter += 1
-                    c_total += 1
-                if not spoke_this_cycle:
-                    break  # 이번 사이클에 아무도 새 발언 안 함 → 다음 쟁점/세그먼트
+
+                # cycle = 한 사람 발화 (관심도 1위)
+                agent = cands[0]
+                last_speaker = recent_speakers[-1] if recent_speakers else None
+                reply_to = (
+                    (name_by[last_speaker], last_text)
+                    if last_speaker and last_speaker != agent.id
+                    else None
+                )
+                async for ev in _agent_says(agent, active_q, order, r, stance_by[agent.id],
+                                            allow_pass=True, reply_to=reply_to):
+                    yield ev
+                if _holder.get("passed"):
+                    # 패스 — 같은 사람이 다음 cycle 첫 후보로 다시 뽑히지 않게 lock 에 넣음
+                    recent_speakers.append(agent.id)
+                    continue
+                last_text = _holder["content"]
+                recent_speakers.append(agent.id)
+                spoke_in_c.add(agent.id)
+                seg_count[agent.id] += 1
+                round_c_count[agent.id] += 1
+                order += 1
+                seg_utter += 1
+                c_total += 1
 
         # ── Phase D — Phase C 동안 침묵한 에이전트 강제 호명 (Follow-up 1) ──
         if not ended_early:
@@ -557,13 +597,20 @@ async def run_fgi(
                 _WAITERS[session.id] = waiter
                 yield {"type": "user_turn_required", "round": r, "deadline_seconds": int(timeout),
                        "remaining": config.INTERVENTION_MAX_PER_ROUND - interventions}
+                # 디버그(2026-05-29): "안 정해도 자동 진행" 버그가 timeout/외부 sentinel 중 어느 쪽인지 추적.
+                print(f"[FGI] 개입 대기 진입 — session={session.id[:8]} round={r} "
+                      f"timeout={timeout}s slot={interventions + 1}/{config.INTERVENTION_MAX_PER_ROUND}", flush=True)
                 try:
                     user_msg = await asyncio.wait_for(waiter.queue.get(), timeout)
                 except asyncio.TimeoutError:
+                    print(f"[FGI] 개입 대기 timeout — session={session.id[:8]} round={r} ({timeout}s 경과)", flush=True)
                     _WAITERS.pop(session.id, None)
                     break
                 finally:
                     _WAITERS.pop(session.id, None)
+                # 어떤 신호로 풀렸는지 stdout 확인.
+                _signal = "skip" if user_msg == _SKIP_SENTINEL else "intervene"
+                print(f"[FGI] 개입 대기 풀림 — session={session.id[:8]} round={r} signal={_signal}", flush=True)
                 if user_msg == _SKIP_SENTINEL:
                     break  # 사용자가 '개입 안 함' 선택 → 다음 라운드로
                 await db.commit()
@@ -585,7 +632,7 @@ async def run_fgi(
                             yield {"type": "agent_delta", "agent_id": resp_agent.id, "delta": a}
                             if config.STREAM_TOKEN_DELAY_MS > 0:
                                 await asyncio.sleep(config.STREAM_TOKEN_DELAY_MS / 1000)
-                        else:
+                        elif kind == "end":
                             yield {"type": "agent_end", "agent_id": resp_agent.id, "turn_id": a.id,
                                    "content": b, "citations": [], "confidence": "unknown"}
                     order += 1
@@ -599,10 +646,16 @@ async def run_fgi(
         select(FGITurn).where(FGITurn.session_id == session.id)
         .order_by(FGITurn.round, FGITurn.order_in_round, FGITurn.created_at)
     )).scalars().all()
+    # plan 0029 — agents_persona(이름→한 줄 페르소나 요약)를 넘기면 인사이트별 검증 채팅이
+    # 자동 생성된다. intro_ko 우선, 없으면 persona_full_prompt 앞 200자.
+    agents_persona = {
+        name_by[a.id]: (a.intro_ko or (a.persona_full_prompt or "")[:200] or "")
+        for a in agents
+    }
     rep = await report.build_report(
         topic=session.topic, turns=list(all_turns), name_by_agent=name_by,
         round_summaries=round_summaries, n_agents=len(agents), n_rounds=n_done_rounds,
-        duration_min=duration_min, mock=mock,
+        duration_min=duration_min, agents_persona=agents_persona, mock=mock,
     )
 
     session.minutes_md = json.dumps(rep, ensure_ascii=False)

@@ -36,13 +36,14 @@ interface UiTurn {
   content: string;
 }
 
-/** 발화자 선정 시점의 라이브 관심도 (plan 0022 · engagement 이벤트). */
+/** 발화자 선정 시점의 라이브 관심도 (plan 0022 · 0026 · engagement 이벤트). */
 interface EngagementLive {
   scores: Record<string, number>;   // agent_id → 추정 관심도 0~1
   nextAgentId?: string;             // 다음 발화 후보
-  phase: 'C' | 'followup' | 'intervention';
+  phase: 'B' | 'C' | 'followup' | 'intervention';
   probeIndex?: number;
   probeTotal?: number;
+  excludedIds?: string[];           // 이번 cycle 후보 제외(cooling) — dim 처리용
 }
 
 export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
@@ -50,9 +51,11 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     agents.map((a) => [a.id, a.display_name ?? '참여자']),
   );
 
-  // 데모는 시나리오·라운드 hardcode — 사용자 입력·AI 동적 생성 제거.
-  const topic = DEMO_FGI_TOPIC;
+  // 라운드는 hardcoded(데모 안정성), 토픽은 사용자 입력값으로 모더레이터 멘트에 반영.
+  // plan 0027: idle 화면을 ask → generating → ready 로 분기해 "AI 가 생성하는 척" 시연.
   const suggested = DEMO_ROUNDS_PAYLOAD;
+  const [topic, setTopic] = useState<string>(DEMO_FGI_TOPIC);
+  const [planStep, setPlanStep] = useState<'ask' | 'generating' | 'ready'>('ask');
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [round, setRound] = useState(0);
   const [turns, setTurns] = useState<UiTurn[]>([]);
@@ -61,6 +64,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const [modStreaming, setModStreaming] = useState<string | null>(null);
   const [interveneAsking, setInterveneAsking] = useState(false);  // 개입 여부 먼저 묻는 단계
   const [interveneActive, setInterveneActive] = useState(false);  // '네' 선택 후 채팅 입력 단계
+  const [interveneDeadline, setInterveneDeadline] = useState<number | null>(null);  // 백엔드 timeout 가시화 (디버그 + UX)
   const [error, setError] = useState<string | null>(null);
   const [engagement, setEngagement] = useState<EngagementLive | null>(null);
 
@@ -135,23 +139,27 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             // LLM engagement 응답이 partial (일부 agent 누락) 인 경우가 있어 매 이벤트마다
             // 덮어쓰면 직전 이벤트에서 받은 다른 agent 점수가 사라져 "1명만 표시" 되는
             // 버그가 생긴다. 직전 scores 와 merge 해서 누적 유지.
+            // excluded 는 매 이벤트마다 새로 전송되므로 merge 하지 않고 전체 교체.
             setEngagement((prev) => ({
               scores: { ...(prev?.scores ?? {}), ...ev.scores },
               nextAgentId: ev.next_agent_id,
               phase: ev.phase,
               probeIndex: ev.probe_index,
               probeTotal: ev.probe_total,
+              excludedIds: ev.excluded ?? [],
             }));
             break;
           case 'user_turn_required':
             // 먼저 개입 여부를 묻고(자동 진행 없음), '네'일 때만 채팅 입력을 연다.
             setInterveneAsking(true);
             setInterveneActive(false);
+            setInterveneDeadline(ev.deadline_seconds);
             break;
           case 'round_end':
             // 개입 구간 종료
             setInterveneAsking(false);
             setInterveneActive(false);
+            setInterveneDeadline(null);
             break;
           case 'session_end':
             setPhase('done');
@@ -203,54 +211,103 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       {phase === 'idle' && (
         <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
           <Card>
-            <div className="mb-3 flex items-center gap-2">
-              <Badge variant="success" size="sm">플랜 생성 완료</Badge>
-              <span className="text-xs text-text-muted">예상 소요 시간: 25~30분 · 3라운드</span>
-            </div>
-            <h3 className="text-lg font-bold text-text-primary">포토이즘 재방문율 향상 요인 탐색</h3>
-            <p className="mb-4 mt-0.5 text-xs text-text-muted">AI 사회자가 생성한 토론 플랜</p>
+            {planStep === 'ask' && (
+              <>
+                <div className="mb-3 flex items-center gap-2">
+                  <Badge variant="indigo" size="sm">의뢰 작성</Badge>
+                  <span className="text-xs text-text-muted">AI 사회자가 토론 플랜을 설계합니다</span>
+                </div>
+                <h3 className="text-lg font-bold text-text-primary">어떤 주제를 탐색해 볼까요?</h3>
+                <p className="mb-4 mt-0.5 text-xs text-text-muted">
+                  의뢰 내용을 입력하면 AI 사회자가 라운드를 자동 설계합니다.
+                </p>
 
-            {/* 기업 핵심 질문 박스 */}
-            <div className="mb-4 rounded-r-lg border-l-[3px] border-ditto-indigo bg-ditto-indigo-light px-4 py-3">
-              <p className="mb-1 text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
-                기업 관계자 궁금증
-              </p>
-              <p className="text-sm leading-relaxed text-text-primary">{topic}</p>
-            </div>
+                <label className="mb-1.5 block text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+                  FGI 의뢰 내용
+                </label>
+                <textarea
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-ditto-indigo"
+                  placeholder="예: 포토이즘 재방문율 향상 요인 탐색"
+                />
 
-            <p className="mb-2.5 text-2xs font-bold uppercase tracking-wider text-text-muted">
-              AI 사회자가 생성한 토론 플랜
-            </p>
-
-            <ol className="space-y-2.5">
-              {DEMO_FGI_ROUNDS.map((r) => (
-                <li
-                  key={r.round}
-                  className="grid grid-cols-[40px_1fr_auto] items-center gap-3 rounded-lg border border-transparent bg-bg p-3.5 transition-colors hover:border-border"
+                <button
+                  onClick={() => {
+                    if (!topic.trim() || !agents.length) return;
+                    setPlanStep('generating');
+                    setTimeout(() => setPlanStep('ready'), 2500);
+                  }}
+                  disabled={!agents.length || !topic.trim()}
+                  className="mt-4 w-full rounded-lg bg-ditto-indigo px-4 py-3.5 text-base font-bold text-white transition-colors hover:bg-ditto-indigo-hover disabled:opacity-50"
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ditto-indigo text-2xs font-bold text-white">
-                    R{r.round}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-text-primary">{r.subtopic}</p>
-                    <p className="mt-0.5 truncate text-xs text-text-muted">
-                      목표: {r.goal_summary}
-                    </p>
-                  </div>
-                  <span className="whitespace-nowrap rounded-full border border-border bg-surface px-2.5 py-1 text-2xs font-medium text-text-muted">
-                    8~10분
-                  </span>
-                </li>
-              ))}
-            </ol>
+                  AI 사회자에게 분석 의뢰
+                </button>
+              </>
+            )}
 
-            <button
-              onClick={start}
-              disabled={!agents.length}
-              className="mt-5 w-full rounded-lg bg-ditto-indigo px-4 py-3.5 text-base font-bold text-white transition-colors hover:bg-ditto-indigo-hover disabled:opacity-50"
-            >
-              FGI 시작하기
-            </button>
+            {planStep === 'generating' && (
+              <div className="flex flex-col items-center justify-center gap-3 py-16">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-ditto-indigo border-t-transparent" />
+                <p className="text-sm font-bold text-text-primary">AI 사회자가 토론 플랜을 생성하고 있어요…</p>
+                <p className="text-xs text-text-muted">의뢰 내용을 바탕으로 라운드를 설계 중</p>
+              </div>
+            )}
+
+            {planStep === 'ready' && (
+              <>
+                <div className="mb-3 flex items-center gap-2">
+                  <Badge variant="success" size="sm">플랜 생성 완료</Badge>
+                  <span className="text-xs text-text-muted">예상 소요 시간: 25~30분 · 3라운드</span>
+                </div>
+                <h3 className="text-lg font-bold text-text-primary">AI 사회자가 설계한 토론 플랜</h3>
+                <p className="mb-4 mt-0.5 text-xs text-text-muted">3개 라운드로 의뢰 내용을 깊게 탐색합니다.</p>
+
+                {/* FGI 의뢰 내용 박스 */}
+                <div className="mb-4 rounded-r-lg border-l-[3px] border-ditto-indigo bg-ditto-indigo-light px-4 py-3">
+                  <p className="mb-1 text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+                    FGI 의뢰 내용
+                  </p>
+                  <p className="text-sm leading-relaxed text-text-primary">{topic}</p>
+                </div>
+
+                <p className="mb-2.5 text-2xs font-bold uppercase tracking-wider text-text-muted">
+                  소주제별 토론 라운드
+                </p>
+
+                <ol className="space-y-2.5">
+                  {DEMO_FGI_ROUNDS.map((r, idx) => (
+                    <li
+                      key={r.round}
+                      style={{ animationDelay: `${idx * 200}ms` }}
+                      className="grid animate-[fadeInUp_0.45s_ease-out_both] grid-cols-[40px_1fr_auto] items-center gap-3 rounded-lg border border-transparent bg-bg p-3.5 transition-colors hover:border-border"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ditto-indigo text-2xs font-bold text-white">
+                        R{r.round}
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-text-primary">{r.subtopic}</p>
+                        <p className="mt-0.5 truncate text-xs text-text-muted">
+                          목표: {r.goal_summary}
+                        </p>
+                      </div>
+                      <span className="whitespace-nowrap rounded-full border border-border bg-surface px-2.5 py-1 text-2xs font-medium text-text-muted">
+                        8~10분
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+
+                <button
+                  onClick={start}
+                  disabled={!agents.length}
+                  className="mt-5 w-full rounded-lg bg-ditto-indigo px-4 py-3.5 text-base font-bold text-white transition-colors hover:bg-ditto-indigo-hover disabled:opacity-50"
+                >
+                  FGI 시작하기
+                </button>
+              </>
+            )}
           </Card>
 
           <FGIAgentPanel agents={agents} />
@@ -306,9 +363,14 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
               {interveneAsking ? (
                 <>
                   <h4 className="mb-1 text-sm font-bold text-text-primary">✍️ 라운드가 끝났어요</h4>
-                  <p className="mb-3 text-sm text-text-secondary">
+                  <p className="mb-1 text-sm text-text-secondary">
                     위 대화를 천천히 읽어보시고 개입 여부를 결정하세요. 선택하실 때까지 회의는 기다립니다.
                   </p>
+                  {interveneDeadline != null && (
+                    <p className="mb-3 text-2xs text-text-muted">
+                      최대 대기 시간: {Math.floor(interveneDeadline / 60)}분 {interveneDeadline % 60 > 0 ? `${interveneDeadline % 60}초` : ''}
+                    </p>
+                  )}
                   <div className="flex items-center justify-end gap-2">
                     <button
                       onClick={declineIntervention}
@@ -418,6 +480,7 @@ function FGILiveEngagementPanel({
 
   const contextLabel = (() => {
     if (!engagement) return running ? '발화자 분석 대기 중…' : '토론 종료';
+    if (engagement.phase === 'B') return '1차 답변';
     if (engagement.phase === 'C') {
       const seg = engagement.probeIndex && engagement.probeTotal
         ? ` · 쟁점 ${engagement.probeIndex}/${engagement.probeTotal}`
@@ -429,10 +492,7 @@ function FGILiveEngagementPanel({
 
   return (
     <Card className="flex h-full flex-col">
-      <h3 className="flex items-center gap-2 text-sm font-bold text-text-primary">
-        실시간 관심도
-        <span className="rounded-full bg-ditto-violet px-2 py-0.5 text-2xs font-bold text-white">LIVE</span>
-      </h3>
+      <h3 className="text-sm font-bold text-text-primary">실시간 관심도</h3>
       <p className="mb-3 mt-0.5 text-2xs text-text-muted">
         발화권은 소주제 관련성·관심도로 매 턴 동적 배분됩니다. (LLM 추정 관심도)
       </p>
@@ -446,14 +506,21 @@ function FGILiveEngagementPanel({
           // ("1등만 게이지 나옴" 방지). 숫자 칩은 실측치 그대로 노출해 혼동 방지.
           const pct = Math.max(15, Math.round(value * 100));
           const isNext = engagement?.nextAgentId === a.id;
+          // 발화 cooling — Phase B 에서 이미 1차 답변 끝낸 사람, Phase C 에서 직전 lock /
+          // 라운드 누적 상한 도달자. 카드를 dim 처리 + "쿨다운" 배지로 사용자에게 명확히.
+          const isCooling = !isNext && (engagement?.excludedIds?.includes(a.id) ?? false);
           return (
             <div
               key={a.id}
-              className={`rounded-xl border p-2.5 transition-colors ${
-                isNext ? 'border-ditto-indigo bg-ditto-indigo-light/50' : 'border-border bg-bg'
+              className={`rounded-xl border p-2.5 transition-all duration-300 ${
+                isNext
+                  ? 'border-ditto-indigo bg-ditto-indigo-light/50'
+                  : isCooling
+                    ? 'border-border bg-bg'
+                    : 'border-border bg-bg'
               }`}
             >
-              <div className="mb-1.5 flex items-center gap-1.5">
+              <div className={`mb-1.5 flex items-center gap-1.5 ${isCooling ? 'opacity-60' : ''}`}>
                 <span className="text-base leading-none">{a.emoji ?? '👤'}</span>
                 <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
                   {a.display_name ?? '참여자'}
@@ -466,14 +533,23 @@ function FGILiveEngagementPanel({
                     다음 발화
                   </span>
                 )}
+                {isCooling && (
+                  <span className="rounded-full border border-border bg-surface px-1.5 py-0.5 text-2xs font-medium text-text-muted">
+                    발화 완료
+                  </span>
+                )}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/50">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    isNext ? 'bg-ditto-indigo' : 'bg-ditto-violet/70'
-                  }`}
-                  style={{ width: `${pct}%` }}
-                />
+                {/* cooling(발화 완료) 상태에선 막대 progress 를 그리지 않아 "현재 후보 아님" 을
+                    시각적으로 분명히. 트랙은 유지해 카드 높이 일관 보장. */}
+                {!isCooling && (
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      isNext ? 'bg-ditto-indigo' : 'bg-violet-500'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                )}
               </div>
             </div>
           );

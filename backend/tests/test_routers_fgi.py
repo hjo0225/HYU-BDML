@@ -250,7 +250,7 @@ def test_engagement_events_emitted():
             eng = [e for e in events if e["type"] == "engagement"]
             assert eng, "engagement 이벤트가 하나도 송출되지 않음"
             ev = eng[0]
-            assert ev["phase"] in ("C", "followup", "intervention")
+            assert ev["phase"] in ("B", "C", "followup", "intervention")  # plan 0026: Phase B 도 송출
             assert set(ev["scores"]) == set(agent_ids)          # 전원 점수 포함
             assert all(0.0 <= v <= 1.0 for v in ev["scores"].values())
             assert ev.get("next_agent_id") in agent_ids

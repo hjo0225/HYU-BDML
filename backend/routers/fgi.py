@@ -165,9 +165,13 @@ async def run_fgi_session(
             by_id = {a.id: a for a in res2.scalars().all()}
             ordered = [by_id[aid] for aid in agent_ids]
             try:
+                # plan 0026 후속 — 개입 timeout 을 명시적으로 30분(1800초)으로 고정.
+                # env(FGI_INTERVENTION_TIMEOUT)가 짧게 설정돼도 라우터가 강제하므로
+                # "사용자가 안 정해도 진행" 자동 진행 버그를 차단한다.
                 async for ev in engine.run_fgi(
                     stream_db, session=stream_sess, agents=ordered,
                     max_rounds=max_rounds, allow_user_intervention=allow_user_intervention,
+                    intervention_timeout=1800,
                     plan=plan,
                 ):
                     yield sse(ev)

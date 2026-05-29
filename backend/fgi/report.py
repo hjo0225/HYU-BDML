@@ -12,9 +12,11 @@ from datetime import datetime, timezone
 
 from database import FGITurn
 from fgi.prompts.report import REPORT_SYSTEM, REPORT_USER
+from fgi.prompts.verify import VERIFY_SYSTEM, VERIFY_USER
 from services.llm_client import chat_completion
 
 _REPORT_MODEL = "gpt-4o-mini"
+_VERIFY_MODEL = "gpt-4.1-mini"  # plan 0029 — 보고서 인사이트별 검증 채팅 자동 생성
 
 
 def _speaker(turn: FGITurn, name_by_agent: dict[str, str]) -> str:
@@ -71,6 +73,71 @@ def _mock_report(turns: list[FGITurn], name_by_agent: dict[str, str]) -> dict:
     }
 
 
+def _quotes_by_speaker(turns: list[FGITurn], speaker_id: str, k: int = 3) -> list[str]:
+    """특정 화자의 의미 있는 발화 N개 (검증 프롬프트 컨텍스트용)."""
+    out: list[str] = []
+    for t in turns:
+        if t.role == "agent" and t.agent_id == speaker_id and len(t.content) > 20:
+            out.append(t.content)
+            if len(out) >= k:
+                break
+    return out
+
+
+async def _build_one_verification(
+    *,
+    insight: dict,
+    turns: list[FGITurn],
+    id_by_name: dict[str, str],
+    agents_persona: dict[str, str],
+    mock: bool | None,
+) -> dict | None:
+    """단일 인사이트 → 화자와의 검증 채팅 (plan 0029).
+
+    화자가 ins.sources 의 첫 이름. 없거나 LLM 실패 시 None 반환 → 보고서에서 생략.
+    """
+    sources = insight.get("sources") or []
+    if not sources:
+        return None
+    speaker_name = sources[0]
+    speaker_id = id_by_name.get(speaker_name)
+    if not speaker_id:
+        return None
+    quotes = _quotes_by_speaker(turns, speaker_id)
+    if not quotes:
+        return None
+    speaker_quotes = "\n".join(f"- \"{q}\"" for q in quotes)
+    try:
+        raw = (await chat_completion(
+            system=VERIFY_SYSTEM,
+            user=VERIFY_USER.format(
+                insight_title=insight.get("title", ""),
+                insight_desc=insight.get("description", ""),
+                speaker_name=speaker_name,
+                speaker_persona=agents_persona.get(speaker_name, "(페르소나 정보 없음)"),
+                speaker_quotes=speaker_quotes,
+            ),
+            model=_VERIFY_MODEL, temperature=0.6, max_tokens=900, mock=mock,
+        )).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        data = json.loads(raw)
+        turns_out = data.get("turns") or []
+        if len(turns_out) < 2:
+            return None
+        return {
+            "insight_title": insight.get("title", ""),
+            "with": data.get("with") or speaker_name,
+            "turns": [
+                {"role": t.get("role", "analyst"), "text": (t.get("text") or "").strip()}
+                for t in turns_out if (t.get("text") or "").strip()
+            ],
+            "conclusion": (data.get("conclusion") or "").strip(),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def build_report(
     *,
     topic: str,
@@ -80,9 +147,14 @@ async def build_report(
     n_agents: int,
     n_rounds: int,
     duration_min: int | None,
+    agents_persona: dict[str, str] | None = None,
     mock: bool | None = None,
 ) -> dict:
-    """구조화 인사이트 보고서 dict. meta·round title 은 엔진/플랜 값, 인사이트·라운드 요약은 LLM(실패 시 mock)."""
+    """구조화 인사이트 보고서 dict. meta·round title 은 엔진/플랜 값, 인사이트·라운드 요약은 LLM(실패 시 mock).
+
+    plan 0029: agents_persona(name→페르소나 요약) 가 주어지면 key_insights 각 항목별로
+    화자와의 검증 채팅(verifications)을 LLM 으로 자동 생성해 첨부한다.
+    """
     transcript = _format_transcript(turns, name_by_agent)
     names = ", ".join(dict.fromkeys(name_by_agent.values()))
     # 라운드 구성(번호→소주제) 을 LLM 에 함께 줘서 라운드별 분석 요약을 정렬되게 생성.
@@ -119,6 +191,18 @@ async def build_report(
     except Exception:  # noqa: BLE001
         llm_part = _mock_report(turns, name_by_agent)
 
+    # plan 0029 — 인사이트별 검증 채팅 자동 생성. agents_persona 없으면 skip.
+    verifications: list[dict] = []
+    if agents_persona:
+        id_by_name = {n: i for i, n in name_by_agent.items()}
+        for ins in llm_part.get("key_insights", []) or []:
+            v = await _build_one_verification(
+                insight=ins, turns=turns, id_by_name=id_by_name,
+                agents_persona=agents_persona, mock=mock,
+            )
+            if v:
+                verifications.append(v)
+
     return {
         "topic": topic,
         "meta": {
@@ -137,4 +221,5 @@ async def build_report(
             for rs in round_summaries
         ],
         **llm_part,
+        "verifications": verifications,
     }

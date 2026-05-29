@@ -6,6 +6,7 @@
 
 import { useMemo, useState } from 'react';
 import type { HoldoutPair, HoldoutResult } from '@/lib/types';
+import { lensTone, LENS_TONE_GRADIENT, LENS_TONE_TEXT } from '@/lib/lensTone';
 
 interface Props {
   result: HoldoutResult;
@@ -59,12 +60,6 @@ const LENS_META: Record<
     rank: 1,
   },
 };
-
-function tone(agreement: number): 'green' | 'orange' | 'red' {
-  if (agreement >= 0.8) return 'green';
-  if (agreement >= 0.6) return 'orange';
-  return 'red';
-}
 
 // §01·§02 페어 선별 — 포토이즘 인터뷰 (section='INT') 답변만 사용.
 // 객관식 척도 답변은 "4 - 어느 정도 동의한다" 같은 raw 라 인간/AI 비대칭이 어색.
@@ -130,9 +125,8 @@ export function SimilarityDashboard({ result }: Props) {
             진짜 <span className="font-normal">{result.agent_display_name ?? '그 사람'}</span>처럼
             답할 수 있을까?
           </h1>
-          <p className="max-w-xl text-base text-white/65">
-            실제 사람 1명과, 그 사람의 페르소나로 만든 AI 에이전트에게 동일한 {result.n_total}개
-            질문을 던졌습니다.
+          <p className="whitespace-nowrap text-base text-white/65">
+            실제 사람 1명과, 그 사람의 페르소나로 만든 AI 에이전트에게 동일한 {result.n_total}개 질문을 던졌습니다.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Chip>n = {result.n_total} 응답</Chip>
@@ -287,8 +281,10 @@ function HookGame({ pair }: { pair: HoldoutPair }) {
 
   const [revealed, setRevealed] = useState<'A' | 'B' | null>(null);
   const aIsHuman = humanFirst;
-  const cardA = aIsHuman ? pair.human_answer : pair.agent_answer;
-  const cardB = aIsHuman ? pair.agent_answer : pair.human_answer;
+  const humanAnswer = pair.human_answer_display ?? pair.human_answer;
+  const agentAnswer = pair.agent_answer_display ?? pair.agent_answer;
+  const cardA = aIsHuman ? humanAnswer : agentAnswer;
+  const cardB = aIsHuman ? agentAnswer : humanAnswer;
   const correct: 'A' | 'B' = aIsHuman ? 'A' : 'B';
 
   const onPick = (choice: 'A' | 'B') => {
@@ -401,7 +397,7 @@ function EvidenceBlock({ pair }: { pair: HoldoutPair }) {
             </span>
           </p>
           <p className="text-[15px] leading-[1.6] text-text-primary">
-            &quot;{pair.human_answer}&quot;
+            &quot;{pair.human_answer_display ?? pair.human_answer}&quot;
           </p>
         </div>
         <div className="p-6">
@@ -411,12 +407,12 @@ function EvidenceBlock({ pair }: { pair: HoldoutPair }) {
             </span>
           </p>
           <p className="text-[15px] leading-[1.6] text-text-primary">
-            &quot;{pair.agent_answer}&quot;
+            &quot;{pair.agent_answer_display ?? pair.agent_answer}&quot;
           </p>
         </div>
       </div>
       <div className="flex items-center gap-1.5 border-t border-border bg-success/5 px-6 py-2.5 text-[11px] font-medium tracking-[0.04em] text-success">
-        <span className="text-[13px]">✓</span> SEMANTIC MATCH · {Math.round(pair.confidence * 100)}%
+        <span className="text-[13px]">✓</span> SEMANTIC MATCH
       </div>
     </div>
   );
@@ -440,13 +436,7 @@ function LensChart({
         />
         {lensSorted.map((b) => {
           const pct = Math.round(b.agreement * 100);
-          const t = tone(b.agreement);
-          const gradient =
-            t === 'green'
-              ? 'linear-gradient(180deg, var(--success), #059669)'
-              : t === 'orange'
-              ? 'linear-gradient(180deg, var(--warning), #d97706)'
-              : 'linear-gradient(180deg, var(--error), #dc2626)';
+          const gradient = LENS_TONE_GRADIENT[lensTone(b.agreement)];
           return (
             <div
               key={b.lens}
@@ -492,9 +482,7 @@ function LensDescItem({
   const meta = LENS_META[lens];
   if (!meta) return null;
   const pct = Math.round(agreement * 100);
-  const t = tone(agreement);
-  const pctColor =
-    t === 'green' ? 'text-success' : t === 'orange' ? 'text-warning' : 'text-error';
+  const pctColor = LENS_TONE_TEXT[lensTone(agreement)];
 
   return (
     <div className="grid grid-cols-[80px_1fr] items-start gap-4 border-b border-border px-8 py-5 transition-colors last:border-b-0 hover:bg-bg">

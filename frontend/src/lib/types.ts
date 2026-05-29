@@ -144,6 +144,10 @@ export interface HoldoutPair {
   question: string;
   human_answer: string;
   agent_answer: string;
+  // 표시 전용 — 사람·AI 답변을 같은 말투로 통일한 버전 (restyle_holdout_display 사전계산).
+  // 유사도 점수는 원본(human_answer·agent_answer) 기준. 없으면 원본으로 폴백.
+  human_answer_display?: string;
+  agent_answer_display?: string;
   verdict: HoldoutVerdict;
   confidence: number;      // 0~1
   rationale: string;
@@ -310,7 +314,15 @@ export interface SuggestRoundsResponse {
   rounds: SuggestedRound[];
 }
 
-/** 구조화 인사이트 보고서 (FGI v2 · plan 0008). minutes_md 에 JSON 문자열로도 저장. */
+/** plan 0029 — 인사이트 검증 follow-up 채팅 (보고서 자동 첨부). */
+export interface VerifyDialogue {
+  insight_title: string;     // 어느 인사이트에 대한 검증인지 매칭 키
+  with: string;              // 화자 이름 (분석가의 1:1 후속 대상)
+  turns: { role: 'analyst' | 'agent'; text: string }[];
+  conclusion: string;        // "인사이트 재확인 · ..." 또는 "정교화 · ..."
+}
+
+/** 구조화 인사이트 보고서 (FGI v2 · plan 0008 / 0029). minutes_md 에 JSON 문자열로도 저장. */
 export interface FGIReport {
   topic: string;
   meta: { date: string; n_agents: number; n_rounds: number; duration_min: number | null };
@@ -318,6 +330,7 @@ export interface FGIReport {
   agent_perspectives: { name: string; stance: string; key_quote: string }[];
   round_analysis: { round: number; title: string; summary: string }[];
   action_items: { title: string; description: string; expected_effect: string }[];
+  verifications?: VerifyDialogue[];  // plan 0029 — 인사이트별 1:1 검증 채팅 (선택)
 }
 
 /** /api/fgi-sessions/{id}/run SSE 이벤트 (api-spec.md). */
@@ -335,14 +348,19 @@ export type FGIStreamEvent =
       confidence: string;
     }
   | {
-      // 발화자 선정 시점의 참여자별 추정 관심도 라이브 송출 (plan 0022).
+      // 발화자 선정 시점의 참여자별 추정 관심도 라이브 송출 (plan 0022 / 0026).
+      // phase 'B' 는 plan 0026 에서 Phase B(1차 답변)도 관심도 순으로 바뀌며 추가됨.
       type: 'engagement';
       round: number;
-      phase: 'C' | 'followup' | 'intervention';
+      phase: 'B' | 'C' | 'followup' | 'intervention';
       scores: Record<string, number>;  // agent_id → 관심도(interest) 0~1
       next_agent_id?: string;          // 다음 발화 후보
       probe_index?: number;            // Phase C 쟁점 진행 (1-based)
       probe_total?: number;
+      // 이번 cycle 에 후보가 아닌 agent id 목록 — plan 0026 cooling 표시:
+      // Phase B 에서 이미 1차 답변 끝낸 사람, Phase C 에서 직전 lock 이거나 라운드 누적
+      // 발화 상한 도달한 사람. 프론트는 이 목록의 카드를 dim 처리한다.
+      excluded?: string[];
     }
   | { type: 'user_turn_required'; round: number; deadline_seconds: number; remaining?: number }
   | { type: 'round_end'; round: number; summary: string }
