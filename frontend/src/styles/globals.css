@@ -28,6 +28,7 @@
   --text-muted:     #9ca3af;
 
   /* 상태 */
+  --info:    #3b82f6;
   --success: #10b981;
   --warning: #f59e0b;
   --error:   #ef4444;
@@ -87,6 +88,19 @@ html, body {
 }
 .landing-fade-in-up { animation: landing-fade-in-up 0.4s ease forwards; }
 .landing-typing-dot { animation: landing-typing-bounce 1.2s ease-in-out infinite; }
+
+/* plan 0027 — 데모 FGI 라운드 카드 fade-in (의뢰 생성 직후 차례로 등장) */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 품질평가 시네마틱 — Judge 판정 도장이 톡 튀듯 등장 (scale + 살짝 기울임) */
+@keyframes eval-stamp-in {
+  0%   { opacity: 0; transform: scale(0.4) rotate(-10deg); }
+  60%  { opacity: 1; transform: scale(1.15) rotate(3deg); }
+  100% { opacity: 1; transform: scale(1)    rotate(-3deg); }
+}
 
 /* Hero 뒷배경 indigo 글로우 — 원형 그라데이션을 가운데 상단에 배치 */
 .landing-hero-glow::before {

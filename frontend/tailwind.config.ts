@@ -30,6 +30,7 @@ const config: Config = {
         "text-secondary": "var(--text-secondary)",
         "text-muted":     "var(--text-muted)",
         // 상태
+        info:     "var(--info)",
         success:  "var(--success)",
         warning:  "var(--warning)",
         error:    "var(--error)",

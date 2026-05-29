@@ -9,11 +9,24 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { SimilarityDashboard } from '@/components/dashboard/SimilarityDashboard';
+import {
+  HoldoutEvalCinematic,
+  type OverallAgentRow,
+  type OverallSamplePair,
+} from '@/components/dashboard/HoldoutEvalCinematic';
 import { agents as agentsApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Agent, HoldoutResult, ScatterResponse } from '@/lib/types';
+import type { Agent, HoldoutPair, HoldoutResult, ScatterResponse } from '@/lib/types';
+import { lensTone, LENS_TONE_TEXT } from '@/lib/lensTone';
 
 const pctText = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+
+// 시네마틱은 진입·새로고침·카드 클릭마다 매번 재생한다 (세션 게이팅 없음).
+// 접근성 prefers-reduced-motion 만 존중해 즉시 대시보드로 전환.
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -41,6 +54,10 @@ export function QualityPanel({
   const [holdoutByAgent, setHoldoutByAgent] = useState<Record<string, HoldoutResult>>({});
   const [loading, setLoading] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  // 평가 연출(plan 0027) 상태 — 매번 재생 정책이라 세션 기록 없음.
+  const [overallPhase, setOverallPhase] = useState<'overall' | 'ready'>('ready');
+  const [animatingAgentId, setAnimatingAgentId] = useState<string | null>(null);
+  const [reduced, setReduced] = useState(false);
 
   // 마운트 시 모든 에이전트의 사전계산 holdout 결과를 병렬 fetch. 미적재는 조용히 skip.
   useEffect(() => {
@@ -68,10 +85,17 @@ export function QualityPanel({
       setHoldoutByAgent(map);
       const first = agents.find((a) => map[a.id]);
       if (first) setSelectedAgentId(first.id);
+
+      // 매번 재생 — reduced-motion 만 즉시 대시보드, 결과가 없으면 보일 게 없으니 ready.
+      const rm = prefersReducedMotion();
+      const hasResults = Object.keys(map).length > 0;
+      setReduced(rm);
+      setOverallPhase(rm || !hasResults ? 'ready' : 'overall');
+
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [agents, token]);
+  }, [agents, token, projectId]);
 
   // 프로젝트 단위 집계 — 평균 닮음 / 최고 / 최저 / 평가 완료 수.
   const stats = useMemo(() => {
@@ -87,8 +111,76 @@ export function QualityPanel({
   }, [holdoutByAgent]);
 
   const select = useCallback((id: string) => {
-    if (holdoutByAgent[id]) setSelectedAgentId(id);
-  }, [holdoutByAgent]);
+    if (!holdoutByAgent[id]) return;
+    setSelectedAgentId(id);
+    // reduced-motion 외에는 매번 개별 연출 재생.
+    if (!reduced) setAnimatingAgentId(id);
+  }, [holdoutByAgent, reduced]);
+
+  // 전체 연출 종료 — 대시보드 노출. 직후 선택된 에이전트는 자동 재생 안 함 (클릭 시에만).
+  const finishOverall = useCallback(() => {
+    setOverallPhase('ready');
+  }, []);
+
+  // 개별 연출 종료 — 대시보드 노출.
+  const finishAgent = useCallback(() => {
+    setAnimatingAgentId(null);
+  }, []);
+
+  // 전체 연출용 에이전트 행 (점수 내림차순, 최대 8개) + 대표 문항 수.
+  const agentRows = useMemo<OverallAgentRow[]>(() =>
+    agents
+      .filter((a) => holdoutByAgent[a.id])
+      .map((a) => ({
+        id: a.id,
+        name: a.display_name || '(이름 없음)',
+        emoji: a.emoji ?? '👤',
+        score: holdoutByAgent[a.id].agreement_score,
+      }))
+      .sort((x, y) => y.score - x.score)
+      .slice(0, 8),
+  [agents, holdoutByAgent]);
+  const perAgentN = Object.values(holdoutByAgent)[0]?.n_total ?? 0;
+
+  // 가속 스트림용 샘플 — 에이전트별 페어를 라운드로빈으로 인터리브해 최대 20개. 인접 카드가
+  // 같은 에이전트가 아니라 다양성이 자연스럽게 드러난다. verdict 분포는 실제 데이터를 그대로 반영.
+  const samplePairs = useMemo<OverallSamplePair[]>(() => {
+    if (Object.keys(holdoutByAgent).length === 0) return [];
+    const TARGET = 20;
+    const toCard = (agent: Agent, pair: HoldoutPair): OverallSamplePair => ({
+      agentName: agent.display_name || '(이름 없음)',
+      agentEmoji: agent.emoji ?? '👤',
+      question: pair.question,
+      agentAnswer: pair.agent_answer_display ?? pair.agent_answer,
+      verdict: pair.verdict,
+    });
+    // 각 에이전트의 페어 풀(길이 제한 포함) 을 한 줄에 모은다.
+    const lanes: Array<{ agent: Agent; pool: HoldoutPair[] }> = [];
+    for (const agent of agents) {
+      const h = holdoutByAgent[agent.id];
+      if (!h) continue;
+      const pool = (h.all_pairs ?? [...h.top_matches, ...h.top_mismatches]).filter(
+        (p) => p.question.length > 0,
+      );
+      if (pool.length > 0) lanes.push({ agent, pool });
+    }
+    // 라운드로빈 인터리브.
+    const collected: OverallSamplePair[] = [];
+    let depth = 0;
+    while (collected.length < TARGET) {
+      let added = false;
+      for (const lane of lanes) {
+        if (collected.length >= TARGET) break;
+        const pair = lane.pool[depth];
+        if (!pair) continue;
+        collected.push(toCard(lane.agent, pair));
+        added = true;
+      }
+      if (!added) break;
+      depth += 1;
+    }
+    return collected;
+  }, [agents, holdoutByAgent]);
 
   const selectedHoldout = selectedAgentId ? holdoutByAgent[selectedAgentId] : null;
   const selectedAgent = selectedAgentId ? agents.find((a) => a.id === selectedAgentId) : null;
@@ -131,6 +223,21 @@ export function QualityPanel({
     );
   }
 
+  // 첫 진입 전체 연출 — stat/grid 대신 풀-테이크오버.
+  if (overallPhase === 'overall' && agentRows.length > 0) {
+    return (
+      <HoldoutEvalCinematic
+        mode="overall"
+        agentRows={agentRows}
+        evaluatedCount={stats.evaluated}
+        perAgentN={perAgentN}
+        avg={stats.avg}
+        samplePairs={samplePairs}
+        onComplete={finishOverall}
+      />
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* 프로젝트 단위 집계 4개 카드 */}
@@ -157,7 +264,7 @@ export function QualityPanel({
         />
       </div>
 
-      {/* 에이전트 그리드 — 닮은정도 + Lens 미니막대 */}
+      {/* 에이전트 그리드 — 닮은정도 */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {agents.map((a) => {
           const h = holdoutByAgent[a.id];
@@ -196,11 +303,10 @@ export function QualityPanel({
                   <>
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-2xs font-medium text-text-muted">실제 사람과의 닮은 정도</span>
-                      <span className="text-base font-bold tabular-nums text-text-primary">
+                      <span className={`text-base font-bold tabular-nums ${LENS_TONE_TEXT[lensTone(h.agreement_score)]}`}>
                         {pct}<span className="text-2xs text-text-muted">%</span>
                       </span>
                     </div>
-                    <MiniLensBars by_lens={h.by_lens} />
                   </>
                 ) : (
                   <span className="text-2xs text-text-muted">평가 결과 없음 (사전계산 필요)</span>
@@ -211,62 +317,31 @@ export function QualityPanel({
         })}
       </div>
 
-      {/* 선택된 에이전트의 v7 풀 대시보드 — 자동 노출 */}
+      {/* 선택된 에이전트 — 미연출이면 개별 평가 연출, 끝나면 v7 풀 대시보드 */}
       {selectedHoldout && selectedAgent && (
-        <Card>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
-              선택된 에이전트의 상세 평가
-            </span>
-            <Badge variant="indigo" size="sm">
-              {selectedAgent.emoji ?? '👤'} {selectedAgent.display_name ?? '에이전트'}
-            </Badge>
-            <span className="ml-auto text-2xs text-text-muted">
-              위 카드를 클릭하면 다른 에이전트의 대시보드로 전환됩니다
-            </span>
-          </div>
-          <SimilarityDashboard result={selectedHoldout} />
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ── 카드 내 미니 6-Lens 가로 막대 (DemoAgentsStep 와 동일 패턴) ──────────
-function MiniLensBars({ by_lens }: { by_lens: HoldoutResult['by_lens'] }) {
-  const order = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'];
-  const byKey: Record<string, { agreement: number; n: number }> = {};
-  for (const b of by_lens) byKey[b.lens] = b;
-
-  return (
-    <div className="flex items-center gap-1">
-      {order.map((lens) => {
-        const b = byKey[lens];
-        const pct = b ? Math.round(b.agreement * 100) : 0;
-        const tone =
-          !b || b.n === 0 ? 'bg-border' :
-          b.agreement >= 0.8 ? 'bg-success' :
-          b.agreement >= 0.6 ? 'bg-warning' :
-          'bg-error';
-        return (
-          <div
-            key={lens}
-            className="flex flex-1 flex-col items-center gap-0.5"
-            title={`${lens} ${pct}% (n=${b?.n ?? 0})`}
-          >
-            <div className="h-6 w-full overflow-hidden rounded-sm bg-bg">
-              <div
-                className={`w-full ${tone}`}
-                style={{
-                  height: `${Math.max(pct, 4)}%`,
-                  marginTop: `${100 - Math.max(pct, 4)}%`,
-                }}
-              />
+        animatingAgentId === selectedAgentId ? (
+          <HoldoutEvalCinematic
+            mode="agent"
+            result={selectedHoldout}
+            onComplete={finishAgent}
+          />
+        ) : (
+          <Card>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-2xs font-bold uppercase tracking-wider text-ditto-indigo">
+                선택된 에이전트의 상세 평가
+              </span>
+              <Badge variant="indigo" size="sm">
+                {selectedAgent.emoji ?? '👤'} {selectedAgent.display_name ?? '에이전트'}
+              </Badge>
+              <span className="ml-auto text-2xs text-text-muted">
+                위 카드를 클릭하면 다른 에이전트의 대시보드로 전환됩니다
+              </span>
             </div>
-            <span className="text-[9px] font-medium tracking-[0.04em] text-text-muted">{lens}</span>
-          </div>
-        );
-      })}
+            <SimilarityDashboard result={selectedHoldout} />
+          </Card>
+        )
+      )}
     </div>
   );
 }
