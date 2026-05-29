@@ -20,8 +20,9 @@ from fgi.prompts.utterance import build_v1_1_persona_intro
 from services.agent_service import demographics as _agent_demographics
 from services.llm_client import stream_chat
 
-# package 페르소나(~30k 토큰)는 long-context 모델 필요. gpt-4.1-mini 도 128k 컨텍스트라 충분.
-_LONG_CONTEXT_MODEL = "gpt-4.1-mini"
+# package 페르소나(~30k 토큰)는 long-context 모델 필요. gpt-4.1-nano 도 128k+ 컨텍스트라 충분.
+# 비용 절감 위해 gpt-4.1-nano 로 하향(2026-05-29) — 4.1-mini 의 ¼ 가격. 홀드아웃 평가는 llm_client 기본값 유지.
+_LONG_CONTEXT_MODEL = "gpt-4.1-nano"
 
 
 async def create_conversation(
