@@ -5,6 +5,10 @@ const config: Config = {
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    // lensTone.ts 등 lib 안에서 Tailwind 클래스 문자열(text-info/bg-info 등)을
+    // 정의하므로 반드시 스캔 대상에 포함. 누락 시 해당 클래스 CSS 가 생성되지 않아
+    // 색이 검정으로 폴백됨.
+    "./src/lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
