@@ -80,7 +80,34 @@ function VerifyThread({ v }: { v: VerifyDialogue }) {
   );
 }
 
-export function FGIReportView({ report, onDashboard }: { report: FGIReport; onDashboard?: () => void }) {
+// 영상 촬영용 임시: 회의 종료 보고서를 docs/slides/insight-report-v10.html 그대로 출력.
+// public/reports/insight-report-v10.html 을 iframe 으로 띄워 스타일·스크립트까지 동일하게 렌더.
+// (실 데이터 기반 렌더는 아래 _FGIReportViewDynamic 에 보존 — 복원 시 export 만 교체)
+export function FGIReportView({ onDashboard }: { report: FGIReport; onDashboard?: () => void }) {
+  return (
+    <div className="space-y-3">
+      {onDashboard && (
+        <div className="flex justify-end">
+          <button
+            onClick={onDashboard}
+            className="rounded-lg bg-ditto-indigo px-3 py-1.5 text-xs font-medium text-white hover:bg-ditto-indigo-hover"
+          >
+            대시보드에서 보기
+          </button>
+        </div>
+      )}
+      <iframe
+        src="/reports/insight-report-v10.html"
+        title="FGI 인사이트 보고서 v10"
+        className="w-full rounded-xl border border-border bg-white shadow-card"
+        style={{ height: '85vh', minHeight: 720 }}
+      />
+    </div>
+  );
+}
+
+// 실 데이터 기반 동적 렌더 (복원용). 현재 화면엔 미연결.
+export function FGIReportViewDynamic({ report, onDashboard }: { report: FGIReport; onDashboard?: () => void }) {
   const { meta } = report;
   // 인사이트 title 로 verify 빠른 lookup.
   const verifyByTitle: Record<string, VerifyDialogue> = Object.fromEntries(
