@@ -2,7 +2,7 @@
 
 // FGI 인사이트 보고서 페이지 (plan 0018) — 회의 종료 후 '다음 페이지'에서 보고서를 본다.
 // 세션의 minutes_md(보고서 JSON)를 파싱해 렌더.
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { AppShell } from '@/components/layout/AppShell';
@@ -19,6 +19,7 @@ function ReportView() {
   const params = useParams<{ id: string; sessionId: string }>();
   const projectId = params?.id;
   const sessionId = params?.sessionId;
+  const router = useRouter();
   const { token } = useAuth();
   const [report, setReport] = useState<FGIReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,7 +54,7 @@ function ReportView() {
       {loading ? (
         <LoadingState label="보고서를 불러오는 중…" />
       ) : report ? (
-        <FGIReportView report={report} onDashboard={() => { window.location.href = `/projects/${projectId}`; }} />
+        <FGIReportView report={report} onDashboard={() => router.push(`/projects/${projectId}`)} />
       ) : (
         <Card padding="lg">
           <p className="text-sm text-error">{error || '보고서를 찾을 수 없습니다.'}</p>

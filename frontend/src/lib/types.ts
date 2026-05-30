@@ -364,6 +364,7 @@ export type FGIStreamEvent =
     }
   | { type: 'user_turn_required'; round: number; deadline_seconds: number; remaining?: number }
   | { type: 'round_end'; round: number; summary: string }
+  | { type: 'report_building' }  // 마지막 라운드 종료 후 보고서 생성 시작 — 프론트 오버레이 트리거
   | { type: 'session_end'; report: FGIReport; minutes_md: string }
   | { type: 'error'; reason: string };
 
