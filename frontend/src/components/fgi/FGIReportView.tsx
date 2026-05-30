@@ -1,6 +1,7 @@
 'use client';
 
 // FGI 구조화 인사이트 보고서 렌더 (plan 0008 v2 · §14 · HTML Tab 4 스타일) — 데모·실앱 공용.
+import { useEffect, useRef, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import type { FGIReport, VerifyDialogue } from '@/lib/types';
@@ -83,25 +84,90 @@ function VerifyThread({ v }: { v: VerifyDialogue }) {
 // 영상 촬영용 임시: 회의 종료 보고서를 docs/slides/insight-report-v10.html 그대로 출력.
 // public/reports/insight-report-v10.html 을 iframe 으로 띄워 스타일·스크립트까지 동일하게 렌더.
 // (실 데이터 기반 렌더는 아래 _FGIReportViewDynamic 에 보존 — 복원 시 export 만 교체)
+const REPORT_SRC = '/reports/insight-report-v10.html';
+const REPORT_FILENAME = '포토이즘-FGI-인사이트-보고서.html';
+
+// 상·하단 공용 액션 바 — HTML 다운로드 / PDF 저장 / (선택) 대시보드.
+function ReportActions({
+  onPrint,
+  onDashboard,
+}: {
+  onPrint: () => void;
+  onDashboard?: () => void;
+}) {
+  const ghost =
+    'rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-secondary hover:border-ditto-indigo hover:text-ditto-indigo';
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* 자체 완결형 HTML 파일을 그대로 내려받음 (오프라인에서도 동일하게 열림) */}
+      <a href={REPORT_SRC} download={REPORT_FILENAME} className={ghost}>
+        ⬇ HTML 다운로드
+      </a>
+      {/* iframe 문서를 직접 인쇄 → 브라우저 "PDF로 저장" */}
+      <button onClick={onPrint} className={ghost}>
+        🖨 PDF로 저장
+      </button>
+      {onDashboard && (
+        <button
+          onClick={onDashboard}
+          className="rounded-lg bg-ditto-indigo px-3 py-1.5 text-xs font-medium text-white hover:bg-ditto-indigo-hover"
+        >
+          대시보드에서 보기
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function FGIReportView({ onDashboard }: { report: FGIReport; onDashboard?: () => void }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(720);
+
+  // iframe 내부 콘텐츠 높이에 맞춰 iframe 을 늘려, 내부 스크롤박스 없이 페이지 전체가 쭉 스크롤되게 한다.
+  // 보고서는 동일 출처(/reports)라 contentDocument 접근이 가능하고, ResizeObserver 로 폰트 로드·리플로우까지 반영한다.
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    let ro: ResizeObserver | undefined;
+
+    function attach() {
+      const doc = iframe?.contentDocument;
+      if (!doc) return;
+      const sync = () => {
+        const h = doc.documentElement.scrollHeight;
+        if (h) setHeight(h);
+      };
+      sync();
+      ro = new ResizeObserver(sync);
+      ro.observe(doc.documentElement);
+    }
+
+    iframe.addEventListener('load', attach);
+    // 캐시로 이미 로드 완료된 경우 load 이벤트가 안 올 수 있어 직접 시도.
+    if (iframe.contentDocument?.readyState === 'complete') attach();
+    return () => {
+      iframe.removeEventListener('load', attach);
+      ro?.disconnect();
+    };
+  }, []);
+
+  function printPdf() {
+    iframeRef.current?.contentWindow?.print();
+  }
+
   return (
     <div className="space-y-3">
-      {onDashboard && (
-        <div className="flex justify-end">
-          <button
-            onClick={onDashboard}
-            className="rounded-lg bg-ditto-indigo px-3 py-1.5 text-xs font-medium text-white hover:bg-ditto-indigo-hover"
-          >
-            대시보드에서 보기
-          </button>
-        </div>
-      )}
+      <ReportActions onPrint={printPdf} onDashboard={onDashboard} />
       <iframe
-        src="/reports/insight-report-v10.html"
+        ref={iframeRef}
+        src={REPORT_SRC}
         title="FGI 인사이트 보고서 v10"
+        scrolling="no"
         className="w-full rounded-xl border border-border bg-white shadow-card"
-        style={{ height: '85vh', minHeight: 720 }}
+        style={{ height, minHeight: 720 }}
       />
+      {/* 긴 보고서라 끝까지 읽은 뒤 다시 위로 올라가지 않아도 되게 하단에도 다운로드 제공 */}
+      <ReportActions onPrint={printPdf} onDashboard={onDashboard} />
     </div>
   );
 }
