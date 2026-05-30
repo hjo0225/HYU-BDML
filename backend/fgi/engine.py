@@ -649,6 +649,10 @@ async def run_fgi(
                     order += 1
 
     # 세션 종료 → 기억 영속 + 구조화 보고서
+    # build_report 는 인사이트·검증 채팅 등 LLM 다회 호출로 수 초~수십 초 걸린다. 그 사이 마지막
+    # round_end 이후 session_end 까지 토론창이 멈춘 듯 보여서, '보고서 생성 중' 신호를 먼저 보내
+    # 프론트가 오버레이 애니메이션을 띄우게 한다(2026-05-30).
+    yield {"type": "report_building"}
     n_done_rounds = len(round_summaries)
     await memory.persist_fgi_memories(db, session_id=session.id, topic=session.topic, agent_ids=agent_ids, mock=mock)
     duration_min = max(1, round((_now() - started_dt).total_seconds() / 60))

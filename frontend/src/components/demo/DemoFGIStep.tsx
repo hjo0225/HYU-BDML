@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ChatBubble } from '@/components/chat/ChatBubble';
 import { FGIInterventionInput } from '@/components/chat/FGIInterventionInput';
+import { ReportBuildingOverlay } from '@/components/fgi/ReportBuildingOverlay';
 import { fgi as fgiApi } from '@/lib/api';
 import { useProjectContext } from '@/contexts/ProjectContext';
 import { personaKeywords } from '@/lib/persona';
@@ -67,6 +68,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
   const [interveneDeadline, setInterveneDeadline] = useState<number | null>(null);  // 백엔드 timeout 가시화 (디버그 + UX)
   const [error, setError] = useState<string | null>(null);
   const [engagement, setEngagement] = useState<EngagementLive | null>(null);
+  // 마지막 라운드 종료 후 보고서 생성(build_report) 동안 토론창 위 오버레이 표시.
+  const [buildingReport, setBuildingReport] = useState(false);
 
   const { setFgiRunning } = useProjectContext();
 
@@ -91,6 +94,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
     setTurns([]);
     setModStreaming(null);
     setStreaming(null);
+    setBuildingReport(false);
     // 첫 engagement 이벤트가 오기 전에도 모든 에이전트가 게이지에 보이도록 baseline 0.5 로 초기화.
     // 이후 'engagement' 이벤트가 오면 merge 로 실측치가 덮어쓴다.
     setEngagement({
@@ -161,7 +165,14 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             setInterveneActive(false);
             setInterveneDeadline(null);
             break;
+          case 'report_building':
+            // 마지막 라운드 종료 → 보고서 생성 시작. 토론창 위 오버레이 켜고 진행 중 스트림 정리.
+            setStreaming(null);
+            setModStreaming(null);
+            setBuildingReport(true);
+            break;
           case 'session_end':
+            setBuildingReport(false);
             setPhase('done');
             onComplete(session.id, ev.report);
             break;
@@ -172,6 +183,7 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'FGI 진행 실패');
+      setBuildingReport(false);
       setPhase('idle');
     }
   }, [phase, agents, token, projectId, topic, suggested]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -320,11 +332,15 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Badge variant={phase === 'done' ? 'success' : 'indigo'} dot>
-                {phase === 'done' ? '회의 종료' : `진행 중 · Round ${round}`}
+                {phase === 'done'
+                  ? '회의 종료'
+                  : buildingReport
+                    ? '보고서 생성 중'
+                    : `진행 중 · Round ${round}`}
               </Badge>
               <span className="text-xs text-text-muted">{agents.length}명 참여</span>
             </div>
-            {phase === 'running' && (
+            {phase === 'running' && !buildingReport && (
               <div className="flex items-center gap-2">
                 <button onClick={() => control('next_round')} className="rounded-lg border border-border px-2.5 py-1 text-2xs font-medium text-text-secondary hover:border-ditto-indigo hover:text-ditto-indigo">
                   다음 주제로 →
@@ -336,23 +352,27 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             )}
           </div>
 
-          <div className="mb-3 h-[420px] space-y-3 overflow-y-auto rounded-xl border border-border bg-bg p-4">
-            {turns.map((t) => (
-              <ChatBubble key={t.id} role={t.role} author={t.author}>
-                {t.content}
-              </ChatBubble>
-            ))}
-            {modStreaming !== null && (
-              <ChatBubble role="user" author="모더레이터">
-                {modStreaming || '…'}
-              </ChatBubble>
-            )}
-            {streaming && (
-              <ChatBubble role="agent" author={nameById[streaming.agentId] ?? '참여자'}>
-                {streaming.text || '…'}
-              </ChatBubble>
-            )}
-            <div ref={bottomRef} />
+          {/* 토론창 — 보고서 생성 중에는 위에 반복 재생 오버레이를 덮어 '멈춘 듯' 보이지 않게 한다. */}
+          <div className="relative mb-3">
+            <div className="h-[420px] space-y-3 overflow-y-auto rounded-xl border border-border bg-bg p-4">
+              {turns.map((t) => (
+                <ChatBubble key={t.id} role={t.role} author={t.author}>
+                  {t.content}
+                </ChatBubble>
+              ))}
+              {modStreaming !== null && (
+                <ChatBubble role="user" author="모더레이터">
+                  {modStreaming || '…'}
+                </ChatBubble>
+              )}
+              {streaming && (
+                <ChatBubble role="agent" author={nameById[streaming.agentId] ?? '참여자'}>
+                  {streaming.text || '…'}
+                </ChatBubble>
+              )}
+              <div ref={bottomRef} />
+            </div>
+            {buildingReport && <ReportBuildingOverlay />}
           </div>
 
           {/* 개입 패널 — 채팅 박스 바로 아래 인라인. 팝업 대신 같은 Card 안에 두어
