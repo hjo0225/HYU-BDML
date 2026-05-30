@@ -15,6 +15,14 @@ import openai
 
 _DEFAULT_MODEL = os.getenv("CHAT_MODEL", "gpt-4.1-mini")
 
+# OpenAI 호출 stall 방어 (2026-05-30). 타임아웃 미설정 시 SDK 기본 600초라, 호출이 멈추면
+# FGI SSE 가 그 동안 무송신이 되어 연결이 끊긴다(heartbeat 와 별개로 발화 자체가 지연).
+# 스트리밍에선 이 값이 청크 사이 read 타임아웃으로 동작 → 토큰이 N초간 안 오면 에러로 끊고
+# 상위(_produce)가 그 에러를 스트림으로 전달, 모더레이터 경로는 fallback 으로 복구한다.
+# env 로 조정 가능. 재시도는 연결/일시 오류에 한해 SDK 가 처리.
+_OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "60"))
+_OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+
 
 def _has_api_key() -> bool:
     key = os.getenv("OPENAI_API_KEY", "")
@@ -67,7 +75,8 @@ async def chat_completion(
         return _mock_answer(system, user)
 
     def _call() -> str:
-        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                               timeout=_OPENAI_TIMEOUT, max_retries=_OPENAI_MAX_RETRIES)
         res = client.chat.completions.create(
             model=model or _DEFAULT_MODEL,
             temperature=temperature,
@@ -122,7 +131,8 @@ async def stream_chat(
 
     def _produce() -> None:
         try:
-            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                                   timeout=_OPENAI_TIMEOUT, max_retries=_OPENAI_MAX_RETRIES)
             stream = client.chat.completions.create(
                 model=model or _DEFAULT_MODEL,
                 temperature=temperature,

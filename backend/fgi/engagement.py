@@ -52,7 +52,12 @@ async def embed_text(text: str, *, mock: bool | None = None) -> list[float]:
         import openai
 
         def _call() -> list[float]:
-            client = openai.OpenAI(api_key=key)
+            # 임베딩 호출 stall 방어 — 멈추면 발화자 선정이 지연돼 SSE 무송신으로 이어진다.
+            client = openai.OpenAI(
+                api_key=key,
+                timeout=float(os.getenv("OPENAI_TIMEOUT", "60")),
+                max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
+            )
             r = client.embeddings.create(model="text-embedding-3-small", input=text[:8000])
             return r.data[0].embedding
 
