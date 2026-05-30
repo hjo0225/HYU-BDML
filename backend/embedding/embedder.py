@@ -68,7 +68,12 @@ def embed(text: str, use_cache: bool = True, synthetic: bool | None = None) -> l
         if cached is not None:
             return cached
 
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # 호출 stall 방어 — 타임아웃 미설정 시 SDK 기본 600초. (2026-05-30)
+    client = openai.OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=float(os.getenv("OPENAI_TIMEOUT", "60")),
+        max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
+    )
     response = client.embeddings.create(input=text, model=_MODEL)
     embedding = response.data[0].embedding
 
