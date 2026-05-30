@@ -10,6 +10,8 @@ engagement / user_turn_required / round_end / session_end / error
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import uuid
 from typing import AsyncGenerator
@@ -44,6 +46,12 @@ from services.agent_service import _parse_jsonish
 from services.auth_service import get_current_user
 
 router = APIRouter(tags=["fgi"])
+
+# SSE keepalive — 무송신 구간(개입 대기 최대 30분·LLM 지연 갭)에 이 주기로 ping 코멘트를 흘려
+# 프록시·NAT·브라우저의 유휴 연결 끊김("network error" 후 튕김)을 막는다. (2026-05-30)
+# 프론트 streamFetch 는 'data:' 라인만 파싱하고 ':' 코멘트는 JSON.parse 실패→무시하므로 안전.
+_HEARTBEAT_SECONDS = 15.0
+_SSE_PING = b": ping\n\n"
 
 
 async def _verify_owned_project(project_id: str, user: User, db: AsyncSession) -> ResearchProject:
@@ -153,12 +161,13 @@ async def run_fgi_session(
     allow_user_intervention = sess.allow_user_intervention
     plan = list(sess.plan) if sess.plan else None
 
-    async def event_stream() -> AsyncGenerator[bytes, None]:
-        def sse(payload: dict) -> bytes:
-            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+    def sse(payload: dict) -> bytes:
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
+    # 엔진 이벤트를 sse 바이트로 변환하는 내부 스트림. 자체 DB 세션을 열고(의존성 세션은 응답
+    # 시작 시 닫힘), 예외는 error 이벤트로 표면화한다.
+    async def _engine_bytes() -> AsyncGenerator[bytes, None]:
         async with AsyncSessionLocal() as stream_db:
-            # 스트림 세션에서 ORM 객체를 다시 로드 (의존성 세션과 분리)
             res = await stream_db.execute(select(FGISession).where(FGISession.id == sess_id))
             stream_sess = res.scalar_one()
             res2 = await stream_db.execute(select(Agent).where(Agent.id.in_(agent_ids)))
@@ -177,6 +186,45 @@ async def run_fgi_session(
                     yield sse(ev)
             except Exception as e:  # noqa: BLE001
                 yield sse({"type": "error", "reason": str(e)})
+
+    async def event_stream() -> AsyncGenerator[bytes, None]:
+        # 엔진 이벤트와 heartbeat 를 병합한다. 별도 producer 태스크가 엔진 바이트를 큐에 적재하고,
+        # 소비 루프는 _HEARTBEAT_SECONDS 안에 새 이벤트가 없으면 ping 을 끼워 넣는다.
+        # queue.get() 태스크를 heartbeat 사이에 그대로 유지해 이벤트 유실(get 취소로 인한)을 막는다.
+        # 클라이언트가 끊으면 outer generator 가 close 되어 finally 에서 producer 를 취소 → 엔진
+        # 코루틴까지 정리(개입 대기 wait_for 도 해제)된다.
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        _DONE = object()
+
+        async def _drain() -> None:
+            try:
+                async for chunk in _engine_bytes():
+                    await queue.put(chunk)
+            finally:
+                await queue.put(_DONE)
+
+        producer = asyncio.ensure_future(_drain())
+        get_task: asyncio.Future | None = None
+        try:
+            while True:
+                if get_task is None:
+                    get_task = asyncio.ensure_future(queue.get())
+                done, _ = await asyncio.wait({get_task}, timeout=_HEARTBEAT_SECONDS)
+                if not done:
+                    yield _SSE_PING  # 무송신 구간 keepalive
+                    continue
+                chunk = get_task.result()
+                get_task = None
+                if chunk is _DONE:
+                    break
+                yield chunk  # type: ignore[misc]
+        finally:
+            if get_task is not None:
+                get_task.cancel()
+            if not producer.done():
+                producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await producer
 
     return StreamingResponse(
         event_stream(),
