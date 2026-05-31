@@ -65,9 +65,12 @@ USE_MODERATOR_JUDGE = os.getenv("FGI_MODERATOR_JUDGE", "1") not in ("0", "false"
 INTERVENTION_TIMEOUT = _f("FGI_INTERVENTION_TIMEOUT", 1800)  # 개입 여부 결정 대기(초) — 30분. routers/fgi.py 가 동일 값을 명시 전달해 env 영향 차단(2026-05-29).
 INTERVENTION_MAX_PER_ROUND = _i("FGI_INTERVENTION_MAX", 2)
 
-# 발화·모더레이터 모델. 비용 절감 위해 gpt-4.1-nano 로 하향(2026-05-29).
-# 4.1-nano: $0.10/1M in · $0.40/1M out (4.1-mini 의 ¼). 발화 품질이 아쉬우면 env 로 복원 가능.
-CHAT_MODEL = os.getenv("FGI_CHAT_MODEL", "gpt-4.1-nano")
+# 발화·모더레이터 모델. nano(2026-05-29 하향)가 발화 동질화·지시 미준수(끝에 '[answer]' 누출,
+# '저도' 시작, 앞사람 답 베끼기)를 일으켜 데모 품질용으로 gpt-4.1-mini 로 복귀(2026-05-31).
+# 4.1-mini: $0.40/1M in · $1.60/1M out (nano 의 4배지만 세션당 ~$0.17 로 데모엔 미미).
+# engagement(아래 ENGAGEMENT_MODEL)는 점수 산출이라 nano 유지 — 자주 호출돼 비용·레이턴시 민감.
+# 비용 다시 줄여야 하면 env FGI_CHAT_MODEL 로 nano 복원 가능.
+CHAT_MODEL = os.getenv("FGI_CHAT_MODEL", "gpt-4.1-mini")
 # engagement(관심도 추정) 전용 모델 — 발화·모더레이터 모델과 분리해서 OpenAI 최저가 모델 사용.
 # plan 0025 v2: 발화 중에도 LLM 추정을 자주 호출하므로 비용·레이턴시 ↓ 가 중요.
 # gpt-4.1-nano: $0.10/1M input · $0.40/1M output (4.1-mini 의 ¼ 가격).
