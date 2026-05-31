@@ -103,19 +103,23 @@ def _strip_speaker_prefix(text: str, name: str) -> str:
     return t[m.end():].strip() if m else t
 
 
-# 발화 앞에 모델이 붙이는 '[answer]'·'[답변]'·'(응답)' 같은 머리표 라벨 제거 — 본문만 출력하라는
-# 지시를 무시하고 구조화 라벨을 붙이는 누출 보정(2026-05-30, 김서연 '[answer]' 반복 사례).
-# 괄호 안이 공백 없는 단일 토큰(1~12자)일 때만 제거해 정상 문장 첫머리는 건드리지 않는다.
-# 라벨이 겹쳐 붙는 경우('[answer] [김서연]')도 더 줄지 않을 때까지 반복 제거한다.
-_LABEL_PREFIX_RE = re.compile(r"^\s*[\[(]\s*[\w가-힣]{1,12}\s*[\])]\s*[:：\-–—]?\s*")
+# 발화 앞/뒤에 모델이 붙이는 '[answer]'·'[답변]'·'(응답)' 같은 머리표/꼬리표 라벨 제거 — 본문만
+# 출력하라는 지시를 무시하고 구조화 라벨을 다는 누출 보정. 처음엔 앞쪽 '[answer]'(2026-05-30)였고,
+# 끝에 ' [answer]' 가 붙는 사례가 다시 확인돼 꼬리표까지 제거하도록 확장(2026-05-31).
+# 괄호 안이 공백 없는 단일 토큰(1~12자)일 때만 제거 → 정상 문장·여러 단어 괄호 삽입구는 보존.
+# 라벨이 겹쳐 붙는 경우('[answer] [김서연]')도 더 줄지 않을 때까지 앞·뒤를 반복 제거한다.
+_LABEL_LEAD_RE = re.compile(r"^\s*[\[(]\s*[\w가-힣]{1,12}\s*[\])]\s*[:：\-–—]?\s*")
+_LABEL_TAIL_RE = re.compile(r"\s*[:：\-–—]?\s*[\[(]\s*[\w가-힣]{1,12}\s*[\])]\s*$")
 
 
-def _strip_label_prefix(text: str) -> str:
+def _strip_label_markers(text: str) -> str:
     t = text.strip()
     prev = None
     while t != prev:
         prev = t
-        t = _LABEL_PREFIX_RE.sub("", t, count=1).strip()
+        t = _LABEL_LEAD_RE.sub("", t, count=1)
+        t = _LABEL_TAIL_RE.sub("", t, count=1)
+        t = t.strip()
     return t
 
 
@@ -261,8 +265,8 @@ async def _stream_agent(db, *, session, agent, agent_ids, round_no, order, moder
                 yield ("delta", pass_buf, None)
                 pass_flushed = True
     name = agent.display_name or "참여자"
-    # 따옴표 누출 + '[answer]' 류 머리표 라벨 + 본인 이름 라벨('최수아:') 누출을 본문에서 제거.
-    content = _strip_label_prefix(_strip_speaker_prefix(_strip_quotes("".join(parts)), name))
+    # 따옴표 누출 + '[answer]' 류 머리표/꼬리표 라벨 + 본인 이름 라벨('최수아:') 누출을 본문에서 제거.
+    content = _strip_label_markers(_strip_speaker_prefix(_strip_quotes("".join(parts)), name))
     if allow_pass and _is_pass(content):
         yield ("pass", None, None)   # 새로 더할 게 없음 → 발언하지 않음
         return
