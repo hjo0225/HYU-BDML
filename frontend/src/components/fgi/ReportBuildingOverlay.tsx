@@ -23,7 +23,7 @@ export function ReportBuildingOverlay() {
   }, []);
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 rounded-xl bg-text-primary/65 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 rounded-xl bg-indigo-950/70 backdrop-blur-[2px]">
       {/* 문서가 한 줄씩 조립되고 스캔 라인이 훑는 애니메이션 */}
       <div className="relative h-24 w-[72px]">
         <div className="absolute inset-0 overflow-hidden rounded-lg border border-white/30 bg-white shadow-elevated">
@@ -31,13 +31,13 @@ export function ReportBuildingOverlay() {
             {[0, 1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="mb-line h-1.5 rounded-full bg-ditto-indigo/40"
+                className="mb-line h-1.5 rounded-full bg-indigo-500"
                 style={{ width: ['80%', '100%', '62%', '90%'][i], animationDelay: `${i * 0.18}s` }}
               />
             ))}
           </div>
           {/* 스캔 라인 — 위에서 아래로 반복 */}
-          <div className="mb-scan absolute inset-x-0 h-5 bg-gradient-to-b from-ditto-indigo/35 to-transparent" />
+          <div className="mb-scan absolute inset-x-0 h-5 bg-gradient-to-b from-indigo-500/40 to-transparent" />
         </div>
       </div>
 

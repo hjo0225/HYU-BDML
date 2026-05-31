@@ -177,6 +177,8 @@ export function DemoFGIStep({ token, projectId, agents, onComplete }: Props) {
             onComplete(session.id, ev.report);
             break;
           case 'error':
+            // build_report 중 에러 시 오버레이가 끼지 않게 해제.
+            setBuildingReport(false);
             setError(ev.reason);
             break;
         }
