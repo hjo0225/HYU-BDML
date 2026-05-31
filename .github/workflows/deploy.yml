@@ -52,9 +52,10 @@ jobs:
             --region="${{ env.REGION }}" \
             --platform=managed \
             --min-instances=1 \
-            --max-instances=10 \
-            --memory=512Mi \
+            --max-instances=1 \
+            --memory=1Gi \
             --timeout=3600 \
+            --concurrency=80 \
             --allow-unauthenticated \
             --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:bigmarlab-db" \
             --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest" \
